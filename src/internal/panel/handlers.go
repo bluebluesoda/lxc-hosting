@@ -75,6 +75,13 @@ func (s *Server) clearSessionCookie(w http.ResponseWriter) {
 
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodPost {
+		ip := clientIP(r)
+		s.limiter.prune()
+		if !s.limiter.allowed(ip) {
+			s.renderStatus(w, http.StatusTooManyRequests, "login.html",
+				pageData{Title: "Login", Err: "尝试过于频繁，请 1 分钟后再试"})
+			return
+		}
 		if err := r.ParseForm(); err != nil {
 			http.Error(w, err.Error(), 400)
 			return

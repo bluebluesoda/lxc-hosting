@@ -3,8 +3,11 @@ package panel
 import (
 	"embed"
 	"html/template"
+	"net"
 	"net/http"
 	"strings"
+	"sync"
+	"time"
 
 	"vpsmgr/internal/cfg"
 	"vpsmgr/internal/db"
@@ -14,14 +17,78 @@ import (
 //go:embed templates/*.html
 var tmplFS embed.FS
 
+const (
+	loginLimit    = 5
+	loginWindow   = 60 * time.Second
+	limiterMaxIPs = 10000
+)
+
+type loginRecord struct {
+	start time.Time
+	count int
+}
+
+type loginLimiter struct {
+	mu    sync.Mutex
+	byIP  map[string]*loginRecord
+	limit int
+	win   time.Duration
+}
+
+func newLoginLimiter() *loginLimiter {
+	return &loginLimiter{byIP: make(map[string]*loginRecord), limit: loginLimit, win: loginWindow}
+}
+
+// allowed increments the attempt counter for ip and reports whether the
+// attempt may proceed (limit is attempts per window per IP).
+func (l *loginLimiter) allowed(ip string) bool {
+	now := time.Now()
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	w, ok := l.byIP[ip]
+	if !ok || now.Sub(w.start) >= l.win {
+		l.byIP[ip] = &loginRecord{start: now, count: 1}
+		return true
+	}
+	w.count++
+	if w.count > l.limit {
+		return false
+	}
+	return true
+}
+
+// prune removes stale entries to bound memory.
+func (l *loginLimiter) prune() {
+	now := time.Now()
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if len(l.byIP) < limiterMaxIPs {
+		return
+	}
+	for ip, w := range l.byIP {
+		if now.Sub(w.start) >= l.win {
+			delete(l.byIP, ip)
+		}
+	}
+}
+
+func clientIP(r *http.Request) string {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr
+	}
+	return host
+}
+
 type Server struct {
-	cfg *cfg.Config
-	db  *db.DB
-	mgr *mgr.Manager
+	cfg     *cfg.Config
+	db      *db.DB
+	mgr     *mgr.Manager
+	limiter *loginLimiter
 }
 
 func New(c *cfg.Config, d *db.DB, m *mgr.Manager) *Server {
-	return &Server{cfg: c, db: d, mgr: m}
+	return &Server{cfg: c, db: d, mgr: m, limiter: newLoginLimiter()}
 }
 
 func (s *Server) templates() (*template.Template, error) {
@@ -58,12 +125,17 @@ func (s *Server) Handler() http.Handler {
 }
 
 func (s *Server) render(w http.ResponseWriter, name string, data pageData) {
+	s.renderStatus(w, http.StatusOK, name, data)
+}
+
+func (s *Server) renderStatus(w http.ResponseWriter, status int, name string, data pageData) {
 	t, err := s.templates()
 	if err != nil {
 		http.Error(w, "template error: "+err.Error(), 500)
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(status)
 	if err := t.ExecuteTemplate(w, name, data); err != nil {
 		http.Error(w, err.Error(), 500)
 	}
