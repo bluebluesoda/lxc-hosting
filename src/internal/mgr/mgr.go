@@ -203,6 +203,8 @@ type Result struct {
 	PortsPerUser int
 	CPUUse       string
 	MemUse       string
+	UpGB         string
+	DownGB       string
 }
 
 // sampleUsage reads CPU/memory usage twice ~1s apart to derive CPU percentage.
@@ -247,8 +249,10 @@ func (m *Manager) ResultFor(u *db.User, pass string) *Result {
 	for i, d := range domains {
 		ds[i] = d.Domain
 	}
+	up, down := m.TrafficFor(u.ID)
 	return &Result{User: u, Password: pass, PublicIP: m.cfg.Panel.PublicIP,
-		State: st, Domains: ds, PortsPerUser: m.cfg.Net.PortsPerUser}
+		State: st, Domains: ds, PortsPerUser: m.cfg.Net.PortsPerUser,
+		UpGB: FormatGB(up), DownGB: FormatGB(down)}
 }
 
 func (m *Manager) Del(name string) error {
@@ -282,6 +286,7 @@ func (m *Manager) List() ([]*Result, error) {
 	if err != nil {
 		return nil, err
 	}
+	m.SampleTraffic() // best-effort freshness for the displayed totals
 	use, _ := m.sampleUsage()
 	out := make([]*Result, 0, len(users))
 	for _, u := range users {
@@ -297,6 +302,7 @@ func (m *Manager) Show(name string) (*Result, error) {
 	if err != nil {
 		return nil, err
 	}
+	m.SampleTraffic() // best-effort freshness for the displayed totals
 	r := m.ResultFor(u, "")
 	use, _ := m.sampleUsage()
 	m.decorateUsage(r, use)

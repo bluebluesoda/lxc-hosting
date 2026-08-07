@@ -45,6 +45,10 @@ type info struct {
 				Family  string `json:"family"`
 				Address string `json:"address"`
 			} `json:"addresses"`
+			Counters struct {
+				BytesReceived int64 `json:"bytes_received"`
+				BytesSent     int64 `json:"bytes_sent"`
+			} `json:"counters"`
 		} `json:"network"`
 	} `json:"state"`
 }
@@ -80,6 +84,41 @@ func (c *Client) UsageMap() (map[string]Usage, error) {
 			u.MemTotal = it.State.Memory.Total
 		}
 		m[it.Name] = u
+	}
+	return m, nil
+}
+
+// Traffic describes a container's cumulative network counters since its last
+// start. Counters are per-device and reset to zero when the container is
+// restarted or reinstalled.
+type Traffic struct {
+	Rx int64 // bytes received (download)
+	Tx int64 // bytes sent (upload)
+}
+
+// TrafficMap returns the cumulative network counters of every running
+// container, keyed by container name. Stopped containers have no state and are
+// omitted.
+func (c *Client) TrafficMap() (map[string]Traffic, error) {
+	out, err := c.Run("list", "--format=json")
+	if err != nil {
+		return nil, err
+	}
+	var items []info
+	if err := json.Unmarshal([]byte(out), &items); err != nil {
+		return nil, err
+	}
+	m := make(map[string]Traffic)
+	for _, it := range items {
+		if it.State == nil || it.Status != "Running" {
+			continue
+		}
+		t := Traffic{}
+		for _, ifs := range it.State.Network {
+			t.Rx += ifs.Counters.BytesReceived
+			t.Tx += ifs.Counters.BytesSent
+		}
+		m[it.Name] = t
 	}
 	return m, nil
 }

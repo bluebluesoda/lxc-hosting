@@ -13,6 +13,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"vpsmgr/internal/cert"
 	"vpsmgr/internal/cfg"
@@ -191,8 +192,23 @@ func cmdServe() error {
 	m := mgr.New(c, d)
 	srv := panel.New(c, d, m)
 	tlsCfg := &tls.Config{MinVersion: tls.VersionTLS12}
+	go sampleTrafficLoop(m)
 	log.Printf("panel listening on %s (https, self-signed)", c.Panel.Listen)
 	return startTLS(c, srv.Handler(), tlsCfg)
+}
+
+// sampleTrafficLoop runs the monthly traffic collector until the process ends.
+func sampleTrafficLoop(m *mgr.Manager) {
+	if err := m.SampleTraffic(); err != nil {
+		log.Printf("traffic sample: %v", err)
+	}
+	tick := time.NewTicker(mgr.TrafficInterval)
+	defer tick.Stop()
+	for range tick.C {
+		if err := m.SampleTraffic(); err != nil {
+			log.Printf("traffic sample: %v", err)
+		}
+	}
 }
 
 func startTLS(c *cfg.Config, h http.Handler, tlsCfg *tls.Config) error {
@@ -502,11 +518,11 @@ func userList() error {	c, err := cfg.Load()
 	if err != nil {
 		return err
 	}
-	fmt.Printf("%-16s %-14s %-14s %-10s %-6s %-8s %-7s %-6s %-10s\n", "NAME", "IP", "PORTS", "STATE", "CPU", "MEM", "DISK", "CPU%", "MEMUSE")
+	fmt.Printf("%-16s %-14s %-14s %-10s %-6s %-8s %-7s %-8s %-8s %-6s %-10s\n", "NAME", "IP", "PORTS", "STATE", "CPU", "MEM", "DISK", "UP_GB", "DOWN_GB", "CPU%", "MEMUSE")
 	for _, r := range results {
-		fmt.Printf("%-16s %-14s %-14s %-10s %-6d %-8d %-7d %-6s %-10s\n",
+		fmt.Printf("%-16s %-14s %-14s %-10s %-6d %-8d %-7d %-8s %-8s %-6s %-10s\n",
 			r.User.Name, r.User.IP, fmt.Sprintf("%d-%d", r.User.PortBase, r.User.PortBase+r.PortsPerUser-1),
-			r.State, r.User.CPU, r.User.MemMB, r.User.DiskGB, r.CPUUse, r.MemUse)
+			r.State, r.User.CPU, r.User.MemMB, r.User.DiskGB, r.UpGB, r.DownGB, r.CPUUse, r.MemUse)
 	}
 	return nil
 }
@@ -539,6 +555,7 @@ func printResult(r *mgr.Result) {
 	fmt.Printf("quotas:   %d cpu / %d MiB / %d GiB\n", u.CPU, u.MemMB, u.DiskGB)
 	fmt.Printf("cpu use:  %s\n", r.CPUUse)
 	fmt.Printf("mem use:  %s\n", r.MemUse)
+	fmt.Printf("traffic:  up %s GB / down %s GB (this month)\n", r.UpGB, r.DownGB)
 	fmt.Printf("domains:  %s\n", strings.Join(r.Domains, ", "))
 	if r.Password != "" {
 		c, _ := cfg.Load()

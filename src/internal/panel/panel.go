@@ -102,19 +102,21 @@ func (s *Server) prefix() string { return "/" + s.cfg.Panel.URLPath }
 func (s *Server) p(route string) string { return s.prefix() + route }
 
 type pageData struct {
-	Title string
-	User  *db.User
-	State string
-	IP    string
+	Title    string
+	User     *db.User
+	State    string
+	IP       string
 	PortBase int
-	Ports string
-	SSH   string
-	Quota string
-	Domains []string
-	Msg   string
-	Err   string
+	Ports    string
+	SSH      string
+	Quota    string
+	Domains  []string
+	Msg      string
+	Err      string
 	PublicIP string
-	Prefix string
+	Prefix   string
+	UpGB     string
+	DownGB   string
 }
 
 func (s *Server) Handler() http.Handler {
@@ -205,6 +207,10 @@ func (s *Server) buildData(u *db.User, msg, errMsg string) pageData {
 		d.State = st
 		d.IP = u.IP
 	}
+	s.mgr.SampleTraffic() // best-effort freshness for the displayed totals
+	up, down := s.mgr.TrafficFor(u.ID)
+	d.UpGB = mgr.FormatGB(up)
+	d.DownGB = mgr.FormatGB(down)
 	domains, _ := s.db.ListDomains(u.ID)
 	for _, x := range domains {
 		d.Domains = append(d.Domains, x.Domain)

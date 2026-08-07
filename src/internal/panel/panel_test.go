@@ -175,6 +175,35 @@ func TestUnknownSubpathUnderPrefix(t *testing.T) {
 	}
 }
 
+func TestOverviewShowsMonthlyTraffic(t *testing.T) {
+	srv, _ := newTestServer(t)
+	html := srv.renderToString(t, "overview.html", pageData{
+		User:   &db.User{Name: "alice"},
+		UpGB:   "1.5",
+		DownGB: "0.4",
+		Prefix: "/" + testSecret,
+	})
+	for _, want := range []string{"本月上传", "本月下载", "1.5 GB", "0.4 GB"} {
+		if !strings.Contains(html, want) {
+			t.Errorf("overview missing %q", want)
+		}
+	}
+}
+
+// renderToString executes a named template into a string for assertions.
+func (s *Server) renderToString(t *testing.T, name string, data pageData) string {
+	t.Helper()
+	tpl, err := s.templates()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var b strings.Builder
+	if err := tpl.ExecuteTemplate(&b, name, data); err != nil {
+		t.Fatal(err)
+	}
+	return b.String()
+}
+
 func TestStripPrefix(t *testing.T) {
 	const prefix = "/Ab1_cdE-9x"
 	cases := []struct {

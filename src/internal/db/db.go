@@ -56,6 +56,14 @@ func (d *DB) migrate() error {
 			user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
 			expires_at INTEGER NOT NULL
 		)`,
+		`CREATE TABLE IF NOT EXISTS traffic(
+			user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+			period TEXT NOT NULL,
+			upload_bytes INTEGER NOT NULL DEFAULT 0,
+			download_bytes INTEGER NOT NULL DEFAULT 0,
+			last_rx INTEGER NOT NULL DEFAULT 0,
+			last_tx INTEGER NOT NULL DEFAULT 0
+		)`,
 		`CREATE INDEX IF NOT EXISTS idx_domains_user ON domains(user_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id)`,
 	}
