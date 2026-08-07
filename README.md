@@ -20,7 +20,10 @@ vpsmgr user add <name>               # 交互询问 CPU/内存/磁盘，回车�
 vpsmgr user add <name> --cpu 2 --mem 2G --disk 20G
 vpsmgr user update <name> [--cpu N] [--mem N] [--disk NG]   # 磁盘只许扩不许缩
 vpsmgr user reset-passwd <name>      # 面板密码重置为随机密码（显示一次）
-vpsmgr user list | show <name> | del <name>
+vpsmgr user list                     # 列出用户及容器 CPU%/内存占用
+vpsmgr user show <name>
+vpsmgr user start|stop|restart <name>
+vpsmgr user del <name>
 vpsmgr panel-url
 ```
 

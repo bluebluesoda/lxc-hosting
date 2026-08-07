@@ -60,10 +60,14 @@ label{font-size:.85rem;color:#94a3b8;margin-right:.4rem}
 <div class="card">
 <h2>面板登录密码</h2>
 <p style="color:#94a3b8;font-size:.85rem">只修改面板登录密码，不影响容器 root 密码。长度需大于 14 位。</p>
-<form action="/password" method="post">
-<label>新面板密码（>14 位）</label><input name="new_password" type="password" minlength="15" required>
+<form action="/password" method="post" onsubmit="return checkPw()">
+<label>新面板密码（>14 位）</label><input id="pw1" name="new_password" type="password" minlength="15" required>
+<label>再次输入确认</label><input id="pw2" name="confirm_password" type="password" required>
 <button class="btn b1" type="submit">修改面板密码</button>
 </form>
+<script>
+function checkPw(){var a=document.getElementById('pw1'),b=document.getElementById('pw2');if(a.value!==b.value){alert('两次输入的密码不一致');return false;}return true;}
+</script>
 </div>
 
 <div class="card">

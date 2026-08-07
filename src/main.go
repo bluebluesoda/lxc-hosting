@@ -88,6 +88,7 @@ usage:
   vpsmgr user add <name> [--password X] [--cpu 1] [--mem 1G] [--disk 10G]
   vpsmgr user update <name> [--cpu 2] [--mem 2G] [--disk 20G]
   vpsmgr user reset-passwd <name>    # panel 密码重置为随机密码（显示一次）
+  vpsmgr user start|stop|restart <name>
   vpsmgr user del <name>
   vpsmgr user list
   vpsmgr user show <name>
@@ -218,6 +219,11 @@ func cmdUser(args []string) error {
 		return userList()
 	case "update":
 		return userUpdate(rest)
+	case "start", "stop", "restart":
+		if len(rest) != 1 {
+			return fmt.Errorf("usage: vpsmgr user %s <name>", sub)
+		}
+		return userPower(sub, rest[0])
 	case "reset-passwd":
 		if len(rest) != 1 {
 			return fmt.Errorf("usage: vpsmgr user reset-passwd <name>")
@@ -456,6 +462,24 @@ func userResetPasswd(name string) error {
 	return nil
 }
 
+func userPower(action, name string) error {
+	c, err := cfg.Load()
+	if err != nil {
+		return err
+	}
+	d, err := db.Open(c.Panel.DB)
+	if err != nil {
+		return err
+	}
+	defer d.Close()
+	m := mgr.New(c, d)
+	if err := m.Power(name, action); err != nil {
+		return err
+	}
+	fmt.Printf("user %s: %s ok\n", name, action)
+	return nil
+}
+
 func userList() error {	c, err := cfg.Load()
 	if err != nil {
 		return err
@@ -470,11 +494,11 @@ func userList() error {	c, err := cfg.Load()
 	if err != nil {
 		return err
 	}
-	fmt.Printf("%-16s %-14s %-14s %-10s %-8s %-8s %-6s\n", "NAME", "IP", "PORTS", "STATE", "CPU", "MEM", "DISK")
+	fmt.Printf("%-16s %-14s %-14s %-10s %-6s %-8s %-7s %-6s %-10s\n", "NAME", "IP", "PORTS", "STATE", "CPU", "MEM", "DISK", "CPU%", "MEMUSE")
 	for _, r := range results {
-		fmt.Printf("%-16s %-14s %-14s %-10s %-8d %-8d %-6d\n",
+		fmt.Printf("%-16s %-14s %-14s %-10s %-6d %-8d %-7d %-6s %-10s\n",
 			r.User.Name, r.User.IP, fmt.Sprintf("%d-%d", r.User.PortBase, r.User.PortBase+r.PortsPerUser-1),
-			r.State, r.User.CPU, r.User.MemMB, r.User.DiskGB)
+			r.State, r.User.CPU, r.User.MemMB, r.User.DiskGB, r.CPUUse, r.MemUse)
 	}
 	return nil
 }
@@ -505,6 +529,8 @@ func printResult(r *mgr.Result) {
 	fmt.Printf("ip:       %s\n", u.IP)
 	fmt.Printf("ports:    %d-%d (ssh: %d)\n", u.PortBase, u.PortBase+r.PortsPerUser-1, u.PortBase)
 	fmt.Printf("quotas:   %d cpu / %d MiB / %d GiB\n", u.CPU, u.MemMB, u.DiskGB)
+	fmt.Printf("cpu use:  %s\n", r.CPUUse)
+	fmt.Printf("mem use:  %s\n", r.MemUse)
 	fmt.Printf("domains:  %s\n", strings.Join(r.Domains, ", "))
 	if r.Password != "" {
 		fmt.Printf("password: %s  (panel login + container root)\n", r.Password)

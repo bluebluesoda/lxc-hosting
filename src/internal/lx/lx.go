@@ -33,6 +33,13 @@ type info struct {
 	Name   string `json:"name"`
 	Status string `json:"status"`
 	State  *struct {
+		CPU *struct {
+			Usage int64 `json:"usage"`
+		} `json:"cpu"`
+		Memory *struct {
+			Usage int64 `json:"usage"`
+			Total int64 `json:"total"`
+		} `json:"memory"`
 		Network map[string]struct {
 			Addresses []struct {
 				Family  string `json:"family"`
@@ -40,6 +47,41 @@ type info struct {
 			} `json:"addresses"`
 		} `json:"network"`
 	} `json:"state"`
+}
+
+// Usage describes a container's live CPU/memory accounting.
+type Usage struct {
+	CPUUsage int64 // nanoseconds of CPU time used since start
+	MemUsage int64 // bytes currently used
+	MemTotal int64 // memory limit in bytes
+}
+
+// UsageMap returns current CPU/memory accounting for every container.
+func (c *Client) UsageMap() (map[string]Usage, error) {
+	out, err := c.Run("list", "--format=json")
+	if err != nil {
+		return nil, err
+	}
+	var items []info
+	if err := json.Unmarshal([]byte(out), &items); err != nil {
+		return nil, err
+	}
+	m := make(map[string]Usage)
+	for _, it := range items {
+		if it.State == nil || it.Status != "Running" {
+			continue
+		}
+		u := Usage{}
+		if it.State.CPU != nil {
+			u.CPUUsage = it.State.CPU.Usage
+		}
+		if it.State.Memory != nil {
+			u.MemUsage = it.State.Memory.Usage
+			u.MemTotal = it.State.Memory.Total
+		}
+		m[it.Name] = u
+	}
+	return m, nil
 }
 
 func (c *Client) list() ([]info, error) {

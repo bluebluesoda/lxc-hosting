@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"vpsmgr/internal/cfg"
 	"vpsmgr/internal/db"
@@ -169,6 +170,43 @@ type Result struct {
 	State        string
 	Domains      []string
 	PortsPerUser int
+	CPUUse       string
+	MemUse       string
+}
+
+// sampleUsage reads CPU/memory usage twice ~1s apart to derive CPU percentage.
+func (m *Manager) sampleUsage() (map[string]lx.Usage, error) {
+	u1, err := m.lx.UsageMap()
+	if err != nil {
+		return nil, err
+	}
+	time.Sleep(time.Second)
+	u2, err := m.lx.UsageMap()
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]lx.Usage)
+	for name, v := range u2 {
+		if prev, ok := u1[name]; ok {
+			v.CPUUsage -= prev.CPUUsage
+			out[name] = v
+		}
+	}
+	return out, nil
+}
+
+func (m *Manager) decorateUsage(r *Result, use map[string]lx.Usage) {
+	if u, ok := use[r.User.Name]; ok && r.User.CPU > 0 {
+		pct := float64(u.CPUUsage) / 1e9 / float64(r.User.CPU) * 100
+		if pct < 0 {
+			pct = 0
+		}
+		r.CPUUse = fmt.Sprintf("%.0f%%", pct)
+		r.MemUse = fmt.Sprintf("%d MiB", u.MemUsage/(1<<20))
+		return
+	}
+	r.CPUUse = "-"
+	r.MemUse = "-"
 }
 
 func (m *Manager) ResultFor(u *db.User, pass string) *Result {
@@ -213,9 +251,12 @@ func (m *Manager) List() ([]*Result, error) {
 	if err != nil {
 		return nil, err
 	}
+	use, _ := m.sampleUsage()
 	out := make([]*Result, 0, len(users))
 	for _, u := range users {
-		out = append(out, m.ResultFor(u, ""))
+		r := m.ResultFor(u, "")
+		m.decorateUsage(r, use)
+		out = append(out, r)
 	}
 	return out, nil
 }
@@ -225,7 +266,10 @@ func (m *Manager) Show(name string) (*Result, error) {
 	if err != nil {
 		return nil, err
 	}
-	return m.ResultFor(u, ""), nil
+	r := m.ResultFor(u, "")
+	use, _ := m.sampleUsage()
+	m.decorateUsage(r, use)
+	return r, nil
 }
 
 func (m *Manager) State(name string) (string, error) { return m.lx.State(name) }
