@@ -11,7 +11,7 @@ git clone https://github.com/bluebluesoda/lxc-hosting.git && cd lxc-hosting
 sudo ./install.sh        # 本地编译 Go + 装 LXD/Traefik/面板，幂等可重跑
 ```
 
-装完访问 `https://<IP>:8443`（自签证书，浏览器提示后继续）。
+装完运行 `vpsmgr panel-url` 查看完整面板地址，形如 `https://<IP>:8443/<path>`。该随机 path 是面板唯一入口。
 
 ## 使用
 
@@ -46,7 +46,7 @@ sudo ./uninstall.sh --purge  # 连容器、存储池、LXD 一起删
 - 存储：ZFS（空闲盘或 loop 文件），不可用退 dir（配额失效）；add 时池使用率>=90% 拒绝；磁盘配额映射 ZFS quota，只许扩容。
 - 网络：nftables 单表，DNAT（prerouting+output）+ MASQUERADE；reload 用 delete+apply 幂等；开机由 vpsmgr-nft.service 恢复。
 - 反代：Traefik file provider 热加载，80 反代、443 SNI 直通，证书在容器内自管。
-- 安全：修改操作仅 POST 防 CSRF；会话 3 天、HttpOnly+Secure+SameSite=Lax；域名严格白名单防 YAML 注入；登录限速每 IP 每分钟 5 次；所有校验在服务端。
+- 安全：面板挂在安装时生成的不可变随机 path（`[a-zA-Z0-9_-]` 10 位）下，非该 path 一律空 404，防止扫描与爆破开销；修改操作仅 POST 防 CSRF；会话 3 天、HttpOnly+Secure+SameSite=Lax；域名严格白名单防 YAML 注入；登录限速每 IP 每分钟 5 次；所有校验在服务端。
 - 明确不做：IPv6、容器隔离、限速/封禁（出站流量）、快照、Web 终端、域名归属校验、审计、多机、计费。
 
 ## 目录结构

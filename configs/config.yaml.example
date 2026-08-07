@@ -6,6 +6,7 @@ panel:
   db: /etc/vpsmgr/vpsmgr.db
   public_ip: AUTO          # detected; falls back to private IP
   session_days: 3
+  url_path: AUTO           # 10-char random [a-zA-Z0-9_-] secret prefix, generated once at install
 
 net:
   subnet: "10.42.0.0/24"

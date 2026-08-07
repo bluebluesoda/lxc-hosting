@@ -17,7 +17,7 @@ button{margin-top:1.2rem;width:100%;padding:.6rem;border:0;border-radius:8px;bac
 <body>
 <div class="card">
 <h1>VPS Manager 登录</h1>
-<form method="post" action="/login">
+<form method="post" action="{{.Prefix}}/login">
 <label>用户名</label><input name="username" autofocus required>
 <label>密码</label><input type="password" name="password" required>
 <button type="submit">登录</button>

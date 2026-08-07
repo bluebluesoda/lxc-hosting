@@ -8,6 +8,8 @@ import (
 	"strings"
 
 	"gopkg.in/yaml.v3"
+
+	"vpsmgr/internal/pw"
 )
 
 const (
@@ -40,6 +42,9 @@ type PanelCfg struct {
 	DB          string `yaml:"db"`
 	PublicIP    string `yaml:"public_ip"`
 	SessionDays int    `yaml:"session_days"`
+	// URLPath is the immutable secret prefix protecting the whole panel
+	// (e.g. /Ab1_cdE-9x). Generated once on first install.
+	URLPath string `yaml:"url_path"`
 }
 
 type NetCfg struct {
@@ -122,6 +127,9 @@ func (c *Config) FillAuto() error {
 	}
 	if c.Panel.PublicIP == "" {
 		c.Panel.PublicIP = DetectPublicIP(c.Net.ExtIF)
+	}
+	if c.Panel.URLPath == "" {
+		c.Panel.URLPath = pw.URLSafe(10)
 	}
 	return nil
 }

@@ -95,6 +95,12 @@ func (s *Server) templates() (*template.Template, error) {
 	return template.ParseFS(tmplFS, "templates/*.html")
 }
 
+// prefix returns the secret path prefix every panel route lives under.
+func (s *Server) prefix() string { return "/" + s.cfg.Panel.URLPath }
+
+// p joins the prefix with a panel route (e.g. p("/login")).
+func (s *Server) p(route string) string { return s.prefix() + route }
+
 type pageData struct {
 	Title string
 	User  *db.User
@@ -108,6 +114,7 @@ type pageData struct {
 	Msg   string
 	Err   string
 	PublicIP string
+	Prefix string
 }
 
 func (s *Server) Handler() http.Handler {
@@ -121,7 +128,37 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/root-reset", s.requireAuth(s.requirePost(s.handleRootReset)))
 	mux.HandleFunc("/domain-add", s.requireAuth(s.requirePost(s.handleDomainAdd)))
 	mux.HandleFunc("/domain-del", s.requireAuth(s.requirePost(s.handleDomainDel)))
-	return mux
+	prefix := s.prefix()
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		rest, ok := stripPrefix(r.URL.Path, prefix)
+		if !ok {
+			// Never reach the mux: scanners probing random paths get a bare
+			// 404 with no fingerprint and no auth/rate-limit cost.
+			featureless404(w)
+			return
+		}
+		r2 := r.Clone(r.Context())
+		r2.URL.Path = rest
+		mux.ServeHTTP(w, r2)
+	})
+}
+
+// stripPrefix removes the secret prefix from path, returning the path under
+// the prefix. ok is false when path is not below the prefix.
+func stripPrefix(path, prefix string) (string, bool) {
+	if path == prefix {
+		return "/", true
+	}
+	if strings.HasPrefix(path, prefix+"/") {
+		return strings.TrimPrefix(path, prefix), true
+	}
+	return "", false
+}
+
+// featureless404 replies with a bare 404: empty body, no Content-Type, so all
+// wrong paths look identical and reveal nothing about the server.
+func featureless404(w http.ResponseWriter) {
+	w.WriteHeader(http.StatusNotFound)
 }
 
 func (s *Server) render(w http.ResponseWriter, name string, data pageData) {
@@ -153,6 +190,7 @@ func (s *Server) buildData(u *db.User, msg, errMsg string) pageData {
 		Title:     "VPS Manager",
 		User:      u,
 		PublicIP:  s.cfg.Panel.PublicIP,
+		Prefix:    s.prefix(),
 		PortBase:  u.PortBase,
 		Ports:     portRange(u.PortBase, s.cfg.Net.PortsPerUser),
 		SSH:       "ssh -p " + itoa(u.PortBase) + " root@" + s.cfg.Panel.PublicIP,

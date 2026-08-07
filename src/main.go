@@ -104,6 +104,14 @@ func openDB() (*db.DB, error) {
 	return db.Open(c.Panel.DB)
 }
 
+// panelPath returns the secret panel path (e.g. "/Ab1_cdE-9x") or "" if none.
+func panelPath(c *cfg.Config) string {
+	if c == nil || c.Panel.URLPath == "" {
+		return ""
+	}
+	return "/" + c.Panel.URLPath
+}
+
 func cmdInstall() error {
 	c := cfg.Default()
 	if _, err := os.Stat(cfg.Path()); err == nil {
@@ -157,7 +165,7 @@ func cmdInstall() error {
 	if out, err := exec.Command("systemctl", "enable", "--now", "vpsmgr-panel.service").CombinedOutput(); err != nil {
 		return fmt.Errorf("enable vpsmgr-panel: %s", strings.TrimSpace(string(out)))
 	}
-	fmt.Printf("panel initialized: https://%s:8443\n", c.Panel.PublicIP)
+	fmt.Printf("panel initialized: https://%s:8443%s\n", c.Panel.PublicIP, panelPath(c))
 	return nil
 }
 
@@ -197,7 +205,7 @@ func cmdPanelURL() error {
 	if err != nil {
 		return err
 	}
-	fmt.Printf("https://%s:8443\n", c.Panel.PublicIP)
+	fmt.Printf("https://%s:8443%s\n", c.Panel.PublicIP, panelPath(c))
 	return nil
 }
 
@@ -533,9 +541,10 @@ func printResult(r *mgr.Result) {
 	fmt.Printf("mem use:  %s\n", r.MemUse)
 	fmt.Printf("domains:  %s\n", strings.Join(r.Domains, ", "))
 	if r.Password != "" {
+		c, _ := cfg.Load()
 		fmt.Printf("password: %s  (panel login + container root)\n", r.Password)
 		fmt.Printf("ssh:      ssh -p %d root@%s\n", u.PortBase, r.PublicIP)
-		fmt.Printf("panel:    https://%s:8443\n", r.PublicIP)
+		fmt.Printf("panel:    https://%s:8443%s\n", r.PublicIP, panelPath(c))
 	}
 }
 

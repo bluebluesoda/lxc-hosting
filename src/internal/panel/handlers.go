@@ -19,13 +19,13 @@ func (s *Server) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		c, err := r.Cookie("vpsmgr_session")
 		if err != nil {
-			s.redirect(w, r, "/login", "")
+			s.redirect(w, r, s.p("/login"), "")
 			return
 		}
 		u, err := s.db.SessionUser(c.Value)
 		if err != nil {
 			s.clearSessionCookie(w)
-			s.redirect(w, r, "/login", "")
+			s.redirect(w, r, s.p("/login"), "")
 			return
 		}
 		next(w, r.WithContext(context.WithValue(r.Context(), userKey, u)))
@@ -54,7 +54,7 @@ func (s *Server) setSessionCookie(w http.ResponseWriter, token string) {
 	http.SetCookie(w, &http.Cookie{
 		Name:     "vpsmgr_session",
 		Value:    token,
-		Path:     "/",
+		Path:     s.prefix(),
 		MaxAge:   s.cfg.Panel.SessionDays * 86400,
 		HttpOnly: true,
 		Secure:   true,
@@ -67,7 +67,7 @@ func (s *Server) clearSessionCookie(w http.ResponseWriter) {
 		Name:     "vpsmgr_session",
 		Value:    "",
 		MaxAge:   -1,
-		Path:     "/",
+		Path:     s.prefix(),
 		HttpOnly: true,
 		Secure:   true,
 	})
@@ -79,7 +79,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		s.limiter.prune()
 		if !s.limiter.allowed(ip) {
 			s.renderStatus(w, http.StatusTooManyRequests, "login.html",
-				pageData{Title: "Login", Err: "尝试过于频繁，请 1 分钟后再试"})
+				pageData{Title: "Login", Prefix: s.prefix(), Err: "尝试过于频繁，请 1 分钟后再试"})
 			return
 		}
 		if err := r.ParseForm(); err != nil {
@@ -93,14 +93,14 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 			sess, err := s.db.CreateSession(u.ID, s.cfg.Panel.SessionDays)
 			if err == nil {
 				s.setSessionCookie(w, sess.Token)
-				s.redirect(w, r, "/", "")
+				s.redirect(w, r, s.p(""), "")
 				return
 			}
 		}
-		s.render(w, "login.html", pageData{Title: "Login", Err: "invalid credentials"})
+		s.render(w, "login.html", pageData{Title: "Login", Prefix: s.prefix(), Err: "invalid credentials"})
 		return
 	}
-	s.render(w, "login.html", pageData{Title: "Login"})
+	s.render(w, "login.html", pageData{Title: "Login", Prefix: s.prefix()})
 }
 
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
@@ -108,7 +108,7 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 		s.db.DeleteSession(c.Value)
 	}
 	s.clearSessionCookie(w)
-	s.redirect(w, r, "/login", "")
+	s.redirect(w, r, s.p("/login"), "")
 }
 
 func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
@@ -130,7 +130,7 @@ func (s *Server) handlePower(w http.ResponseWriter, r *http.Request) {
 	} else {
 		msg = "ok: " + action
 	}
-	s.redirect(w, r, "/", msg)
+	s.redirect(w, r, s.p(""), msg)
 }
 
 func (s *Server) handleReinstall(w http.ResponseWriter, r *http.Request) {
@@ -140,16 +140,16 @@ func (s *Server) handleReinstall(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.FormValue("confirm") != "1" {
-		s.redirect(w, r, "/", "error: please confirm reinstall")
+		s.redirect(w, r, s.p(""), "error: please confirm reinstall")
 		return
 	}
 	pass, err := s.mgr.Reinstall(u.Name)
 	if err != nil {
-		s.redirect(w, r, "/", "error: "+err.Error())
+		s.redirect(w, r, s.p(""), "error: "+err.Error())
 		return
 	}
 	msg := "reinstalled. new root password: " + pass + " (shown once)"
-	s.redirect(w, r, "/", msg)
+	s.redirect(w, r, s.p(""), msg)
 }
 
 // handlePanelPassword changes only the panel login password (must be > 14
@@ -162,7 +162,7 @@ func (s *Server) handlePanelPassword(w http.ResponseWriter, r *http.Request) {
 	}
 	pass := r.FormValue("new_password")
 	if len(pass) <= 14 {
-		s.redirect(w, r, "/", "error: panel password must be longer than 14 characters")
+		s.redirect(w, r, s.p(""), "error: panel password must be longer than 14 characters")
 		return
 	}
 	token := ""
@@ -170,10 +170,10 @@ func (s *Server) handlePanelPassword(w http.ResponseWriter, r *http.Request) {
 		token = c.Value
 	}
 	if err := s.mgr.ChangePanelPassword(u.Name, pass, token); err != nil {
-		s.redirect(w, r, "/", "error: "+err.Error())
+		s.redirect(w, r, s.p(""), "error: "+err.Error())
 		return
 	}
-	s.redirect(w, r, "/", "ok: panel password changed")
+	s.redirect(w, r, s.p(""), "ok: panel password changed")
 }
 
 // handleRootReset regenerates the container root password and shows it once.
@@ -181,11 +181,11 @@ func (s *Server) handleRootReset(w http.ResponseWriter, r *http.Request) {
 	u := s.currentUser(r)
 	pass, err := s.mgr.ResetRootPassword(u.Name)
 	if err != nil {
-		s.redirect(w, r, "/", "error: "+err.Error())
+		s.redirect(w, r, s.p(""), "error: "+err.Error())
 		return
 	}
 	msg := "root password reset: " + pass + " (shown once)"
-	s.redirect(w, r, "/", msg)
+	s.redirect(w, r, s.p(""), msg)
 }
 
 func (s *Server) handleDomainAdd(w http.ResponseWriter, r *http.Request) {
@@ -195,10 +195,10 @@ func (s *Server) handleDomainAdd(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.mgr.AddDomain(u.Name, r.FormValue("domain")); err != nil {
-		s.redirect(w, r, "/", "error: "+err.Error())
+		s.redirect(w, r, s.p(""), "error: "+err.Error())
 		return
 	}
-	s.redirect(w, r, "/", "ok: domain added")
+	s.redirect(w, r, s.p(""), "ok: domain added")
 }
 
 func (s *Server) handleDomainDel(w http.ResponseWriter, r *http.Request) {
@@ -208,8 +208,8 @@ func (s *Server) handleDomainDel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.mgr.DelDomain(u.Name, r.FormValue("domain")); err != nil {
-		s.redirect(w, r, "/", "error: "+err.Error())
+		s.redirect(w, r, s.p(""), "error: "+err.Error())
 		return
 	}
-	s.redirect(w, r, "/", "ok: domain removed")
+	s.redirect(w, r, s.p(""), "ok: domain removed")
 }
