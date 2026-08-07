@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{.Title}}</title>
+<style>
+body{font-family:system-ui,-apple-system,sans-serif;background:#0f172a;color:#e2e8f0;margin:0;padding:2rem}
+.wrap{max-width:820px;margin:0 auto}
+.top{display:flex;justify-content:space-between;align-items:center;margin-bottom:1.5rem}
+.top h1{margin:0;font-size:1.5rem}
+.card{background:#1e293b;border-radius:12px;padding:1.2rem 1.4rem;margin-bottom:1rem}
+.card h2{margin:0 0 .8rem;font-size:1.05rem;color:#93c5fd}
+table{width:100%;border-collapse:collapse;font-size:.9rem}
+td,th{text-align:left;padding:.3rem 0;border-bottom:1px solid #334155}
+td:last-child,th:last-child{text-align:right}
+.stat{color:#e2e8f0}
+.pill{display:inline-block;padding:.15rem .6rem;border-radius:999px;font-size:.8rem}
+.up{background:#14532d;color:#86efac}.down{background:#7f1d1d;color:#fecaca}
+.btn{display:inline-block;padding:.45rem .9rem;border-radius:8px;border:0;cursor:pointer;font-size:.85rem;margin-right:.4rem;color:#fff}
+.b1{background:#3b82f6}.b2{background:#d97706}.b3{background:#dc2626}.b4{background:#059669}
+input{padding:.45rem;border-radius:8px;border:1px solid #334155;background:#0f172a;color:#e2e8f0}
+form.inline{display:inline}
+.msg{background:#14532d;color:#86efac;padding:.6rem;border-radius:8px;margin-bottom:1rem}
+.err{background:#7f1d1d;color:#fecaca;padding:.6rem;border-radius:8px;margin-bottom:1rem}
+a{color:#93c5fd;text-decoration:none}
+.domlist li{margin:.3rem 0}
+code{background:#0f172a;padding:.1rem .4rem;border-radius:6px;color:#fbbf24}
+.danger{border-top:1px solid #334155;margin-top:1rem;padding-top:1rem}
+label{font-size:.85rem;color:#94a3b8;margin-right:.4rem}
+</style>
+</head>
+<body>
+<div class="wrap">
+<div class="top">
+<h1>VPS Manager — {{.User.Name}}</h1>
+<form action="/logout" method="post" class="inline"><button class="btn b2" type="submit">退出</button></form>
+</div>
+{{if .Msg}}<div class="msg">{{.Msg}}</div>{{end}}
+{{if .Err}}<div class="err">{{.Err}}</div>{{end}}
+
+<div class="card">
+<h2>概览</h2>
+<table>
+<tr><th>状态</th><td>{{if eq .State "Running"}}<span class="pill up">运行中</span>{{else}}<span class="pill down">{{.State}}</span>{{end}}</td></tr>
+<tr><th>IP</th><td><code>{{.IP}}</code></td></tr>
+<tr><th>端口段</th><td><code>{{.Ports}}</code>（SSH 为 {{.PortBase}}）</td></tr>
+<tr><th>SSH</th><td><code>{{.SSH}}</code></td></tr>
+<tr><th>配额</th><td>{{.Quota}}</td></tr>
+</table>
+</div>
+
+<div class="card">
+<h2>电源</h2>
+<form action="/power" method="post" class="inline"><input type="hidden" name="action" value="start"><button class="btn b4">开机</button></form>
+<form action="/power" method="post" class="inline"><input type="hidden" name="action" value="stop"><button class="btn b2">关机</button></form>
+<form action="/power" method="post" class="inline"><input type="hidden" name="action" value="restart"><button class="btn b1">重启</button></form>
+</div>
+
+<div class="card">
+<h2>面板登录密码</h2>
+<p style="color:#94a3b8;font-size:.85rem">只修改面板登录密码，不影响容器 root 密码。长度需大于 14 位。</p>
+<form action="/password" method="post">
+<label>新面板密码（>14 位）</label><input name="new_password" type="password" minlength="15" required>
+<button class="btn b1" type="submit">修改面板密码</button>
+</form>
+</div>
+
+<div class="card">
+<h2>容器 root 密码</h2>
+<p style="color:#94a3b8;font-size:.85rem">由系统生成 20 位随机密码，点击后新密码会在本页显示一次。</p>
+<form action="/root-reset" method="post">
+<button class="btn b1" type="submit">重置 root 密码</button>
+</form>
+</div>
+
+<div class="card">
+<h2>域名</h2>
+<p style="color:#94a3b8;font-size:.85rem">绑定域名后，访问该域名的 80 端口会转发到本容器的 80 端口，443 端口（HTTPS）会转发到本容器的 443 端口。HTTPS 证书请在容器内自行申请（如 certbot / caddy），本面板只负责转发、不代管证书。</p>
+<ul class="domlist">
+{{range .Domains}}<li>{{.}} <form action="/domain-del" method="post" class="inline"><input type="hidden" name="domain" value="{{.}}"><button class="btn b3">删除</button></form></li>{{else}}<li style="color:#94a3b8">未绑定域名</li>{{end}}
+</ul>
+<form action="/domain-add" method="post">
+<label>新域名</label><input name="domain" placeholder="example.com">
+<button class="btn b4" type="submit">添加</button>
+</form>
+</div>
+
+<div class="card danger">
+<h2>重装系统（危险）</h2>
+<p style="color:#fca5a5;font-size:.85rem">将删除容器内全部数据，用相同 IP / 端口 / 配额重建 Debian 13。域名与端口规则保留。面板登录密码不变；重装后自动生成新的 root 密码，在本页显示一次。</p>
+<form action="/reinstall" method="post">
+<label><input type="checkbox" name="confirm" value="1"> 我确认重装，数据全部丢弃</label>
+<button class="btn b3" type="submit">重装</button>
+</form>
+</div>
+</div>
+</body>
+</html>

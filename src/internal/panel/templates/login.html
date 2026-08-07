@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{.Title}}</title>
+<style>
+body{font-family:system-ui,-apple-system,sans-serif;background:#0f172a;color:#e2e8f0;display:flex;justify-content:center;padding-top:8vh}
+.card{background:#1e293b;padding:2rem;border-radius:12px;width:320px}
+h1{font-size:1.4rem;margin:0 0 1rem}
+label{display:block;margin:.6rem 0 .2rem;font-size:.85rem;color:#94a3b8}
+input{width:100%;box-sizing:border-box;padding:.55rem;border-radius:8px;border:1px solid #334155;background:#0f172a;color:#e2e8f0}
+button{margin-top:1.2rem;width:100%;padding:.6rem;border:0;border-radius:8px;background:#3b82f6;color:#fff;cursor:pointer}
+.err{background:#7f1d1d;color:#fecaca;padding:.5rem;border-radius:8px;margin-top:1rem;font-size:.85rem}
+</style>
+</head>
+<body>
+<div class="card">
+<h1>VPS Manager 登录</h1>
+<form method="post" action="/login">
+<label>用户名</label><input name="username" autofocus required>
+<label>密码</label><input type="password" name="password" required>
+<button type="submit">登录</button>
+</form>
+{{if .Err}}<div class="err">{{.Err}}</div>{{end}}
+</div>
+</body>
+</html>

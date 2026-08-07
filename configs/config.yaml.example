@@ -1,0 +1,21 @@
+# vpsmgr config example — generated at /etc/vpsmgr/config.yaml on install
+panel:
+  listen: ":8443"
+  cert: /etc/vpsmgr/panel.crt
+  key: /etc/vpsmgr/panel.key
+  db: /etc/vpsmgr/vpsmgr.db
+  public_ip: AUTO          # detected; falls back to private IP
+  session_days: 3
+
+net:
+  subnet: "10.42.0.0/24"
+  gateway: "10.42.0.1"
+  port_base: 10000
+  ports_per_user: 50
+  ext_if: AUTO             # detected from default route
+
+lxd:
+  image: "vpsmgr/debian-sshd"
+  image_fallback: "images:debian/13"
+  pool: vpsmgr
+  bridge: lxdbr0
