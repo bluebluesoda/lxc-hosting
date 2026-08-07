@@ -161,12 +161,14 @@ func (c *Client) ImageExists(alias string) (bool, error) {
 }
 
 // Launch creates a container with limits, static IP and autostart enabled,
-// then starts it and waits until it is ready.
+// then starts it and waits until it is ready. security.nesting allows running
+// Docker / nested containers inside the instance.
 func (c *Client) Launch(name, image, ip string, cpu, memMB, diskGB int) error {
 	args := []string{"init", image, name,
 		"-c", "limits.cpu=" + strconv.Itoa(cpu),
 		"-c", "limits.memory=" + strconv.Itoa(memMB) + "MiB",
 		"-c", "boot.autostart=true",
+		"-c", "security.nesting=true",
 	}
 	if _, err := c.Run(args...); err != nil {
 		return err
