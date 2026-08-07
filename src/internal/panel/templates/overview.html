@@ -82,7 +82,7 @@ function checkPw(){var a=document.getElementById('pw1'),b=document.getElementByI
 <h2>域名</h2>
 <p style="color:#94a3b8;font-size:.85rem">绑定域名后，访问该域名的 80 端口会转发到本容器的 80 端口，443 端口（HTTPS）会转发到本容器的 443 端口。HTTPS 证书请在容器内自行申请（如 certbot / caddy），本面板只负责转发、不代管证书。</p>
 <ul class="domlist">
-{{range .Domains}}<li>{{.}} <form action="{{.Prefix}}/domain-del" method="post" class="inline"><input type="hidden" name="domain" value="{{.}}"><button class="btn b3">删除</button></form></li>{{else}}<li style="color:#94a3b8">未绑定域名</li>{{end}}
+{{$prefix := .Prefix}}{{range .Domains}}<li>{{.}} <form action="{{$prefix}}/domain-del" method="post" class="inline"><input type="hidden" name="domain" value="{{.}}"><button class="btn b3">删除</button></form></li>{{else}}<li style="color:#94a3b8">未绑定域名</li>{{end}}
 </ul>
 <form action="{{.Prefix}}/domain-add" method="post">
 <label>新域名</label><input name="domain" placeholder="example.com">
