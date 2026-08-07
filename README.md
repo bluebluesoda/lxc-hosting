@@ -7,7 +7,7 @@
 前置：Ubuntu 24.04（物理机或 KVM）、2C / 2G、根分区 10G 空闲、root、可访问外网。
 
 ```
-git clone <repo-url> vpsmgr && cd vpsmgr
+git clone https://github.com/bluebluesoda/lxc-hosting.git && cd lxc-hosting
 sudo ./install.sh        # 本地编译 Go + 装 LXD/Traefik/面板，幂等可重跑
 ```
 
