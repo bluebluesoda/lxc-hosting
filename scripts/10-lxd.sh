@@ -16,13 +16,9 @@ fi
 log "waiting for LXD daemon..."
 lxd waitready --timeout=120 || die "lxd daemon not ready"
 
-# --- zfs kernel module ---
-if ! command -v zpool >/dev/null 2>&1; then
-  log "installing zfsutils-linux (kernel module)"
-  DEBIAN_FRONTEND=noninteractive apt-get install -y -qq zfsutils-linux
-fi
-
 # --- storage pool ---
+# No host zfsutils needed: Ubuntu 24.04 kernel ships the zfs kernel module and
+# the LXD snap bundles the zfs userspace tools, so LXD creates the pool itself.
 POOL=vpsmgr
 POOL_EXISTS=0
 if lxc storage show "$POOL" >/dev/null 2>&1; then
@@ -44,41 +40,33 @@ find_spare_disk(){
   return 1
 }
 
-if [[ $POOL_EXISTS -eq 0 ]]; then
+# decide how to configure the pool in preseed
+DRIVER=zfs
+SPARE=""
+POOL_SIZE_MB=""
+if [[ $POOL_EXISTS -eq 1 ]]; then
+  # adopt existing pool
+  DRIVER=$(lxc storage show "$POOL" | awk -F': ' '/driver:/{print $2}')
+  SRC_LINE="    source: \"$POOL\""
+  SIZE_LINE=""
+else
   SPARE=$(find_spare_disk || true)
   if [[ -n "$SPARE" ]]; then
-    log "creating zfs pool '$POOL' on spare block device $SPARE"
-    zpool create -f "$POOL" "$SPARE" && log "zpool created from $SPARE" \
-      || log "  warn: zpool create on $SPARE failed, falling back to loop file"
-  fi
-  if ! zpool list "$POOL" >/dev/null 2>&1; then
-    # loop-file pool: 80% of free space
-    POOL_DIR=/var/lib/vpsmgr
-    mkdir -p "$POOL_DIR"
-    FREE_KB=$(df -k --output=avail "$POOL_DIR" | tail -1 | tr -d ' ')
-    SIZE_MB=$(( FREE_KB / 1024 * 80 / 100 ))
-    log "creating loop-file zfs pool '$POOL' (~${SIZE_MB} MiB = 80% of free)"
-    IMG="$POOL_DIR/pool.img"
-    fallocate -l "${SIZE_MB}M" "$IMG" || truncate -s "${SIZE_MB}M" "$IMG"
-    if zpool create -f "$POOL" "$IMG"; then
-      log "zpool created from loop file $IMG"
-    else
-      log "  warn: loop zfs failed, falling back to dir backend (quotas disabled)"
-      rm -f "$IMG"
-      DRIVER=dir
-    fi
+    log "zfs pool '$POOL' will be created on spare block device $SPARE"
+    SRC_LINE="    source: \"$SPARE\""
+    SIZE_LINE=""
+  else
+    FREE_KB=$(df -k --output=avail / | tail -1 | tr -d ' ')
+    POOL_SIZE_MB=$(( FREE_KB / 1024 * 80 / 100 ))
+    log "loop-file zfs pool '$POOL' (~${POOL_SIZE_MB} MiB = 80% of free, created by LXD)"
+    SRC_LINE=""
+    SIZE_LINE="    size: \"${POOL_SIZE_MB}MiB\""
   fi
 fi
 
 # --- lxd init (preseed) ---
-if ! lxc storage show "$POOL" >/dev/null 2>&1 || ! lxc network show lxdbr0 >/dev/null 2>&1; then
-  DRIVER=${DRIVER:-zfs}
+if [[ $POOL_EXISTS -eq 0 ]] || ! lxc network show lxdbr0 >/dev/null 2>&1; then
   PRESEED=/tmp/vpsmgr-preseed.yaml
-  if [[ "$DRIVER" == "zfs" ]]; then
-    SRC_LINE="    source: \"$POOL\""
-  else
-    SRC_LINE=""
-  fi
   cat > "$PRESEED" <<EOF
 config: {}
 networks:
@@ -93,6 +81,7 @@ networks:
 storage_pools:
 - config:
 $SRC_LINE
+$SIZE_LINE
   description: ""
   name: $POOL
   driver: $DRIVER
@@ -114,9 +103,20 @@ cluster: null
 EOF
   log "running lxd init --preseed (driver=$DRIVER, subnet 10.42.0.1/24)"
   if ! lxd init --preseed < "$PRESEED"; then
-    log "preseed failed — checking partial state"
-    lxc storage show "$POOL" >/dev/null 2>&1 || lxc storage create "$POOL" "$DRIVER" source="$POOL"
+    log "preseed failed — creating missing pieces"
     lxc network show lxdbr0 >/dev/null 2>&1 || lxc network create lxdbr0 ipv4.address=10.42.0.1/24 ipv4.nat=true ipv6.address=none
+    if ! lxc storage show "$POOL" >/dev/null 2>&1; then
+      if [[ -n "$SPARE" ]]; then
+        lxc storage create "$POOL" zfs source="$SPARE" || true
+      elif [[ -n "$POOL_SIZE_MB" ]]; then
+        lxc storage create "$POOL" zfs size="${POOL_SIZE_MB}MiB" || true
+      fi
+      # last resort: dir backend (no quotas)
+      lxc storage show "$POOL" >/dev/null 2>&1 || {
+        log "  warn: zfs pool creation failed, using dir backend (quotas disabled)"
+        lxc storage create "$POOL" dir
+      }
+    fi
   fi
   # ensure default profile devices point at our pool/bridge
   lxc profile set default root.pool "$POOL" 2>/dev/null || true

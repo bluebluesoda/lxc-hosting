@@ -38,23 +38,54 @@ func ValidateName(name string) error {
 	return nil
 }
 
-// PoolUsage returns the used ratio (0..1) of the storage pool, or -1 if the
-// pool has no usable quota metric (dir backend).
+// PoolUsage returns the used ratio (0..1) of the storage pool as reported by
+// LXD, or -1 if it cannot be determined.
 func (m *Manager) PoolUsage() (float64, error) {
-	out, err := exec.Command("zpool", "list", "-Hp", "-o", "name,allocated,free", m.cfg.LXD.Pool).Output()
+	out, err := exec.Command("lxc", "storage", "info", m.cfg.LXD.Pool).CombinedOutput()
 	if err != nil {
-		return -1, nil // not a zpool (dir backend) -> skip check
-	}
-	f := strings.Fields(string(out))
-	if len(f) < 3 {
 		return -1, nil
 	}
-	alloc, err1 := strconv.ParseFloat(f[1], 64)
-	free, err2 := strconv.ParseFloat(f[2], 64)
-	if err1 != nil || err2 != nil || alloc+free == 0 {
+	used, ok1 := storageSpace(string(out), "space used:")
+	total, ok2 := storageSpace(string(out), "total space:")
+	if !ok1 || !ok2 || total <= 0 {
 		return -1, nil
 	}
-	return alloc / (alloc + free), nil
+	if used > total {
+		used = total
+	}
+	return used / total, nil
+}
+
+func storageSpace(out, key string) (float64, bool) {
+	for _, line := range strings.Split(out, "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, key) {
+			return parseHumanBytes(strings.TrimSpace(strings.TrimPrefix(line, key)))
+		}
+	}
+	return 0, false
+}
+
+var humanBytesRe = regexp.MustCompile(`^([0-9.]+)\s*([A-Za-z]?i?B|B)?$`)
+
+func parseHumanBytes(s string) (float64, bool) {
+	m := humanBytesRe.FindStringSubmatch(strings.TrimSpace(s))
+	if m == nil {
+		return 0, false
+	}
+	n, err := strconv.ParseFloat(m[1], 64)
+	if err != nil {
+		return 0, false
+	}
+	units := map[string]float64{
+		"B": 1, "KiB": 1 << 10, "MiB": 1 << 20, "GiB": 1 << 30, "TiB": 1 << 40,
+		"KB": 1e3, "MB": 1e6, "GB": 1e9, "TB": 1e12,
+	}
+	mult, ok := units[m[2]]
+	if !ok {
+		mult = 1
+	}
+	return n * mult, true
 }
 
 // imageName returns the prebuilt image alias if it exists, else the fallback.
