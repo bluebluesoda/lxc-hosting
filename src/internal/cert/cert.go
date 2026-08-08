@@ -27,17 +27,21 @@ func Ensure(certPath, keyPath, ip string) error {
 		return err
 	}
 	serial, _ := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
+	cn := ip
+        if net.ParseIP(ip) == nil {
+                cn = "localhost"
+        }
 	tmpl := x509.Certificate{
 		SerialNumber: serial,
-		Subject:      pkix.Name{CommonName: "vpsmgr", Organization: []string{"vpsmgr"}},
+		Subject:      pkix.Name{CommonName: cn},
 		NotBefore:    time.Now().Add(-time.Hour),
 		NotAfter:     time.Now().Add(3650 * 24 * time.Hour),
 		KeyUsage:     x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
 		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
-		DNSNames:     []string{"vpsmgr", "localhost"},
+		DNSNames:     []string{cn},
 	}
-	if ip := net.ParseIP(ip); ip != nil {
-		tmpl.IPAddresses = []net.IP{ip}
+	if parsed := net.ParseIP(ip); parsed != nil {
+        tmpl.IPAddresses = []net.IP{parsed}
 	}
 	der, err := x509.CreateCertificate(rand.Reader, &tmpl, &tmpl, &key.PublicKey, key)
 	if err != nil {
