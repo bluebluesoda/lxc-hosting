@@ -4,8 +4,8 @@
 
 ## 安装
 
-**最低要求：Ubuntu 24.04（物理机或 KVM） 1核心  1.5G内存 磁盘10G空闲 root**
-amd64 已测试 arm64 由于甲骨文缺货尚未测试理论支持
+**最低要求：Ubuntu 24.04（物理机或 KVM） 1核心  1.5G内存 磁盘10G空闲 root**    
+amd64 已测试 arm64 尚未测试理论支持
 
 ```
 git clone https://github.com/bluebluesoda/lxc-hosting.git && cd lxc-hosting
