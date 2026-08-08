@@ -34,10 +34,12 @@ jobs:
             -ldflags="-s -w -X vpsmgr/internal/ver.Version=${VERSION}" \
             -o "../vpsmgr-${{ matrix.arch }}" .
 
-      - name: Verify version
+      - name: Verify artifact
         run: |
-          ./vpsmgr-${{ matrix.arch }} version
           file vpsmgr-${{ matrix.arch }}
+          if [ "${{ matrix.arch }}" = "amd64" ]; then
+            ./vpsmgr-${{ matrix.arch }} version
+          fi
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
