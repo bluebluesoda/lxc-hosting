@@ -8,7 +8,8 @@
 
 ```
 git clone https://github.com/bluebluesoda/lxc-hosting.git && cd lxc-hosting
-sudo ./install.sh        # 本地编译 Go + 装 LXD/Traefik/面板，幂等可重跑
+sudo ./install.sh               # 默认从 GitHub Releases 下载最新预编译二进制 + 装 LXD/Traefik/面板，幂等可重跑
+sudo ./install.sh --local-build # 强制本地编译（预编译下载失败也会自动回退到本地编译）
 ```
 
 装完运行 `vpsmgr panel-url` 查看完整面板地址，形如 `https://<IP>:8443/<path>`。该随机 path 是面板唯一入口。

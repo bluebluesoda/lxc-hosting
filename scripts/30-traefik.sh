@@ -8,6 +8,9 @@ die(){ echo "[30] error: $*" >&2; exit 1; }
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
+# clean up the downloaded tarball / extracted binary on exit (success or failure)
+trap 'rm -f /tmp/traefik.tar.gz /tmp/traefik' EXIT
+
 # fixed version + per-arch download URLs (no bundled binaries in the repo)
 TRAEFIK_VERSION=3.3.5
 ARCH=$(uname -m)

@@ -56,15 +56,9 @@ for p in snapd nftables; do
   fi
 done
 
-# --- Go toolchain (for local build) ---
+# --- Go toolchain (only needed for local build; installed lazily by 40-panel.sh) ---
 if command -v go >/dev/null 2>&1; then
   log "go: $(go version 2>/dev/null | awk '{print $3}')"
-else
-  log "installing golang-go (needed to compile the panel locally)"
-  apt-get update -qq
-  DEBIAN_FRONTEND=noninteractive apt-get install -y -qq golang-go
-  command -v go >/dev/null 2>&1 || die "go toolchain install failed"
-  log "go: $(go version | awk '{print $3}')"
 fi
 
 # --- LXD snap ---
