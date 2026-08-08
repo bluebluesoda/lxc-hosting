@@ -48,7 +48,7 @@ log "free disk on /: $(( FREE_KB / 1024 )) MiB"
 [[ $FREE_KB -lt 5*1024*1024 ]] && die "need at least 5 GiB free on /"
 
 # --- packages ---
-for p in snapd nftables zstd; do
+for p in snapd nftables zstd curl; do
   if ! dpkg -s "$p" >/dev/null 2>&1; then
     log "installing $p"
     apt-get update -qq
