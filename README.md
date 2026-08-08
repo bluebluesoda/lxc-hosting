@@ -51,6 +51,17 @@ sudo ./uninstall.sh --purge  # 连容器、存储池、LXD 一起删
 - 流量统计：每容器网卡计数器由 LXD 提供（`lxc list` 的 bytes_received/bytes_sent）；面板协程每 60s 采样，delta 累加进 SQLite
 - 明确不做：IPv6、容器隔离、限速/封禁（出站流量）、快照、Web 终端、域名归属校验、审计、多机、计费。
 
+## 验证发布产物
+
+打 `v*` tag 时 GitHub Actions 会自动编译并发布 Release（linux/amd64 + linux/arm64），每个二进制都附有 SLSA 构建来源证明（`actions/attest`，Sigstore 签名），可验证"确实由本仓库源码、本 workflow 构建，未被加料"：
+
+```
+gh attestation verify vpsmgr-amd64 --owner bluebluesoda
+gh attestation verify vpsmgr-arm64 --owner bluebluesoda
+```
+
+也可用 `gh run download <run-id>` 直接拉取 workflow 产物，或 clone 源码后 `./build.sh v0.1.0` 本地重建，比对 `SHA256SUMS` 校验和。
+
 ## 目录结构
 
 ```
