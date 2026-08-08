@@ -4,12 +4,13 @@
 
 ## 安装
 
-前置：Ubuntu 24.04（物理机或 KVM）、2C / 2G、根分区 10G 空闲、root、可访问外网。
+**最低要求：Ubuntu 24.04（物理机或 KVM） 1核心  1.5G内存 磁盘10G空闲 root**
+amd64 已测试 arm64 由于甲骨文缺货尚未测试理论支持
 
 ```
 git clone https://github.com/bluebluesoda/lxc-hosting.git && cd lxc-hosting
-sudo ./install.sh               # 默认从 GitHub Releases 下载最新预编译二进制 + 装 LXD/Traefik/面板，幂等可重跑
-sudo ./install.sh --local-build # 强制本地编译（预编译下载失败也会自动回退到本地编译）
+sudo ./install.sh               # 默认从 GitHub Releases 下载最新预编译二进制安装
+#sudo ./install.sh --local-build # 强制本地编译
 ```
 
 装完运行 `vpsmgr panel-url` 查看完整面板地址，形如 `https://<IP>:8443/<path>`。该随机 path 是面板唯一入口。
@@ -21,17 +22,13 @@ vpsmgr user add <name>               # 交互询问 CPU/内存/磁盘，回车�
 vpsmgr user add <name> --cpu 2 --mem 2G --disk 20G
 vpsmgr user update <name> [--cpu N] [--mem N] [--disk NG]   # 磁盘只许扩不许缩
 vpsmgr user reset-passwd <name>      # 面板密码重置为随机密码（显示一次）
-vpsmgr user list                     # 列出用户及容器 CPU%/内存占用、本月上传/下载
+vpsmgr user list                     # 列出用户及容器 CPU%/内存占用（瞬时）、本月上传/下载
 vpsmgr user show <name>
 vpsmgr user start|stop|restart <name>
 vpsmgr user del <name>
 vpsmgr panel-url
 ```
 
-- 第 1 个用户 SSH：`ssh -p 10000 root@<宿主机IP>`
-- 配额校验：CPU>=1 整数，内存>=64 MiB 整数，磁盘>=1 GiB 整数
-- 流量统计：每月上传/下载总量（GB，1 位小数），CLI `user list`/`user show` 与面板概览均可查看；每月 1 号（UTC）自动归零；数据来自 LXD 每容器网卡计数器，面板后台协程每 60s 采样累加，容器重启/重装自动重基线
-- 面板：登录、电源、重装（数据全丢，IP/端口/域名不变）、改面板密码（>14 位）、重置 root 密码（随机 20 位显示一次）、域名增删
 - 面板密码与 root 密码独立；改/重置密码会踢掉该用户其他登录会话
 - 域名绑定后，80/443 按域名转发到容器 80/443，证书在容器内自签
 
@@ -51,17 +48,6 @@ sudo ./uninstall.sh --purge  # 连容器、存储池、LXD 一起删
 - 安全：面板挂在安装时生成的不可变随机 path（`[a-zA-Z0-9_-]` 10 位）下，非该 path 一律空 404，防止扫描与爆破开销；修改操作仅 POST 防 CSRF；会话 3 天、HttpOnly+Secure+SameSite=Lax；域名严格白名单防 YAML 注入；登录限速每 IP 每分钟 5 次；所有校验在服务端。
 - 流量统计：每容器网卡计数器由 LXD 提供（`lxc list` 的 bytes_received/bytes_sent）；面板协程每 60s 采样，delta 累加进 SQLite
 - 明确不做：IPv6、容器隔离、限速/封禁（出站流量）、快照、Web 终端、域名归属校验、审计、多机、计费。
-
-## 验证发布产物
-
-打 `v*` tag 时 GitHub Actions 会自动编译并发布 Release（linux/amd64 + linux/arm64），每个二进制都附有 SLSA 构建来源证明（`actions/attest`，Sigstore 签名），可验证"确实由本仓库源码、本 workflow 构建，未被加料"：
-
-```
-gh attestation verify vpsmgr-amd64 --owner bluebluesoda
-gh attestation verify vpsmgr-arm64 --owner bluebluesoda
-```
-
-也可用 `gh run download <run-id>` 直接拉取 workflow 产物，或 clone 源码后 `./build.sh v0.1.0` 本地重建，比对 `SHA256SUMS` 校验和。
 
 ## 目录结构
 
