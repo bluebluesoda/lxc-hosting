@@ -1,6 +1,8 @@
 module vpsmgr
 
-go 1.22
+go 1.26
+
+toolchain go1.26.5
 
 require (
 	golang.org/x/crypto v0.26.0

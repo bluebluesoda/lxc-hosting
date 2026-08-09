@@ -331,7 +331,7 @@ func userAdd(args []string) error {
 	if err != nil {
 		return err
 	}
-	printResult(res)
+	printAdded(res)
 	return nil
 }
 
@@ -537,6 +537,23 @@ func userShow(name string) error {
 	return nil
 }
 
+// printAdded prints the essentials of a freshly created user. Live stats (CPU%,
+// memory, traffic, domains) are all empty on a brand-new container and only add
+// noise, so they are intentionally skipped here.
+func printAdded(r *mgr.Result) {
+	u := r.User
+	fmt.Printf("name:     %s\n", u.Name)
+	fmt.Printf("state:    %s\n", r.State)
+	fmt.Printf("ports:    %d-%d (ssh: %d)\n", u.PortBase, u.PortBase+r.PortsPerUser-1, u.PortBase)
+	fmt.Printf("quotas:   %d cpu / %d MiB / %d GiB\n", u.CPU, u.MemMB, u.DiskGB)
+	if r.Password != "" {
+		fmt.Printf("password: %s  (panel + root)\n", r.Password)
+		fmt.Printf("ssh:      ssh -p %d root@%s\n", u.PortBase, r.PublicIP)
+		c, _ := cfg.Load()
+		fmt.Printf("panel:    https://%s:8443%s\n", r.PublicIP, panelPath(c))
+	}
+}
+
 func printResult(r *mgr.Result) {
 	u := r.User
 	fmt.Printf("name:     %s\n", u.Name)
@@ -550,7 +567,7 @@ func printResult(r *mgr.Result) {
 	fmt.Printf("domains:  %s\n", strings.Join(r.Domains, ", "))
 	if r.Password != "" {
 		c, _ := cfg.Load()
-		fmt.Printf("password: %s  (panel login + container root)\n", r.Password)
+		fmt.Printf("password: %s  (panel + root)\n", r.Password)
 		fmt.Printf("ssh:      ssh -p %d root@%s\n", u.PortBase, r.PublicIP)
 		fmt.Printf("panel:    https://%s:8443%s\n", r.PublicIP, panelPath(c))
 	}

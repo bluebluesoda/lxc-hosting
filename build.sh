@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
-# build.sh — compile the vpsmgr Go binary into ./bin (requires Go 1.22+).
+# build.sh — compile the vpsmgr Go binary into ./bin. Requires any Go that
+# supports toolchain auto-switch (>= 1.21); go.mod pins the go/toolchain
+# version (currently go1.26.5), so building always uses that exact release.
 # Usage: ./build.sh [VERSION]          # VERSION defaults to the source default
 #        ./build.sh v0.1.0             # strip leading 'v' and inject version
 #        GOOS=linux GOARCH=arm64 ./build.sh  # cross-compile (CGO_ENABLED=0)
@@ -22,7 +24,7 @@ if [[ -n "$VERSION" ]]; then
   VERSION="${VERSION#v}"   # strip leading 'v' (v0.1.0 -> 0.1.0)
 fi
 
-log "go $(go version | awk '{print $3}') os=${GOOS} arch=${GOARCH} version=${VERSION:-<source default>}"
+log "go $( (cd src && go version) | awk '{print $3}') os=${GOOS} arch=${GOARCH} version=${VERSION:-<source default>}"
 mkdir -p bin
 
 LDFLAGS="-s -w"
