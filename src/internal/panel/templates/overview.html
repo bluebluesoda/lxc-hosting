@@ -94,6 +94,7 @@ footer a{color:var(--muted);text-decoration:underline}
 <h2>{{if eq .Lang "zh"}}概览{{else}}Overview{{end}}<span> · {{.User.Name}}</span></h2>
 <table>
 <tr><th>{{if eq .Lang "zh"}}可用端口{{else}}Ports{{end}}</th><td colspan="3"><code>{{.PublicPorts}}</code><span class="muted">&nbsp;SSH: {{.PortBase}}</span></td></tr>
+{{if .IPv6}}<tr><th>IPv6</th><td colspan="3"><code>{{.IPv6}}</code></td></tr>{{end}}
 <tr><th>{{if eq .Lang "zh"}}SSH 登录{{else}}SSH access{{end}}</th><td colspan="3"><code>{{.SSH}}</code></td></tr>
 <tr><th>{{if eq .Lang "zh"}}配额{{else}}Quota{{end}}</th><td>{{.Quota}}</td><th>{{if eq .Lang "zh"}}本月流量{{else}}Traffic (this month){{end}}</th><td>↑ {{.UpGB}} GB / ↓ {{.DownGB}} GB</td></tr>
 </table>

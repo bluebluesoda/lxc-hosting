@@ -175,11 +175,17 @@ func (m *Manager) Add(name string, opt AddOptions) (*Result, error) {
 	}
 	ip := fmt.Sprintf("10.42.0.%d", idx+1)
 	portBase := m.cfg.Net.PortBase + (idx-1)*m.cfg.Net.PortsPerUser
-	if err := m.lx.Launch(name, image, ip, opt.CPU, opt.MemMB, opt.DiskGB); err != nil {
+	ipv6, _ := m.IPv6Addr(name)
+	if err := m.lx.Launch(name, image, ip, ipv6, opt.CPU, opt.MemMB, opt.DiskGB); err != nil {
 		return nil, fmt.Errorf("launch container: %w", err)
 	}
 	if err := m.Provision(name, image, opt.Password); err != nil {
 		return nil, fmt.Errorf("provision container: %w", err)
+	}
+	// IPv6 pass-through: attach the /128 route + proxy_ndp entry for the
+	// container's SLAAC global address (no-op when IPv6 is disabled).
+	if err := m.WireIPv6(name); err != nil {
+		return nil, fmt.Errorf("wire ipv6: %w", err)
 	}
 	u, err := m.db.CreateUser(name, hash, ip, idx, portBase, opt.CPU, opt.MemMB, opt.DiskGB)
 	if err != nil {
@@ -205,6 +211,7 @@ type Result struct {
 	MemUse       string
 	UpGB         string
 	DownGB       string
+	IPv6         string
 }
 
 // sampleUsage reads CPU/memory usage twice ~1s apart to derive CPU percentage.
@@ -250,9 +257,10 @@ func (m *Manager) ResultFor(u *db.User, pass string) *Result {
 		ds[i] = d.Domain
 	}
 	up, down := m.TrafficFor(u.ID)
+	v6, _ := m.IPv6Addr(u.Name)
 	return &Result{User: u, Password: pass, PublicIP: m.cfg.Panel.PublicIP,
 		State: st, Domains: ds, PortsPerUser: m.cfg.Net.PortsPerUser,
-		UpGB: FormatGB(up), DownGB: FormatGB(down)}
+		UpGB: FormatGB(up), DownGB: FormatGB(down), IPv6: v6}
 }
 
 func (m *Manager) Del(name string) error {
@@ -263,6 +271,7 @@ func (m *Manager) Del(name string) error {
 	if err != nil {
 		return err
 	}
+	m.UnwireIPv6(name)
 	if err := m.lx.Delete(name); err != nil {
 		fmt.Printf("  ! warn: delete container: %v\n", err)
 	}
@@ -427,12 +436,16 @@ func (m *Manager) Reinstall(name string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if err := m.lx.Launch(u.Name, image, u.IP, u.CPU, u.MemMB, u.DiskGB); err != nil {
+	ipv6, _ := m.IPv6Addr(u.Name)
+	if err := m.lx.Launch(u.Name, image, u.IP, ipv6, u.CPU, u.MemMB, u.DiskGB); err != nil {
 		return "", fmt.Errorf("recreate container: %w", err)
 	}
 	pass := pw.Generate(20)
 	if err := m.Provision(u.Name, image, pass); err != nil {
 		return "", fmt.Errorf("provision container: %w", err)
+	}
+	if err := m.WireIPv6(u.Name); err != nil {
+		return "", fmt.Errorf("wire ipv6: %w", err)
 	}
 	return pass, nil
 }

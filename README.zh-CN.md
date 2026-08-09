@@ -56,6 +56,8 @@ net:
   port_base: 10000             # 端口段起始
   ports_per_user: 50           # 每用户端口数（首个映射容器 22）
   ext_if: AUTO                 # 外网网卡，自动检测默认路由
+  ipv6_subnet: ""              # 可选：IPv6 直通的全球 /64，如 "2602:fada:6::/64"
+                               # 留空 = 不启用 IPv6（默认）；安装时询问设置
 
 lxd:
   image: "vpsmgr/debian-sshd"
@@ -79,10 +81,11 @@ sudo ./uninstall.sh --purge  # 连容器、存储池、LXD 一起删
 - 资源：用户 i=1..253，容器 IP 10.42.0.(i+1)，端口段 10000+(i-1)*50 共 50 个（第 1 个 SSH→22）
 - 存储：ZFS 磁盘配额映射 ZFS quota，只许扩大。
 - 网络：nftables 单表，DNAT（prerouting+output）+ MASQUERADE；reload 用 delete+apply 幂等；开机由 vpsmgr-nft.service 恢复。
+- IPv6（可选）：安装时询问是否启用；启用后在 lxdbr0 配全球 /64（无 NAT），容器经 SLAAC 自动拿全球地址，宿主用 /128 路由 + proxy_ndp 让外部直达容器；地址现算展示、不入库。`vpsmgr show` / 面板可见每台容器的 IPv6。
 - 反代：Traefik file provider 热加载，80 反代、443 SNI 直通，证书在容器内自管。
 - 安全：面板挂在安装时生成的随机 path；修改操作仅 POST；会话 3 天、HttpOnly+Secure+SameSite=Lax；路径外一律裸 404（无指纹）。
 - 流量统计：每容器网卡计数器由 LXD 提供，面板协程每 60s 采样，增量累加到 SQLite。
-- 未实现：IPv6、容器隔离、限速/封禁（出站流量）、快照、Web 终端、域名归属校验、审计、多机、计费。
+- 未实现：容器隔离、限速/封禁（出站流量）、快照、Web 终端、域名归属校验、审计、多机、计费。
 
 ## 目录结构
 

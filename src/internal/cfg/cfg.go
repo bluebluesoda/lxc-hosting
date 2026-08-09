@@ -53,6 +53,12 @@ type NetCfg struct {
 	PortBase     int    `yaml:"port_base"`
 	PortsPerUser int    `yaml:"ports_per_user"`
 	ExtIF        string `yaml:"ext_if"`
+	// IPv6Subnet is the global /64 prefix handed out to containers (e.g.
+	// "2602:fada:6::/64"). Empty means IPv6 pass-through is disabled.
+	// Containers get global addresses via SLAAC on lxdbr0; the host proxies
+	// their neighbor discovery. No NAT, no DB schema change: a container's
+	// IPv6 is whatever LXD/SLAAC assigned, read live from `lxc list`.
+	IPv6Subnet string `yaml:"ipv6_subnet,omitempty"`
 }
 
 type LXDCfg struct {
@@ -131,7 +137,43 @@ func (c *Config) FillAuto() error {
 	if c.Panel.URLPath == "" {
 		c.Panel.URLPath = pw.URLSafe(10)
 	}
+	// VPSMGR_IPV6_SUBNET lets the installer inject the /64 prefix at first
+	// install (it overrides whatever is in the config file).
+	if v := os.Getenv("VPSMGR_IPV6_SUBNET"); v != "" {
+		c.Net.IPv6Subnet = v
+	}
 	return nil
+}
+
+// IPv6Enabled reports whether IPv6 pass-through is configured.
+func (c *Config) IPv6Enabled() bool { return c.Net.IPv6Subnet != "" }
+
+// IPv6Network parses and validates the configured IPv6 prefix. It must be a
+// global (non-ULA, non-link-local) /64 (or shorter, e.g. /56). A bare address
+// without a prefix length is treated as /64 for convenience.
+func (c *Config) IPv6Network() (*net.IPNet, error) {
+	s := c.Net.IPv6Subnet
+	if s == "" {
+		return nil, fmt.Errorf("ipv6_subnet not configured")
+	}
+	if !strings.Contains(s, "/") {
+		s += "/64"
+	}
+	_, n, err := net.ParseCIDR(s)
+	if err != nil {
+		return nil, fmt.Errorf("invalid ipv6_subnet %q: %w", s, err)
+	}
+	if n.IP.To4() != nil {
+		return nil, fmt.Errorf("invalid ipv6_subnet %q: not an IPv6 prefix", s)
+	}
+	if n.IP.IsPrivate() || n.IP.IsLinkLocalUnicast() || n.IP.IsLoopback() || n.IP.IsUnspecified() {
+		return nil, fmt.Errorf("invalid ipv6_subnet %q: must be a global (public) prefix", s)
+	}
+	ones, _ := n.Mask.Size()
+	if ones > 64 {
+		return nil, fmt.Errorf("invalid ipv6_subnet %q: prefix must be /64 or shorter (got /%d)", s, ones)
+	}
+	return n, nil
 }
 
 func shCmd(name string, args ...string) string {

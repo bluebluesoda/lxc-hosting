@@ -21,6 +21,12 @@ if [[ $EUID -ne 0 ]]; then
 fi
 
 echo "==> vpsmgr installer starting (panel binary mode: $BUILD_MODE)"
+echo
+echo "===== 00-ipv6-ask ====="
+# shellcheck disable=SC1090
+source "$ROOT/scripts/00-ipv6-ask.sh"
+export VPSMGR_IPV6_SUBNET="${VPSMGR_IPV6_SUBNET:-}"
+
 for step in 00-check 10-lxd 20-network 30-traefik 40-panel 50-image; do
   echo
   echo "===== $step ====="

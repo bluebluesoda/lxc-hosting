@@ -3,6 +3,8 @@ package mgr
 import (
 	"fmt"
 	"time"
+
+	"vpsmgr/internal/lx"
 )
 
 // TrafficInterval is how often the background sampler runs.
@@ -20,6 +22,10 @@ func (m *Manager) SampleTraffic() error {
 	if err != nil {
 		return err
 	}
+	return m.sampleTraffic(tm)
+}
+
+func (m *Manager) sampleTraffic(tm map[string]lx.Traffic) error {
 	users, err := m.db.ListUsers()
 	if err != nil {
 		return err

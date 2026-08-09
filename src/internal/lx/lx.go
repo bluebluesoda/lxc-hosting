@@ -44,6 +44,7 @@ type info struct {
 			Addresses []struct {
 				Family  string `json:"family"`
 				Address string `json:"address"`
+				Scope   string `json:"scope"`
 			} `json:"addresses"`
 			Counters struct {
 				BytesReceived int64 `json:"bytes_received"`
@@ -135,6 +136,7 @@ func (c *Client) list() ([]info, error) {
 	return items, nil
 }
 
+// State returns the status of one container.
 func (c *Client) State(name string) (string, error) {
 	items, err := c.list()
 	if err != nil {
@@ -165,6 +167,34 @@ func (c *Client) IPv4(name string) (string, error) {
 		}
 	}
 	return "", errors.New("no ipv4 for " + name)
+}
+
+// IPv6 returns the first global (scope=global) IPv6 address of a container,
+// or "" if it has none yet (e.g. still starting, or IPv6 disabled).
+func (c *Client) IPv6(name string) (string, error) {
+	items, err := c.list()
+	if err != nil {
+		return "", err
+	}
+	for _, it := range items {
+		if it.Name == name && it.State != nil {
+			for _, ifs := range it.State.Network {
+				for _, a := range ifs.Addresses {
+					if a.Family == "inet6" && a.Scope == "global" {
+						return a.Address, nil
+					}
+				}
+			}
+		}
+	}
+	return "", nil
+}
+
+// NetworkSet sets one key=value config option on a managed LXD network
+// (e.g. lxdbr0). Used for IPv6 pass-through bridge configuration.
+func (c *Client) NetworkSet(network, kv string) error {
+	_, err := c.Run("network", "set", network, kv)
+	return err
 }
 
 func (c *Client) Start(name string) error { _, err := c.Run("start", name); return err }
@@ -199,10 +229,10 @@ func (c *Client) ImageExists(alias string) (bool, error) {
 	return true, nil
 }
 
-// Launch creates a container with limits, static IP and autostart enabled,
-// then starts it and waits until it is ready. security.nesting allows running
-// Docker / nested containers inside the instance.
-func (c *Client) Launch(name, image, ip string, cpu, memMB, diskGB int) error {
+// Launch creates a container with limits, static IPv4 (and optional static
+// IPv6) and autostart enabled, then starts it and waits until it is ready.
+// security.nesting allows running Docker / nested containers inside.
+func (c *Client) Launch(name, image, ip, ipv6 string, cpu, memMB, diskGB int) error {
 	args := []string{"init", image, name,
 		"-c", "limits.cpu=" + strconv.Itoa(cpu),
 		"-c", "limits.memory=" + strconv.Itoa(memMB) + "MiB",
@@ -212,9 +242,15 @@ func (c *Client) Launch(name, image, ip string, cpu, memMB, diskGB int) error {
 	if _, err := c.Run(args...); err != nil {
 		return err
 	}
-	// Static IP on the eth0 device inherited from the default profile.
-	if _, err := c.Run("config", "device", "override", name, "eth0", "ipv4.address="+ip); err != nil {
-		return fmt.Errorf("override eth0 ip: %w", err)
+	// Static IPv4 (and optional static IPv6) on the eth0 device inherited
+	// from the default profile. Both go in ONE override call — LXD refuses a
+	// second override of the same device ("device already exists").
+	devArgs := []string{"config", "device", "override", name, "eth0", "ipv4.address=" + ip}
+	if ipv6 != "" {
+		devArgs = append(devArgs, "ipv6.address="+ipv6)
+	}
+	if _, err := c.Run(devArgs...); err != nil {
+		return fmt.Errorf("override eth0: %w", err)
 	}
 	if _, err := c.Run("config", "device", "override", name, "root", "size="+strconv.Itoa(diskGB)+"GiB"); err != nil {
 		return fmt.Errorf("override root size: %w", err)

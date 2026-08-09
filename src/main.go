@@ -51,6 +51,19 @@ RemainAfterExit=yes
 WantedBy=multi-user.target
 `
 
+const ipv6Unit = `[Unit]
+Description=vpsmgr IPv6 pass-through routes
+After=network-online.target lxd.service vpsmgr-nft.service
+Wants=network-online.target
+Before=vpsmgr-panel.service
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/vpsmgr ipv6-reapply
+RemainAfterExit=yes
+[Install]
+WantedBy=multi-user.target
+`
+
 func main() {
 	log.SetFlags(0)
 	if len(os.Args) < 2 {
@@ -95,6 +108,10 @@ func main() {
 			break
 		}
 		err = userShow(os.Args[2])
+	case "ipv6-reapply":
+		// Re-attach IPv6 routes/proxy_ndp for all existing containers.
+		// Run by the vpsmgr-ipv6.service boot unit and `vpsmgr install`.
+		err = cmdIPv6Reapply()
 	case "version":
 		fmt.Println(ver.Version)
 		return
@@ -170,6 +187,18 @@ func cmdInstall() error {
 		}
 		d.Close()
 	}
+	// IPv6 pass-through: configure bridge + re-attach routes for existing
+	// containers (no-op when ipv6_subnet empty).
+	d, err := db.Open(c.Panel.DB)
+	if err != nil {
+		return err
+	}
+	m := mgr.New(c, d)
+	if err := m.RewireAllIPv6(); err != nil {
+		d.Close()
+		return fmt.Errorf("setup ipv6: %w", err)
+	}
+	d.Close()
 	f := fw.New(c)
 	if err := f.WriteMain(); err != nil {
 		return err
@@ -183,17 +212,44 @@ func cmdInstall() error {
 	if err := writeUnit("vpsmgr-nft.service", nftUnit); err != nil {
 		return err
 	}
+	// IPv6 pass-through boot unit (re-applies routes/proxy after reboot).
+	if c.IPv6Enabled() {
+		if err := writeUnit("vpsmgr-ipv6.service", ipv6Unit); err != nil {
+			return err
+		}
+	}
 	if out, err := exec.Command("systemctl", "daemon-reload").CombinedOutput(); err != nil {
 		return fmt.Errorf("daemon-reload: %s", strings.TrimSpace(string(out)))
 	}
 	if out, err := exec.Command("systemctl", "enable", "--now", "vpsmgr-nft.service").CombinedOutput(); err != nil {
 		return fmt.Errorf("enable vpsmgr-nft: %s", strings.TrimSpace(string(out)))
 	}
+	if c.IPv6Enabled() {
+		if out, err := exec.Command("systemctl", "enable", "--now", "vpsmgr-ipv6.service").CombinedOutput(); err != nil {
+			return fmt.Errorf("enable vpsmgr-ipv6: %s", strings.TrimSpace(string(out)))
+		}
+	}
 	if out, err := exec.Command("systemctl", "enable", "--now", "vpsmgr-panel.service").CombinedOutput(); err != nil {
 		return fmt.Errorf("enable vpsmgr-panel: %s", strings.TrimSpace(string(out)))
 	}
 	fmt.Printf("panel initialized: https://%s:8443%s\n", c.Panel.PublicIP, panelPath(c))
 	return nil
+}
+
+// cmdIPv6Reapply re-attaches IPv6 pass-through plumbing for all existing
+// containers (bridge config, /128 routes, proxy_ndp). No-op when IPv6 disabled.
+func cmdIPv6Reapply() error {
+	c, err := cfg.Load()
+	if err != nil {
+		return fmt.Errorf("load config: %w", err)
+	}
+	d, err := db.Open(c.Panel.DB)
+	if err != nil {
+		return err
+	}
+	defer d.Close()
+	m := mgr.New(c, d)
+	return m.RewireAllIPv6()
 }
 
 func writeUnit(name, content string) error {
@@ -546,6 +602,9 @@ func printAdded(r *mgr.Result) {
 	fmt.Printf("state:    %s\n", r.State)
 	fmt.Printf("ports:    %d-%d (ssh: %d)\n", u.PortBase, u.PortBase+r.PortsPerUser-1, u.PortBase)
 	fmt.Printf("quotas:   %d cpu / %d MiB / %d GiB\n", u.CPU, u.MemMB, u.DiskGB)
+	if r.IPv6 != "" {
+		fmt.Printf("ipv6:     %s\n", r.IPv6)
+	}
 	if r.Password != "" {
 		fmt.Printf("password: %s  (panel + root)\n", r.Password)
 		fmt.Printf("ssh:      ssh -p %d root@%s\n", u.PortBase, r.PublicIP)
@@ -559,6 +618,9 @@ func printResult(r *mgr.Result) {
 	fmt.Printf("name:     %s\n", u.Name)
 	fmt.Printf("state:    %s\n", r.State)
 	fmt.Printf("ip:       %s\n", u.IP)
+	if r.IPv6 != "" {
+		fmt.Printf("ipv6:     %s\n", r.IPv6)
+	}
 	fmt.Printf("ports:    %d-%d (ssh: %d)\n", u.PortBase, u.PortBase+r.PortsPerUser-1, u.PortBase)
 	fmt.Printf("quotas:   %d cpu / %d MiB / %d GiB\n", u.CPU, u.MemMB, u.DiskGB)
 	fmt.Printf("cpu use:  %s\n", r.CPUUse)

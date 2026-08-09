@@ -65,6 +65,17 @@ else
 fi
 
 # --- lxd init (preseed) ---
+# IPv6 pass-through: when VPSMGR_IPV6_SUBNET is set, lxdbr0 gets the global
+# prefix (no NAT) and containers SLAAC global addresses from it.
+V6_IP="none"
+V6_NAT="false"
+if [[ -n "${VPSMGR_IPV6_SUBNET:-}" ]]; then
+  # gateway = prefix + 1, keep the configured prefix length (/64, /48, /60...)
+  V6_LEN=$(echo "$VPSMGR_IPV6_SUBNET" | cut -d/ -f2)
+  V6_LEN="${V6_LEN:-64}"
+  V6_IP="$(echo "$VPSMGR_IPV6_SUBNET" | cut -d/ -f1)1/$V6_LEN"
+  log "IPv6 pass-through enabled: lxdbr0 will use global prefix $VPSMGR_IPV6_SUBNET"
+fi
 if [[ $POOL_EXISTS -eq 0 ]] || ! lxc network show lxdbr0 >/dev/null 2>&1; then
   PRESEED=/tmp/vpsmgr-preseed.yaml
   cat > "$PRESEED" <<EOF
@@ -73,8 +84,10 @@ networks:
 - config:
     ipv4.address: 10.42.0.1/24
     ipv4.nat: "true"
-    ipv6.address: none
-    ipv6.nat: "false"
+    ipv6.address: $V6_IP
+    ipv6.nat: "$V6_NAT"
+    ipv6.dhcp.stateful: "true"
+    ipv6.routing: "true"
   description: ""
   name: lxdbr0
   type: bridge
@@ -101,10 +114,14 @@ profiles:
   name: default
 cluster: null
 EOF
-  log "running lxd init --preseed (driver=$DRIVER, subnet 10.42.0.1/24)"
+  log "running lxd init --preseed (driver=$DRIVER, subnet 10.42.0.1/24, ipv6=$V6_IP)"
   if ! lxd init --preseed < "$PRESEED"; then
     log "preseed failed — creating missing pieces"
-    lxc network show lxdbr0 >/dev/null 2>&1 || lxc network create lxdbr0 ipv4.address=10.42.0.1/24 ipv4.nat=true ipv6.address=none
+    if [[ "$V6_IP" == "none" ]]; then
+      lxc network show lxdbr0 >/dev/null 2>&1 || lxc network create lxdbr0 ipv4.address=10.42.0.1/24 ipv4.nat=true ipv6.address=none
+    else
+      lxc network show lxdbr0 >/dev/null 2>&1 || lxc network create lxdbr0 ipv4.address=10.42.0.1/24 ipv4.nat=true ipv6.address="$V6_IP" ipv6.nat=false ipv6.dhcp.stateful=true ipv6.routing=true
+    fi
     if ! lxc storage show "$POOL" >/dev/null 2>&1; then
       if [[ -n "$SPARE" ]]; then
         lxc storage create "$POOL" zfs source="$SPARE" || true

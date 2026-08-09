@@ -120,6 +120,7 @@ type pageData struct {
 	Lang        string
 	UpGB        string
 	DownGB      string
+	IPv6        string
 }
 
 func (s *Server) Handler() http.Handler {
@@ -243,15 +244,20 @@ func (s *Server) buildData(u *db.User, msg, errMsg string) pageData {
 		Msg:         msg,
 		Err:         errMsg,
 	}
+	// One `lxc list` call only for the container status (must be live).
+	// Traffic is read from the DB — the background sampler writes it every 60s.
 	st, err := s.mgr.State(u.Name)
 	if err != nil {
 		d.Err = err.Error()
-	} else {
+	} else if st != "" {
 		d.State = st
 		d.IP = u.IP
 	}
-	s.mgr.SampleTraffic() // best-effort freshness for the displayed totals
-	up, down := s.mgr.TrafficFor(u.ID)
+	if s.cfg.IPv6Enabled() {
+		v6, _ := s.mgr.IPv6Addr(u.Name) // pure computation, no lxc call
+		d.IPv6 = v6
+	}
+	up, down := s.mgr.TrafficFor(u.ID) // pure DB read
 	d.UpGB = mgr.FormatGB(up)
 	d.DownGB = mgr.FormatGB(down)
 	domains, _ := s.db.ListDomains(u.ID)
