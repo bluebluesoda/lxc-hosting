@@ -188,9 +188,25 @@ func TestOverviewShowsMonthlyTraffic(t *testing.T) {
 		DownGB: "0.4",
 		Prefix: "/" + testSecret,
 	})
-	for _, want := range []string{"本月流量", "1.5 GB", "0.4 GB", "↑", "↓"} {
+	for _, want := range []string{"Traffic (this month)", "1.5 GB", "0.4 GB", "↑", "↓"} {
 		if !strings.Contains(html, want) {
-			t.Errorf("overview missing %q", want)
+			t.Errorf("overview (en default) missing %q", want)
+		}
+	}
+	if strings.Contains(html, "本月流量") {
+		t.Error("overview rendered Chinese without lang=zh")
+	}
+	// Explicit zh renders the Chinese labels.
+	zh := srv.renderToString(t, "overview.html", pageData{
+		User:   &db.User{Name: "alice"},
+		UpGB:   "1.5",
+		DownGB: "0.4",
+		Prefix: "/" + testSecret,
+		Lang:   langZh,
+	})
+	for _, want := range []string{"本月流量", "机器管理", "域名"} {
+		if !strings.Contains(zh, want) {
+			t.Errorf("overview (zh) missing %q", want)
 		}
 	}
 }
@@ -254,7 +270,7 @@ func TestFlashViaAPI(t *testing.T) {
 	if rr.Code != http.StatusOK {
 		t.Fatalf("/flash = %d, want 200", rr.Code)
 	}
-	if !strings.Contains(rr.Body.String(), "两次输入的密码不一致") {
+	if !strings.Contains(rr.Body.String(), "The two passwords do not match") {
 		t.Fatalf("/flash body = %q, want the stored message", rr.Body.String())
 	}
 	rr = doReq(t, h, http.MethodPost, prefix+"/flash", nil, sess)
@@ -309,6 +325,86 @@ func TestPasswordModalFlash(t *testing.T) {
 	}
 	if !strings.Contains(rw.Body.String(), "Abcdefghijk1234567890") {
 		t.Fatalf("/flash body = %q, want the password", rw.Body.String())
+	}
+}
+
+// TestLanguageSwitch verifies that browser language, the ?lang= param and the
+// cookie pick the rendered language, and that an explicit toggle persists.
+func TestLanguageSwitch(t *testing.T) {
+	srv, _ := newTestServer(t)
+	h := srv.Handler()
+	prefix := "/" + testSecret
+
+	// zh browser -> zh page.
+	req := httptest.NewRequest(http.MethodGet, prefix+"/login", nil)
+	req.Header.Set("Accept-Language", "zh-CN,zh;q=0.9")
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if !strings.Contains(rr.Body.String(), "VPS Manager 登录") {
+		t.Fatalf("zh login page missing Chinese title")
+	}
+
+	// English browser (or no header) -> en page.
+	rr = doReq(t, h, http.MethodGet, prefix+"/login", nil, nil)
+	if !strings.Contains(rr.Body.String(), "VPS Manager Login") {
+		t.Fatalf("default login page missing English title")
+	}
+
+	// Explicit ?lang=en on a zh browser wins and sets the cookie.
+	req = httptest.NewRequest(http.MethodGet, prefix+"/login?lang=en", nil)
+	req.Header.Set("Accept-Language", "zh-CN,zh;q=0.9")
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if !strings.Contains(rr.Body.String(), "VPS Manager Login") {
+		t.Fatalf("?lang=en did not switch the page to English")
+	}
+	var langCookieFound *http.Cookie
+	for _, c := range rr.Result().Cookies() {
+		if c.Name == langCookie {
+			v := *c
+			langCookieFound = &v
+		}
+	}
+	if langCookieFound == nil || langCookieFound.Value != langEn {
+		t.Fatalf("?lang=en did not persist the vpsmgr_lang cookie")
+	}
+
+	// The cookie overrides the zh browser header.
+	req = httptest.NewRequest(http.MethodGet, prefix+"/login", nil)
+	req.Header.Set("Accept-Language", "zh-CN,zh;q=0.9")
+	req.AddCookie(langCookieFound)
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if !strings.Contains(rr.Body.String(), "VPS Manager Login") {
+		t.Fatalf("cookie did not override browser language")
+	}
+
+	// lang="" normalizes to the English default rather than an unsupported value.
+	if got := normalLang("fr-FR"); got != "" {
+		t.Fatalf("normalLang(fr-FR) = %q, want \"\"", got)
+	}
+}
+
+// TestTemplateEscapesUserInput verifies server-side rendering never emits raw
+// markup from user-derived fields. The i18n/UI work renders the username and
+// domain values in several new places (card headings, hidden inputs) — they must
+// stay escaped first and last.
+func TestTemplateEscapesUserInput(t *testing.T) {
+	srv, _ := newTestServer(t)
+	html := srv.renderToString(t, "overview.html", pageData{
+		User: &db.User{Name: `alice"><img src=x onerror=alert(1)>`},
+		Domains: []string{`evil.example"><script>alert(1)</script>`},
+		UpGB:   "1",
+		DownGB: "1",
+		Prefix: "/" + testSecret,
+	})
+	for _, raw := range []string{`<img src=x onerror`, `<script>alert(1)</script>`, `"><script>`} {
+		if strings.Contains(html, raw) {
+			t.Fatalf("user input rendered unescaped: %q", raw)
+		}
+	}
+	if !strings.Contains(html, "&lt;script&gt;alert(1)") && !strings.Contains(html, "\u0026lt;script") {
+		t.Fatalf("expected an escaped script sequence in the page")
 	}
 }
 

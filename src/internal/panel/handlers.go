@@ -112,8 +112,8 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		ip := clientIP(r)
 		s.limiter.prune()
 		if !s.limiter.allowed(ip) {
-			s.renderStatus(w, http.StatusTooManyRequests, "login.html",
-				pageData{Title: "Login", Prefix: s.prefix(), Err: "尝试过于频繁，请 1 分钟后再试"})
+			s.renderStatus(w, r, http.StatusTooManyRequests, "login.html",
+				pageData{Title: "Login", Prefix: s.prefix(), Err: s.t(r, "err_too_many")})
 			return
 		}
 		if err := r.ParseForm(); err != nil {
@@ -139,10 +139,10 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
-		s.render(w, "login.html", pageData{Title: "Login", Prefix: s.prefix(), Err: "invalid credentials"})
+		s.render(w, r, "login.html", pageData{Title: "Login", Prefix: s.prefix(), Err: s.t(r, "err_bad_login")})
 		return
 	}
-	s.render(w, "login.html", pageData{Title: "Login", Prefix: s.prefix()})
+	s.render(w, r, "login.html", pageData{Title: "Login", Prefix: s.prefix()})
 }
 
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
@@ -155,7 +155,7 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
 	u := s.currentUser(r)
-	s.render(w, "overview.html", s.buildData(u, "", ""))
+	s.render(w, r, "overview.html", s.buildData(u, "", ""))
 }
 
 func (s *Server) handlePower(w http.ResponseWriter, r *http.Request) {
@@ -189,7 +189,7 @@ func (s *Server) handleReinstall(w http.ResponseWriter, r *http.Request) {
 		s.redirect(w, r, s.p(""), "error: "+err.Error())
 		return
 	}
-	s.redirectModal(w, r, s.p(""), "重装完成，新的 root 密码：\n"+pass)
+	s.redirectModal(w, r, s.p(""), s.t(r, "reinstall_done", pass))
 }
 
 // handlePanelPassword changes only the panel login password (must be > 14
@@ -203,7 +203,7 @@ func (s *Server) handlePanelPassword(w http.ResponseWriter, r *http.Request) {
 	pass := r.FormValue("new_password")
 	confirm := r.FormValue("confirm_password")
 	if pass != confirm {
-		s.redirect(w, r, s.p(""), "error: 两次输入的密码不一致")
+		s.redirect(w, r, s.p(""), "error: "+s.t(r, "err_pass_mismatch"))
 		return
 	}
 	if len(pass) <= 14 {
@@ -230,7 +230,7 @@ func (s *Server) handleRootReset(w http.ResponseWriter, r *http.Request) {
 		s.redirect(w, r, s.p(""), "error: "+err.Error())
 		return
 	}
-	s.redirectModal(w, r, s.p(""), "新的 root 密码：\n"+pass)
+	s.redirectModal(w, r, s.p(""), s.t(r, "new_root_password", pass))
 }
 
 func (s *Server) handleDomainAdd(w http.ResponseWriter, r *http.Request) {

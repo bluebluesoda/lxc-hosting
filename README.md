@@ -1,59 +1,61 @@
 # Vpsmgr Lite
 
-简易的LXC虚拟机管理面板：宿主 Ubuntu 24.04 + LXD 容器，每用户一台 Debian 13，用户可通过web面板基础管理(重启重装等)，自动NAT4端口转发，80/443 按域名由 Traefik 转发。
+[简体中文](README.zh-CN.md)
 
-## 安装
+A lightweight LXC virtual-machine management panel: host Ubuntu 24.04 + LXD containers, one Debian 13 VM per user. Users manage their machine from a web panel (start/stop/restart/reinstall), with automatic NAT4 port forwarding and 80/443 traffic proxied by Traefik per domain.
 
-**最低要求：Ubuntu 24.04（物理机或 KVM） 1核心  1.5G内存 磁盘10G空闲 root**    
-amd64 已测试 arm64 已测试
+## Installation
+
+**Minimum: Ubuntu 24.04 (bare metal or KVM), 1 core, 1.5G RAM, 10G free disk, root**  
+amd64 tested · arm64 tested
 
 ```
 git clone https://github.com/bluebluesoda/lxc-hosting.git && cd lxc-hosting
-sudo ./install.sh  # 通过预编译二进制安装
-#sudo ./install.sh --local-build # 强制本地编译
+sudo ./install.sh                  # install via prebuilt binary
+#sudo ./install.sh --local-build   # force a local build from source
 ```
 
-装完运行 `vpsmgr panel-url` 查看完整面板地址，形如 `https://<IP>:8443/<path>`。该随机 path 是面板唯一入口。
+After install run `vpsmgr panel-url` to see the full panel address, like `https://<IP>:8443/<path>`. That random path is the only entrance to the panel.
 
-## 使用
+## Usage
 
 ```
-vpsmgr add <name>               # 交互询问 CPU/内存/磁盘，回车用默认 1核/1024MiB/10GiB
+vpsmgr add <name>               # interactive CPU/memory/disk prompts, Enter keeps defaults 1 core/1024MiB/10GiB
 vpsmgr add <name> --cpu 2 --mem 2G --disk 20G
-vpsmgr update <name> [--cpu N] [--mem N] [--disk NG]   # 磁盘只许扩不许缩
-vpsmgr reset-passwd <name>      # 重置面板密码
-vpsmgr list                     # 列出用户及容器 CPU%/内存占用（瞬时）、本月上传/下载
+vpsmgr update <name> [--cpu N] [--mem N] [--disk NG]   # disk can only grow, never shrink
+vpsmgr reset-passwd <name>      # reissue the panel password
+vpsmgr list                     # users with container CPU%/memory (instant) and this month's up/down traffic
 vpsmgr show <name>
 vpsmgr start|stop|restart <name>
 vpsmgr del <name>
 vpsmgr panel-url
 ```
 
-- 面板密码与 root 密码独立；改/重置密码会踢掉该用户其他登录会话
-- 域名绑定后，80/443 按域名转发到容器 80/443
+- The panel password and the root password are independent; changing/resetting the panel password kicks the user's other sessions.
+- Once a domain is bound, 80/443 is forwarded per domain to the container's 80/443.
 
-## 配置
+## Configuration
 
-**默认配置不建议修改**
+**The default config is not meant to be changed.**
 
-配置文件在 `/etc/vpsmgr/config.yaml`（安装时自动生成，仅 root 可读写）。可用环境变量 `VPSMGR_CONFIG` 指定其它路径。面板设置改完执行 `systemctl restart vpsmgr-panel` 生效；`net` 段改动需执行 `vpsmgr install` 重新生成并下发防火墙规则。
+The config file is at `/etc/vpsmgr/config.yaml` (auto-generated at install, root-only read/write). Use the `VPSMGR_CONFIG` env var for another path. Panel settings take effect on `systemctl restart vpsmgr-panel`; changes under `net` require re-running `vpsmgr install` to regenerate and push the firewall rules.
 
 ```
 panel:
-  listen: ":8443"              # 面板监听地址（改端口或绑 IP 如 "127.0.0.1:8443"）
-  cert: /etc/vpsmgr/panel.crt  # HTTPS 证书
-  key: /etc/vpsmgr/panel.key   # 私钥
-  db: /etc/vpsmgr/vpsmgr.db    # SQLite 数据库
-  public_ip: AUTO              # 对外 IP，影响面板 URL 与 SSH 提示；自动检测
-  session_days: 3              # 登录会话有效期（天）
-  url_path: AUTO               # 随机 secret path，面板唯一入口；首次安装生成后勿改
+  listen: ":8443"              # panel listen address (change port or bind to e.g. "127.0.0.1:8443")
+  cert: /etc/vpsmgr/panel.crt  # HTTPS certificate
+  key: /etc/vpsmgr/panel.key   # private key
+  db: /etc/vpsmgr/vpsmgr.db    # SQLite database
+  public_ip: AUTO              # external IP, affects panel URL and SSH hints; auto-detected
+  session_days: 3              # login session lifetime (days)
+  url_path: AUTO               # random secret path, the only panel entrance; do not change after first install
 
 net:
-  subnet: "10.42.0.0/24"       # 容器子网
+  subnet: "10.42.0.0/24"       # container subnet
   gateway: "10.42.0.1"
-  port_base: 10000             # 端口段起始
-  ports_per_user: 50           # 每用户端口数（首个映射容器 22）
-  ext_if: AUTO                 # 外网网卡，自动检测默认路由
+  port_base: 10000             # port range start
+  ports_per_user: 50           # ports per user (first maps to container 22)
+  ext_if: AUTO                 # external NIC, auto-detected from the default route
 
 lxd:
   image: "vpsmgr/debian-sshd"
@@ -62,31 +64,31 @@ lxd:
   bridge: lxdbr0
 ```
 
-- `panel.listen`、`panel.public_ip`、`net.ext_if` 等仅影响面板展示/监听；`url_path`、`net.subnet`、`net.port_base`、`lxd.pool` 等与已有数据绑定，勿随意修改
-- 参考模板：`configs/config.yaml.example`；完整字段说明见 `src/internal/cfg/cfg.go`
+- `panel.listen`, `panel.public_ip`, `net.ext_if` only affect display/on how the panel listens; `url_path`, `net.subnet`, `net.port_base`, `lxd.pool` etc. are bound to existing data — do not change them.
+- Reference template: `configs/config.yaml.example`; full field docs in `src/internal/cfg/cfg.go`.
 
-## 卸载
-
-```
-sudo ./uninstall.sh          # 卸载软件，保留容器与存储
-sudo ./uninstall.sh --purge  # 连容器、存储池、LXD 一起删
-```
-
-## 设计要点
-
-- 资源：用户 i=1..253，容器 IP 10.42.0.(i+1)，端口段 10000+(i-1)*50 共 50 个（第 1 个 SSH→22）
-- 存储：ZFS 磁盘配额映射 ZFS quota，只许扩容。
-- 网络：nftables 单表，DNAT（prerouting+output）+ MASQUERADE；reload 用 delete+apply 幂等；开机由 vpsmgr-nft.service 恢复。
-- 反代：Traefik file provider 热加载，80 反代、443 SNI 直通，证书在容器内自管。
-- 安全：面板挂在安装时生成的随机 path；修改操作仅 POST；会话 3 天、HttpOnly+Secure+SameSite=Lax；
-- 流量统计：每容器网卡计数器由 LXD 提供，面板协程每 60s 采样，delta 累加进 SQLite
-- 没有的功能：IPv6、容器隔离、限速/封禁（出站流量）、快照、Web 终端、域名归属校验、审计、多机、计费。
-
-## 目录结构
+## Uninstall
 
 ```
-install.sh / uninstall.sh / build.sh   # 安装 / 卸载 / 本地编译 bin/vpsmgr
+sudo ./uninstall.sh          # remove the software, keep containers and storage
+sudo ./uninstall.sh --purge  # also delete containers, storage pool and LXD
+```
+
+## Design notes
+
+- Resources: user i=1..253, container IP 10.42.0.(i+1), port range 10000+(i-1)*50, 50 ports (first one maps to SSH 22).
+- Storage: ZFS disk quota maps onto the ZFS quota; disk can only grow.
+- Network: a single nftables table, DNAT (prerouting+output) + MASQUERADE; reload via idempotent delete+apply; restored on boot by vpsmgr-nft.service.
+- Reverse proxy: Traefik file provider hot-reloads, 80 proxies, 443 SNI passthrough, the certificate is managed inside the container.
+- Security: the panel sits behind a random path generated at install; state-changes are POST only; 3-day sessions with HttpOnly+Secure+SameSite=Lax; bare 404 for anything off-path (no fingerprint).
+- Traffic accounting: per-container NIC counters come from LXD; a panel goroutine samples every 60s and accumulates deltas into SQLite.
+- Not implemented: IPv6, container isolation, rate-limit/block (egress), snapshots, web terminal, domain ownership verification, audit, multi-host, billing.
+
+## Layout
+
+```
+install.sh / uninstall.sh / build.sh   # install / uninstall / local build of bin/vpsmgr
 scripts/   00-check 10-lxd 20-network 30-traefik 40-panel 50-image
-configs/   参考配置（traefik / systemd）
-src/       Go 源码（CLI + 面板单二进制）
+configs/   reference configs (traefik / systemd)
+src/       Go source (single binary: CLI + panel)
 ```

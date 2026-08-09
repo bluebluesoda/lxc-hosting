@@ -113,7 +113,7 @@ func usage() {
 usage:
   vpsmgr add <name> [--password X] [--cpu 1] [--mem 1G] [--disk 10G]
   vpsmgr update <name> [--cpu 2] [--mem 2G] [--disk 20G]
-  vpsmgr reset-passwd <name>    # panel 密码重置为随机密码（显示一次）
+  vpsmgr reset-passwd <name>    # reissue panel password (shown once)
   vpsmgr start|stop|restart <name>
   vpsmgr del <name>
   vpsmgr list
@@ -295,21 +295,21 @@ func userAdd(args []string) error {
 
 	if inter.IsTTY() {
 		if !setCpu {
-			s, err := inter.Ask("CPU 核数", "1", "", validateCPU)
+			s, err := inter.Ask("CPU cores", "1", "", validateCPU)
 			if err != nil {
 				return err
 			}
 			cpu, _ = strconv.Atoi(s)
 		}
 		if !setMem {
-			s, err := inter.Ask("内存", "1024", " MiB (如 512 或 1G)", validateMem)
+			s, err := inter.Ask("Memory", "1024", " MiB (e.g. 512 or 1G)", validateMem)
 			if err != nil {
 				return err
 			}
 			mem, _ = parseMemStrict(s)
 		}
 		if !setDisk {
-			s, err := inter.Ask("磁盘", "10", " GiB", validateDisk)
+			s, err := inter.Ask("Disk", "10", " GiB", validateDisk)
 			if err != nil {
 				return err
 			}
@@ -408,23 +408,23 @@ func userUpdate(args []string) error {
 	}
 
 	if inter.IsTTY() {
-		fmt.Printf("当前配额: CPU %d 核 / 内存 %d MiB / 磁盘 %d GiB\n", u.CPU, u.MemMB, u.DiskGB)
+		fmt.Printf("current quota: CPU %d / mem %d MiB / disk %d GiB\n", u.CPU, u.MemMB, u.DiskGB)
 		if !setCpu {
-			s, err := inter.Ask("新 CPU 核数", strconv.Itoa(cpu), "", validateCPU)
+			s, err := inter.Ask("new CPU cores", strconv.Itoa(cpu), "", validateCPU)
 			if err != nil {
 				return err
 			}
 			cpu, _ = strconv.Atoi(s)
 		}
 		if !setMem {
-			s, err := inter.Ask("新 内存", strconv.Itoa(mem), " MiB (如 512 或 1G)", validateMem)
+			s, err := inter.Ask("new memory", strconv.Itoa(mem), " MiB (e.g. 512 or 1G)", validateMem)
 			if err != nil {
 				return err
 			}
 			mem, _ = parseMemStrict(s)
 		}
 		if !setDisk {
-			s, err := inter.Ask("新 磁盘", strconv.Itoa(disk), " GiB (只允许扩容)", validateDisk)
+			s, err := inter.Ask("new disk", strconv.Itoa(disk), " GiB (only grow allowed)", validateDisk)
 			if err != nil {
 				return err
 			}
@@ -434,13 +434,13 @@ func userUpdate(args []string) error {
 
 	if cpu == u.CPU && mem == u.MemMB && disk == u.DiskGB {
 		if inter.IsTTY() {
-			fmt.Println("无变更，退出")
+			fmt.Println("no changes, exiting")
 			return nil
 		}
 		return fmt.Errorf("nothing to update: pass at least one of --cpu/--mem/--disk")
 	}
 	if disk < u.DiskGB {
-		return fmt.Errorf("磁盘只允许扩容：当前 %d GiB，不能缩到 %d GiB", u.DiskGB, disk)
+		return fmt.Errorf("disk can only grow: current %d GiB, cannot shrink to %d GiB", u.DiskGB, disk)
 	}
 
 	m := mgr.New(c, d)
@@ -560,11 +560,11 @@ var reInt = regexp.MustCompile(`^\d+$`)
 
 func validateCPU(s string) error {
 	if !reInt.MatchString(s) {
-		return fmt.Errorf("CPU 核数必须是整数（不能是小数）")
+		return fmt.Errorf("CPU cores must be an integer (no fractions)")
 	}
 	n, _ := strconv.Atoi(s)
 	if n < 1 {
-		return fmt.Errorf("CPU 核数不能小于 1")
+		return fmt.Errorf("CPU cores must be at least 1")
 	}
 	return nil
 }
@@ -586,15 +586,15 @@ func parseMemStrict(s string) (int, error) {
 		mult = 1024
 		s = s[:len(s)-1]
 	default:
-		return 0, fmt.Errorf("内存格式错误：应为整数 MiB（如 512）或整数后缀（如 1G）")
+		return 0, fmt.Errorf("memory must be an integer in MiB (e.g. 512) or with a suffix (e.g. 1G)")
 	}
 	if !reInt.MatchString(s) {
-		return 0, fmt.Errorf("内存必须是整数 MiB（如 512）或整数后缀（如 1G），不能是小数")
+		return 0, fmt.Errorf("memory must be an integer number of MiB (e.g. 512) or a suffix (e.g. 1G), not a decimal")
 	}
 	n, _ := strconv.Atoi(s)
 	n *= mult
 	if n < 64 {
-		return 0, fmt.Errorf("内存不能小于 64 MiB")
+		return 0, fmt.Errorf("memory must be at least 64 MiB")
 	}
 	return n, nil
 }
@@ -614,11 +614,11 @@ func parseDiskStrict(s string) (int, error) {
 		s = s[:len(s)-1]
 	}
 	if !reInt.MatchString(s) {
-		return 0, fmt.Errorf("磁盘必须是整数 GiB（如 10 或 10G），不能是小数")
+		return 0, fmt.Errorf("disk must be an integer number of GiB (e.g. 10 or 10G), not a decimal")
 	}
 	n, _ := strconv.Atoi(s)
 	if n < 1 {
-		return 0, fmt.Errorf("磁盘不能小于 1 GiB")
+		return 0, fmt.Errorf("disk must be at least 1 GiB")
 	}
 	return n, nil
 }
