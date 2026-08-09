@@ -65,8 +65,36 @@ func main() {
 		err = cmdServe()
 	case "panel-url":
 		err = cmdPanelURL()
-	case "user":
-		err = cmdUser(os.Args[2:])
+	case "add":
+		err = userAdd(os.Args[2:])
+	case "del":
+		if len(os.Args) != 3 {
+			err = fmt.Errorf("usage: vpsmgr del <name>")
+			break
+		}
+		err = userDel(os.Args[2])
+	case "list":
+		err = userList()
+	case "update":
+		err = userUpdate(os.Args[2:])
+	case "start", "stop", "restart":
+		if len(os.Args) != 3 {
+			err = fmt.Errorf("usage: vpsmgr %s <name>", os.Args[1])
+			break
+		}
+		err = userPower(os.Args[1], os.Args[2])
+	case "reset-passwd":
+		if len(os.Args) != 3 {
+			err = fmt.Errorf("usage: vpsmgr reset-passwd <name>")
+			break
+		}
+		err = userResetPasswd(os.Args[2])
+	case "show":
+		if len(os.Args) != 3 {
+			err = fmt.Errorf("usage: vpsmgr show <name>")
+			break
+		}
+		err = userShow(os.Args[2])
 	case "version":
 		fmt.Println(ver.Version)
 		return
@@ -83,16 +111,14 @@ func main() {
 func usage() {
 	fmt.Print(`vpsmgr ` + ver.Version + `
 usage:
-  vpsmgr install                  initialize panel (config/cert/db/systemd)
-  vpsmgr serve                    run the web panel (systemd service)
-  vpsmgr panel-url                print panel address
-  vpsmgr user add <name> [--password X] [--cpu 1] [--mem 1G] [--disk 10G]
-  vpsmgr user update <name> [--cpu 2] [--mem 2G] [--disk 20G]
-  vpsmgr user reset-passwd <name>    # panel 密码重置为随机密码（显示一次）
-  vpsmgr user start|stop|restart <name>
-  vpsmgr user del <name>
-  vpsmgr user list
-  vpsmgr user show <name>
+  vpsmgr add <name> [--password X] [--cpu 1] [--mem 1G] [--disk 10G]
+  vpsmgr update <name> [--cpu 2] [--mem 2G] [--disk 20G]
+  vpsmgr reset-passwd <name>    # panel 密码重置为随机密码（显示一次）
+  vpsmgr start|stop|restart <name>
+  vpsmgr del <name>
+  vpsmgr list
+  vpsmgr show <name>
+  vpsmgr panel-url              print panel address
   vpsmgr version
 `)
 }
@@ -225,46 +251,9 @@ func cmdPanelURL() error {
 	return nil
 }
 
-func cmdUser(args []string) error {
-	if len(args) < 1 {
-		return fmt.Errorf("user subcommand required: add|del|update|list|show")
-	}
-	sub := args[0]
-	rest := args[1:]
-	switch sub {
-	case "add":
-		return userAdd(rest)
-	case "del":
-		if len(rest) != 1 {
-			return fmt.Errorf("usage: vpsmgr user del <name>")
-		}
-		return userDel(rest[0])
-	case "list":
-		return userList()
-	case "update":
-		return userUpdate(rest)
-	case "start", "stop", "restart":
-		if len(rest) != 1 {
-			return fmt.Errorf("usage: vpsmgr user %s <name>", sub)
-		}
-		return userPower(sub, rest[0])
-	case "reset-passwd":
-		if len(rest) != 1 {
-			return fmt.Errorf("usage: vpsmgr user reset-passwd <name>")
-		}
-		return userResetPasswd(rest[0])
-	case "show":
-		if len(rest) != 1 {
-			return fmt.Errorf("usage: vpsmgr user show <name>")
-		}
-		return userShow(rest[0])
-	}
-	return fmt.Errorf("unknown user subcommand: %s", sub)
-}
-
 func userAdd(args []string) error {
 	if len(args) < 1 {
-		return fmt.Errorf("usage: vpsmgr user add <name> [--password X] [--cpu 1] [--mem 1G] [--disk 10G]")
+		return fmt.Errorf("usage: vpsmgr add <name> [--password X] [--cpu 1] [--mem 1G] [--disk 10G]")
 	}
 	name := args[0]
 	fs := flag.NewFlagSet("add", flag.ContinueOnError)
@@ -346,7 +335,8 @@ func userAdd(args []string) error {
 	return nil
 }
 
-func userDel(name string) error {	c, err := cfg.Load()
+func userDel(name string) error {
+	c, err := cfg.Load()
 	if err != nil {
 		return err
 	}
@@ -365,7 +355,7 @@ func userDel(name string) error {	c, err := cfg.Load()
 
 func userUpdate(args []string) error {
 	if len(args) < 1 {
-		return fmt.Errorf("usage: vpsmgr user update <name> [--cpu 2] [--mem 2G] [--disk 20G]")
+		return fmt.Errorf("usage: vpsmgr update <name> [--cpu 2] [--mem 2G] [--disk 20G]")
 	}
 	name := args[0]
 	fs := flag.NewFlagSet("update", flag.ContinueOnError)
@@ -504,7 +494,8 @@ func userPower(action, name string) error {
 	return nil
 }
 
-func userList() error {	c, err := cfg.Load()
+func userList() error {
+	c, err := cfg.Load()
 	if err != nil {
 		return err
 	}

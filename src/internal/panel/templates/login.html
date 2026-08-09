@@ -5,13 +5,29 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{{.Title}}</title>
 <style>
-body{font-family:system-ui,-apple-system,sans-serif;background:#0f172a;color:#e2e8f0;display:flex;justify-content:center;padding-top:8vh}
-.card{background:#1e293b;padding:2rem;border-radius:12px;width:320px}
-h1{font-size:1.4rem;margin:0 0 1rem}
-label{display:block;margin:.6rem 0 .2rem;font-size:.85rem;color:#94a3b8}
-input{width:100%;box-sizing:border-box;padding:.55rem;border-radius:8px;border:1px solid #334155;background:#0f172a;color:#e2e8f0}
-button{margin-top:1.2rem;width:100%;padding:.6rem;border:0;border-radius:8px;background:#3b82f6;color:#fff;cursor:pointer}
-.err{background:#7f1d1d;color:#fecaca;padding:.5rem;border-radius:8px;margin-top:1rem;font-size:.85rem}
+:root{
+  --bg:#f1f5f9; --card:#ffffff; --border:#e2e8f0; --text:#0f172a; --muted:#64748b;
+  --accent:#2563eb; --on-accent:#fff; --err-bg:#fef2f2; --err-fg:#dc2626;
+  color-scheme:light;
+}
+@media (prefers-color-scheme: dark){
+  :root{
+    --bg:#0f172a; --card:#1e293b; --border:#334155; --text:#e2e8f0; --muted:#94a3b8;
+    --accent:#3b82f6; --on-accent:#fff; --err-bg:#450a0a; --err-fg:#fecaca;
+    color-scheme:dark;
+  }
+}
+*{box-sizing:border-box}
+body{font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;background:var(--bg);color:var(--text);display:flex;flex-direction:column;align-items:center;padding:8vh 1rem 0;margin:0;min-height:calc(100vh - 8vh)}
+.card{background:var(--card);border:1px solid var(--border);padding:1.6rem;border-radius:12px;width:320px}
+h1{font-size:1.3rem;margin:0 0 1rem;font-weight:600}
+label{display:block;margin:.6rem 0 .2rem;font-size:.84rem;color:var(--muted)}
+input{width:100%;padding:.5rem;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-family:inherit}
+button{margin-top:1.2rem;width:100%;padding:.55rem;border:0;border-radius:8px;background:var(--accent);color:var(--on-accent);cursor:pointer;font-family:inherit;font-size:.92rem}
+button:hover{filter:brightness(1.08)}
+.err{background:var(--err-bg);color:var(--err-fg);padding:.5rem;border-radius:8px;margin-top:1rem;font-size:.84rem}
+footer{margin-top:1.5rem;color:var(--muted);font-size:.8rem}
+footer a{color:var(--muted);text-decoration:underline}
 </style>
 </head>
 <body>
@@ -24,5 +40,6 @@ button{margin-top:1.2rem;width:100%;padding:.6rem;border:0;border-radius:8px;bac
 </form>
 {{if .Err}}<div class="err">{{.Err}}</div>{{end}}
 </div>
+<footer><a href="https://github.com/bluebluesoda/lxc-hosting" target="_blank" rel="noopener">Vpsmgr lite</a></footer>
 </body>
 </html>

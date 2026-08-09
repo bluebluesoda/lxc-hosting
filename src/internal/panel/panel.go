@@ -85,10 +85,11 @@ type Server struct {
 	db      *db.DB
 	mgr     *mgr.Manager
 	limiter *loginLimiter
+	flash   *flashStore
 }
 
 func New(c *cfg.Config, d *db.DB, m *mgr.Manager) *Server {
-	return &Server{cfg: c, db: d, mgr: m, limiter: newLoginLimiter()}
+	return &Server{cfg: c, db: d, mgr: m, limiter: newLoginLimiter(), flash: newFlashStore()}
 }
 
 func (s *Server) templates() (*template.Template, error) {
@@ -102,21 +103,22 @@ func (s *Server) prefix() string { return "/" + s.cfg.Panel.URLPath }
 func (s *Server) p(route string) string { return s.prefix() + route }
 
 type pageData struct {
-	Title    string
-	User     *db.User
-	State    string
-	IP       string
-	PortBase int
-	Ports    string
-	SSH      string
-	Quota    string
-	Domains  []string
-	Msg      string
-	Err      string
-	PublicIP string
-	Prefix   string
-	UpGB     string
-	DownGB   string
+	Title       string
+	User        *db.User
+	State       string
+	IP          string
+	PortBase    int
+	Ports       string
+	PublicPorts string
+	SSH         string
+	Quota       string
+	Domains     []string
+	Msg         string
+	Err         string
+	PublicIP    string
+	Prefix      string
+	UpGB        string
+	DownGB      string
 }
 
 func (s *Server) Handler() http.Handler {
@@ -130,15 +132,27 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/root-reset", s.requireAuth(s.requirePost(s.handleRootReset)))
 	mux.HandleFunc("/domain-add", s.requireAuth(s.requirePost(s.handleDomainAdd)))
 	mux.HandleFunc("/domain-del", s.requireAuth(s.requirePost(s.handleDomainDel)))
+	mux.HandleFunc("/flash", s.requireAuth(s.requirePost(s.handleFlash)))
 	prefix := s.prefix()
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		rest, ok := stripPrefix(r.URL.Path, prefix)
 		if !ok {
 			// Never reach the mux: scanners probing random paths get a bare
-			// 404 with no fingerprint and no auth/rate-limit cost.
+			// 404 with no fingerprint and no auth/rate-limit cost. No headers
+			// are set here on purpose — any header would fingerprint the service.
 			featureless404(w)
 			return
 		}
+		// Security headers apply only to real panel responses behind the prefix,
+		// never to the featureless 404 above.
+		h := w.Header()
+		h.Set("X-Content-Type-Options", "nosniff")
+		h.Set("X-Frame-Options", "DENY")
+		h.Set("Referrer-Policy", "no-referrer")
+		h.Set("Cache-Control", "no-store")
+		h.Set("Content-Security-Policy",
+			"default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; "+
+				"img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; form-action 'self'; base-uri 'self'")
 		r2 := r.Clone(r.Context())
 		r2.URL.Path = rest
 		mux.ServeHTTP(w, r2)
@@ -181,24 +195,30 @@ func (s *Server) renderStatus(w http.ResponseWriter, status int, name string, da
 }
 
 func (s *Server) redirect(w http.ResponseWriter, r *http.Request, path, msg string) {
-	if msg != "" {
-		path += "?msg=" + strings.ReplaceAll(msg, " ", "+")
-	}
+	s.storeFlash(r, msg, "toast")
+	http.Redirect(w, r, path, http.StatusFound)
+}
+
+// redirectModal is like redirect but the banner is shown as a modal (used for
+// one-time secrets such as freshly generated passwords).
+func (s *Server) redirectModal(w http.ResponseWriter, r *http.Request, path, msg string) {
+	s.storeFlash(r, msg, "modal")
 	http.Redirect(w, r, path, http.StatusFound)
 }
 
 func (s *Server) buildData(u *db.User, msg, errMsg string) pageData {
 	d := pageData{
-		Title:     "VPS Manager",
-		User:      u,
-		PublicIP:  s.cfg.Panel.PublicIP,
-		Prefix:    s.prefix(),
-		PortBase:  u.PortBase,
-		Ports:     portRange(u.PortBase, s.cfg.Net.PortsPerUser),
-		SSH:       "ssh -p " + itoa(u.PortBase) + " root@" + s.cfg.Panel.PublicIP,
-		Quota:     itoa(u.CPU) + " CPU / " + itoa(u.MemMB) + " MiB / " + itoa(u.DiskGB) + " GiB",
-		Msg:       msg,
-		Err:       errMsg,
+		Title:       "VPS Manager",
+		User:        u,
+		PublicIP:    s.cfg.Panel.PublicIP,
+		Prefix:      s.prefix(),
+		PortBase:    u.PortBase,
+		Ports:       portRange(u.PortBase, s.cfg.Net.PortsPerUser),
+		PublicPorts: s.cfg.Panel.PublicIP + ":" + portRange(u.PortBase, s.cfg.Net.PortsPerUser),
+		SSH:         "ssh -p " + itoa(u.PortBase) + " root@" + s.cfg.Panel.PublicIP,
+		Quota:       itoa(u.CPU) + " CPU / " + itoa(u.MemMB) + " MiB / " + itoa(u.DiskGB) + " GiB",
+		Msg:         msg,
+		Err:         errMsg,
 	}
 	st, err := s.mgr.State(u.Name)
 	if err != nil {

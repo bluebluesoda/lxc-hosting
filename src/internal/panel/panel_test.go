@@ -48,8 +48,9 @@ func doReq(t *testing.T, h http.Handler, method, target string, form url.Values,
 	return rr
 }
 
-// featureless asserts a bare 404: empty body and no Content-Type, identical
-// for every wrong path so scanners learn nothing.
+// featureless asserts a bare 404: empty body, no Content-Type and no headers
+// at all, identical for every wrong path so scanners learn nothing. Any header
+// (including security headers) would fingerprint the service.
 func featureless(t *testing.T, rr *httptest.ResponseRecorder) {
 	t.Helper()
 	if rr.Code != http.StatusNotFound {
@@ -58,8 +59,8 @@ func featureless(t *testing.T, rr *httptest.ResponseRecorder) {
 	if body := rr.Body.String(); body != "" {
 		t.Fatalf("body = %q, want empty", body)
 	}
-	if ct := rr.Header().Get("Content-Type"); ct != "" {
-		t.Fatalf("Content-Type = %q, want unset", ct)
+	if n := len(rr.Header()); n != 0 {
+		t.Fatalf("headers = %v, want none (headers fingerprint the service)", rr.Header())
 	}
 }
 
@@ -78,6 +79,10 @@ func TestFeatureless404ForWrongPaths(t *testing.T) {
 		"/secret/../" + testSecret,
 		"/?q=1",
 		"/anything/else",
+	}
+	// Every real route must be unreachable without the secret prefix.
+	for _, route := range []string{"/login", "/logout", "/power", "/reinstall", "/password", "/root-reset", "/domain-add", "/domain-del", "/flash"} {
+		paths = append(paths, route)
 	}
 	for _, p := range paths {
 		rr := doReq(t, h, http.MethodGet, p, nil, nil)
@@ -183,7 +188,7 @@ func TestOverviewShowsMonthlyTraffic(t *testing.T) {
 		DownGB: "0.4",
 		Prefix: "/" + testSecret,
 	})
-	for _, want := range []string{"本月上传", "本月下载", "1.5 GB", "0.4 GB"} {
+	for _, want := range []string{"本月流量", "1.5 GB", "0.4 GB", "↑", "↓"} {
 		if !strings.Contains(html, want) {
 			t.Errorf("overview missing %q", want)
 		}
@@ -202,6 +207,109 @@ func (s *Server) renderToString(t *testing.T, name string, data pageData) string
 		t.Fatal(err)
 	}
 	return b.String()
+}
+
+// TestFlashViaAPI verifies result banners are stored server-side and fetched
+// via a JSON endpoint (never in the URL), and that the password modal variant
+// works the same way.
+func TestFlashViaAPI(t *testing.T) {
+	srv, d := newTestServer(t)
+	h := srv.Handler()
+	prefix := "/" + testSecret
+
+	hash, err := pw.Hash("correct-horse-battery")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.CreateUser("alice", hash, "10.42.0.2", 1, 10000, 1, 1024, 10); err != nil {
+		t.Fatal(err)
+	}
+
+	rr := doReq(t, h, http.MethodPost, prefix+"/login", url.Values{"username": {"alice"}, "password": {"correct-horse-battery"}}, nil)
+	var sess *http.Cookie
+	for _, c := range rr.Result().Cookies() {
+		if c.Name == "vpsmgr_session" {
+			v := *c
+			sess = &v
+		}
+	}
+	if sess == nil {
+		t.Fatal("no session cookie")
+	}
+
+	// A state-changing POST with a mismatched password confirm redirects to the
+	// prefix root WITHOUT leaking the message into the URL (deterministic, no
+	// lxc involvement).
+	rr = doReq(t, h, http.MethodPost, prefix+"/password",
+		url.Values{"new_password": {"xxxxxxxxxxxxxxxx"}, "confirm_password": {"yyyyyyyyyyyyyyyy"}}, sess)
+	if rr.Code != http.StatusFound {
+		t.Fatalf("password = %d, want 302", rr.Code)
+	}
+	if loc := rr.Header().Get("Location"); loc != prefix {
+		t.Fatalf("Location = %q, want %q (message must not be a query param)", loc, prefix)
+	}
+
+	// The flash is exposed via /flash as JSON and consumed once.
+	rr = doReq(t, h, http.MethodPost, prefix+"/flash", nil, sess)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("/flash = %d, want 200", rr.Code)
+	}
+	if !strings.Contains(rr.Body.String(), "两次输入的密码不一致") {
+		t.Fatalf("/flash body = %q, want the stored message", rr.Body.String())
+	}
+	rr = doReq(t, h, http.MethodPost, prefix+"/flash", nil, sess)
+	if !strings.Contains(rr.Body.String(), `"msg":""`) {
+		t.Fatalf("/flash after consume = %q, want empty", rr.Body.String())
+	}
+
+	// /flash is behind auth.
+	rr = doReq(t, h, http.MethodPost, prefix+"/flash", nil, nil)
+	if rr.Code != http.StatusFound {
+		t.Fatalf("/flash without session = %d, want redirect to login", rr.Code)
+	}
+}
+
+// TestPasswordModalFlash verifies the modal flash kind (root password / reinstall
+// result) is delivered to the frontend.
+func TestPasswordModalFlash(t *testing.T) {
+	srv, d := newTestServer(t)
+	h := srv.Handler()
+	prefix := "/" + testSecret
+
+	hash, err := pw.Hash("correct-horse-battery")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.CreateUser("alice", hash, "10.42.0.2", 1, 10000, 1, 1024, 10); err != nil {
+		t.Fatal(err)
+	}
+
+	// Log in to obtain a valid session token, then store a modal flash under it.
+	rr := doReq(t, h, http.MethodPost, prefix+"/login", url.Values{"username": {"alice"}, "password": {"correct-horse-battery"}}, nil)
+	var sess *http.Cookie
+	for _, c := range rr.Result().Cookies() {
+		if c.Name == "vpsmgr_session" {
+			v := *c
+			sess = &v
+		}
+	}
+	if sess == nil {
+		t.Fatal("no session cookie")
+	}
+	srv.flash.Set(sess.Value, "新的 root 密码：\nAbcdefghijk1234567890", "modal")
+	req := httptest.NewRequest(http.MethodPost, prefix+"/flash", nil)
+	req.AddCookie(sess)
+	rw := httptest.NewRecorder()
+	h.ServeHTTP(rw, req)
+	if rw.Code != http.StatusOK {
+		t.Fatalf("/flash = %d, want 200", rw.Code)
+	}
+	if !strings.Contains(rw.Body.String(), `"kind":"modal"`) {
+		t.Fatalf("/flash body = %q, want kind=modal", rw.Body.String())
+	}
+	if !strings.Contains(rw.Body.String(), "Abcdefghijk1234567890") {
+		t.Fatalf("/flash body = %q, want the password", rw.Body.String())
+	}
 }
 
 func TestStripPrefix(t *testing.T) {

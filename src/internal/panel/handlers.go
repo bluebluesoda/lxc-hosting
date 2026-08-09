@@ -2,6 +2,7 @@ package panel
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"strconv"
 
@@ -14,6 +15,39 @@ func itoa(n int) string { return strconv.Itoa(n) }
 type ctxKey int
 
 const userKey ctxKey = 0
+
+// loginDummyHash is compared against when the username is unknown so that a
+// login attempt takes the same time whether or not the account exists,
+// defeating username enumeration via response timing.
+var loginDummyHash = func() string { h, _ := pw.Hash("vpsmgr-timing-pad"); return h }()
+
+// storeFlash persists a one-shot banner for the request's session. An empty
+// msg clears any pending banner (e.g. on logout). Banners live in a short-lived
+// in-memory store and are fetched by the frontend, so they never leak into
+// URLs, cookies or browser history.
+func (s *Server) storeFlash(r *http.Request, msg, kind string) {
+	if c, err := r.Cookie("vpsmgr_session"); err == nil {
+		if msg == "" {
+			s.flash.Clear(c.Value)
+			return
+		}
+		s.flash.Set(c.Value, msg, kind)
+	}
+}
+
+func (s *Server) handleFlash(w http.ResponseWriter, r *http.Request) {
+	c, err := r.Cookie("vpsmgr_session")
+	if err != nil {
+		http.Error(w, "", http.StatusUnauthorized)
+		return
+	}
+	msg, kind, _ := s.flash.Pop(c.Value)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(struct {
+		Msg  string `json:"msg"`
+		Kind string `json:"kind"`
+	}{msg, kind})
+}
 
 func (s *Server) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -89,7 +123,15 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		name := r.FormValue("username")
 		pass := r.FormValue("password")
 		u, err := s.db.GetUserByName(name)
-		if err == nil && pw.Verify(u.PassHash, pass) {
+		var ok bool
+		if err == nil {
+			ok = pw.Verify(u.PassHash, pass)
+		} else {
+			// Burn the same bcrypt time as a real check so unknown usernames
+			// are not distinguishable by timing.
+			pw.Verify(loginDummyHash, pass)
+		}
+		if ok {
 			sess, err := s.db.CreateSession(u.ID, s.cfg.Panel.SessionDays)
 			if err == nil {
 				s.setSessionCookie(w, sess.Token)
@@ -113,8 +155,7 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
 	u := s.currentUser(r)
-	msg := r.URL.Query().Get("msg")
-	s.render(w, "overview.html", s.buildData(u, msg, ""))
+	s.render(w, "overview.html", s.buildData(u, "", ""))
 }
 
 func (s *Server) handlePower(w http.ResponseWriter, r *http.Request) {
@@ -148,8 +189,7 @@ func (s *Server) handleReinstall(w http.ResponseWriter, r *http.Request) {
 		s.redirect(w, r, s.p(""), "error: "+err.Error())
 		return
 	}
-	msg := "reinstalled. new root password: " + pass + " (shown once)"
-	s.redirect(w, r, s.p(""), msg)
+	s.redirectModal(w, r, s.p(""), "重装完成，新的 root 密码：\n"+pass)
 }
 
 // handlePanelPassword changes only the panel login password (must be > 14
@@ -161,6 +201,11 @@ func (s *Server) handlePanelPassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	pass := r.FormValue("new_password")
+	confirm := r.FormValue("confirm_password")
+	if pass != confirm {
+		s.redirect(w, r, s.p(""), "error: 两次输入的密码不一致")
+		return
+	}
 	if len(pass) <= 14 {
 		s.redirect(w, r, s.p(""), "error: panel password must be longer than 14 characters")
 		return
@@ -176,7 +221,8 @@ func (s *Server) handlePanelPassword(w http.ResponseWriter, r *http.Request) {
 	s.redirect(w, r, s.p(""), "ok: panel password changed")
 }
 
-// handleRootReset regenerates the container root password and shows it once.
+// handleRootReset regenerates the container root password and shows it once
+// in a modal.
 func (s *Server) handleRootReset(w http.ResponseWriter, r *http.Request) {
 	u := s.currentUser(r)
 	pass, err := s.mgr.ResetRootPassword(u.Name)
@@ -184,8 +230,7 @@ func (s *Server) handleRootReset(w http.ResponseWriter, r *http.Request) {
 		s.redirect(w, r, s.p(""), "error: "+err.Error())
 		return
 	}
-	msg := "root password reset: " + pass + " (shown once)"
-	s.redirect(w, r, s.p(""), msg)
+	s.redirectModal(w, r, s.p(""), "新的 root 密码：\n"+pass)
 }
 
 func (s *Server) handleDomainAdd(w http.ResponseWriter, r *http.Request) {

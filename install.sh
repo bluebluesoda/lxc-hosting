@@ -37,5 +37,5 @@ echo "===== install complete ====="
 if command -v vpsmgr >/dev/null 2>&1; then
   echo "panel address: $(vpsmgr panel-url)"
 fi
-echo "try: vpsmgr user add alice"
+echo "try: vpsmgr add alice"
 echo "     ssh -p <base> root@<public-ip>"

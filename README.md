@@ -1,11 +1,11 @@
-# vpsmgr
+# Vpsmgr Lite
 
-极简小鸡面板：宿主 Ubuntu 24.04 + LXD 容器，每用户一台 Debian 13，通过宿主机端口段访问，80/443 按域名由 Traefik 转发。
+简易的LXC虚拟机管理面板：宿主 Ubuntu 24.04 + LXD 容器，每用户一台 Debian 13，用户可通过web面板基础管理(重启重装等)，自动NAT4端口转发，80/443 按域名由 Traefik 转发。
 
 ## 安装
 
 **最低要求：Ubuntu 24.04（物理机或 KVM） 1核心  1.5G内存 磁盘10G空闲 root**    
-amd64 已测试 arm64 尚未测试理论支持
+amd64 已测试 arm64 已测试
 
 ```
 git clone https://github.com/bluebluesoda/lxc-hosting.git && cd lxc-hosting
@@ -18,19 +18,52 @@ sudo ./install.sh  # 通过预编译二进制安装
 ## 使用
 
 ```
-vpsmgr user add <name>               # 交互询问 CPU/内存/磁盘，回车用默认 1核/1024MiB/10GiB
-vpsmgr user add <name> --cpu 2 --mem 2G --disk 20G
-vpsmgr user update <name> [--cpu N] [--mem N] [--disk NG]   # 磁盘只许扩不许缩
-vpsmgr user reset-passwd <name>      # 重置面板密码
-vpsmgr user list                     # 列出用户及容器 CPU%/内存占用（瞬时）、本月上传/下载
-vpsmgr user show <name>
-vpsmgr user start|stop|restart <name>
-vpsmgr user del <name>
+vpsmgr add <name>               # 交互询问 CPU/内存/磁盘，回车用默认 1核/1024MiB/10GiB
+vpsmgr add <name> --cpu 2 --mem 2G --disk 20G
+vpsmgr update <name> [--cpu N] [--mem N] [--disk NG]   # 磁盘只许扩不许缩
+vpsmgr reset-passwd <name>      # 重置面板密码
+vpsmgr list                     # 列出用户及容器 CPU%/内存占用（瞬时）、本月上传/下载
+vpsmgr show <name>
+vpsmgr start|stop|restart <name>
+vpsmgr del <name>
 vpsmgr panel-url
 ```
 
 - 面板密码与 root 密码独立；改/重置密码会踢掉该用户其他登录会话
 - 域名绑定后，80/443 按域名转发到容器 80/443
+
+## 配置
+
+**默认配置不建议修改**
+
+配置文件在 `/etc/vpsmgr/config.yaml`（安装时自动生成，仅 root 可读写）。可用环境变量 `VPSMGR_CONFIG` 指定其它路径。面板设置改完执行 `systemctl restart vpsmgr-panel` 生效；`net` 段改动需执行 `vpsmgr install` 重新生成并下发防火墙规则。
+
+```
+panel:
+  listen: ":8443"              # 面板监听地址（改端口或绑 IP 如 "127.0.0.1:8443"）
+  cert: /etc/vpsmgr/panel.crt  # HTTPS 证书
+  key: /etc/vpsmgr/panel.key   # 私钥
+  db: /etc/vpsmgr/vpsmgr.db    # SQLite 数据库
+  public_ip: AUTO              # 对外 IP，影响面板 URL 与 SSH 提示；自动检测
+  session_days: 3              # 登录会话有效期（天）
+  url_path: AUTO               # 随机 secret path，面板唯一入口；首次安装生成后勿改
+
+net:
+  subnet: "10.42.0.0/24"       # 容器子网
+  gateway: "10.42.0.1"
+  port_base: 10000             # 端口段起始
+  ports_per_user: 50           # 每用户端口数（首个映射容器 22）
+  ext_if: AUTO                 # 外网网卡，自动检测默认路由
+
+lxd:
+  image: "vpsmgr/debian-sshd"
+  image_fallback: "images:debian/13"
+  pool: vpsmgr
+  bridge: lxdbr0
+```
+
+- `panel.listen`、`panel.public_ip`、`net.ext_if` 等仅影响面板展示/监听；`url_path`、`net.subnet`、`net.port_base`、`lxd.pool` 等与已有数据绑定，勿随意修改
+- 参考模板：`configs/config.yaml.example`；完整字段说明见 `src/internal/cfg/cfg.go`
 
 ## 卸载
 
