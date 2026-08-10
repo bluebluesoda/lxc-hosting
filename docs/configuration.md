@@ -18,7 +18,8 @@ panel:
   cert: /etc/vpsmgr/panel.crt  # HTTPS certificate
   key: /etc/vpsmgr/panel.key   # private key
   db: /etc/vpsmgr/vpsmgr.db    # SQLite database
-  public_ip: AUTO              # external IP, affects panel URL and SSH hints; auto-detected (on NAT-ing clouds like AWS/Alibaba the NIC carries a private address and the public IP is read from the cloud metadata service / an echo service)
+  public_ip: AUTO              # NIC IPv4 used by the firewall / routing; on NAT-ing clouds (AWS/Alibaba) this is a private address
+  display_ip: AUTO             # public IPv4 for DISPLAY ONLY (panel URL, SSH hints); auto-fetched from ipv4.ip.sb when public_ip is private; empty = fall back to public_ip
   session_days: 3              # login session lifetime (days)
   url_path: AUTO               # random secret path, the only panel entrance; do not change after first install
 

@@ -315,7 +315,7 @@ func (m *Manager) ResultFor(u *db.User, pass string) *Result {
 	}
 	up, down := m.TrafficFor(u.ID)
 	v6, _ := m.IPv6Addr(u.Name)
-	return &Result{User: u, Password: pass, PublicIP: m.cfg.Panel.PublicIP,
+	return &Result{User: u, Password: pass, PublicIP: m.cfg.DisplayIP(),
 		State: st, Domains: ds, PortsPerUser: m.cfg.Net.PortsPerUser,
 		UpGB: FormatGB(up), DownGB: FormatGB(down), IPv6: v6}
 }

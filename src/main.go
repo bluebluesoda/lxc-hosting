@@ -232,7 +232,7 @@ func cmdInstall() error {
 	if out, err := exec.Command("systemctl", "enable", "--now", "vpsmgr-panel.service").CombinedOutput(); err != nil {
 		return fmt.Errorf("enable vpsmgr-panel: %s", strings.TrimSpace(string(out)))
 	}
-	fmt.Printf("panel initialized: https://%s:8443%s\n", c.Panel.PublicIP, panelPath(c))
+	fmt.Printf("panel initialized: https://%s:8443%s\n", c.DisplayIP(), panelPath(c))
 	return nil
 }
 
@@ -303,7 +303,7 @@ func cmdPanelURL() error {
 	if err != nil {
 		return err
 	}
-	fmt.Printf("https://%s:8443%s\n", c.Panel.PublicIP, panelPath(c))
+	fmt.Printf("https://%s:8443%s\n", c.DisplayIP(), panelPath(c))
 	return nil
 }
 

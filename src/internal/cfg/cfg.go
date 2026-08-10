@@ -44,6 +44,11 @@ type PanelCfg struct {
 	Key         string `yaml:"key"`
 	DB          string `yaml:"db"`
 	PublicIP    string `yaml:"public_ip"`
+	// DisplayIP is a PURELY COSMETIC public address shown to users (panel URL,
+	// SSH hints). On NAT-ing clouds (AWS/Alibaba) public_ip is a private NIC
+	// address and this holds the publicly reachable one. Empty = fall back to
+	// PublicIP. Never used by the firewall or routing.
+	DisplayIP   string `yaml:"display_ip,omitempty"`
 	SessionDays int    `yaml:"session_days"`
 	// URLPath is the immutable secret prefix protecting the whole panel
 	// (e.g. /Ab1_cdE-9x). Generated once on first install.
@@ -138,6 +143,13 @@ func (c *Config) FillAuto() error {
 	if c.Panel.PublicIP == "" {
 		c.Panel.PublicIP = DetectPublicIP(c.Net.ExtIF)
 	}
+	// Display IP: on NAT-ing clouds public_ip is a private NIC address that is
+	// unreachable from outside. When that happens, fetch a public IPv4 from a
+	// stable echo service purely for display. Graceful: if the fetch fails
+	// display falls back to public_ip.
+	if c.Panel.DisplayIP == "" && isPrivateIPv4(c.Panel.PublicIP) {
+		c.Panel.DisplayIP = httpGet("https://ipv4.ip.sb", "GET", nil, 3)
+	}
 	if c.Panel.URLPath == "" {
 		c.Panel.URLPath = pw.URLSafe(10)
 	}
@@ -147,6 +159,30 @@ func (c *Config) FillAuto() error {
 		c.Net.IPv6Subnet = v
 	}
 	return nil
+}
+
+// DisplayIP returns the address shown to users (panel URL, SSH hints,
+// "vpsmgr add/show" output): the configured display_ip when set, otherwise
+// public_ip. Purely cosmetic — the firewall and routing keep using PublicIP.
+func (c *Config) DisplayIP() string {
+	if c.Panel.DisplayIP != "" {
+		return c.Panel.DisplayIP
+	}
+	return c.Panel.PublicIP
+}
+
+// isPrivateIPv4 reports whether s is a non-public IPv4: RFC1918, CGNAT
+// (100.64.0.0/10), link-local or loopback.
+func isPrivateIPv4(s string) bool {
+	ip := net.ParseIP(s)
+	if ip == nil || ip.To4() == nil {
+		return false
+	}
+	if ip.IsPrivate() || ip.IsLoopback() || ip.IsLinkLocalUnicast() {
+		return true
+	}
+	v4 := ip.To4()
+	return v4[0] == 100 && v4[1]&0xc0 == 64
 }
 
 // IPv6Enabled reports whether IPv6 pass-through is configured.
@@ -204,22 +240,14 @@ func DetectExtIF() string {
 	return "eth0"
 }
 
-// DetectPublicIP returns the publicly reachable IPv4. When the provider puts a
-// global address directly on the NIC that wins. On clouds that NAT (AWS EC2,
-// Aliyun ECS, ...) the NIC carries only a private address and the public IP
-// lives at the edge — ask the cloud metadata service, then a generic echo
-// service. The machine's own address is the last resort.
+// DetectPublicIP returns the machine's own IPv4 on the external interface
+// (falling back to hostname -I). This is the address the firewall and routing
+// use. On clouds that NAT (AWS EC2, Alibaba ECS) it is a PRIVATE address —
+// the publicly reachable one is handled separately via DisplayIP.
 func DetectPublicIP(extIF string) string {
 	if extIF != "" {
-		if ip, err := firstGlobalIPv4(extIF); err == nil && ip != "" {
-			return ip
-		}
-	}
-	if s := cloudPublicIP(); s != "" {
-		return s
-	}
-	if extIF != "" {
-		if ip, err := firstIPv4(extIF); err == nil && ip != "" {
+		ip, err := firstIPv4(extIF)
+		if err == nil && ip != "" {
 			return ip
 		}
 	}
@@ -227,32 +255,6 @@ func DetectPublicIP(extIF string) string {
 		return s
 	}
 	return "127.0.0.1"
-}
-
-// cloudPublicIP asks the metadata services of the common NAT-ing clouds (AWS
-// EC2, Aliyun ECS) and, as a last resort, a generic public echo service for
-// the host's public IPv4. Returns "" when none answers.
-func cloudPublicIP() string {
-	// AWS EC2: IMDSv2 first (PUT a token, then GET with it), then IMDSv1.
-	tok := httpGet("http://169.254.169.254/latest/api/token", "PUT",
-		map[string]string{"X-aws-ec2-metadata-token-ttl-seconds": "21600"}, 1)
-	if tok != "" {
-		if s := httpGet("http://169.254.169.254/latest/meta-data/public-ipv4", "GET",
-			map[string]string{"X-aws-ec2-metadata-token": tok}, 1); s != "" {
-			return s
-		}
-	}
-	if s := httpGet("http://169.254.169.254/latest/meta-data/public-ipv4", "GET", nil, 1); s != "" {
-		return s
-	}
-	// Aliyun ECS.
-	for _, k := range []string{"eipv4", "public-ipv4"} {
-		if s := httpGet("http://100.100.100.200/latest/meta-data/"+k, "GET", nil, 1); s != "" {
-			return s
-		}
-	}
-	// Generic fallback: a public echo service.
-	return httpGet("https://api.ipify.org", "GET", nil, 3)
 }
 
 // httpGet issues a request and returns the trimmed body (up to 64 bytes), or
@@ -279,31 +281,6 @@ func httpGet(url, method string, headers map[string]string, timeoutSec int) stri
 		return ""
 	}
 	return strings.TrimSpace(string(b))
-}
-
-func firstGlobalIPv4(iface string) (string, error) {
-	ifi, err := net.InterfaceByName(iface)
-	if err != nil {
-		return "", err
-	}
-	addrs, err := ifi.Addrs()
-	if err != nil {
-		return "", err
-	}
-	for _, a := range addrs {
-		var ip net.IP
-		switch v := a.(type) {
-		case *net.IPNet:
-			ip = v.IP
-		case *net.IPAddr:
-			ip = v.IP
-		}
-		if ip == nil || ip.To4() == nil || ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() {
-			continue
-		}
-		return ip.String(), nil
-	}
-	return "", fmt.Errorf("no global ipv4 on %s", iface)
 }
 
 func firstIPv4(iface string) (string, error) {
