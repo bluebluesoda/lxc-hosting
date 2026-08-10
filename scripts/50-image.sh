@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
-# 50-image.sh — pre-pull Debian 13 and build a local "Debian 13 + sshd" image.
+# 50-image.sh — pre-pull Debian 13 and build a slim local "Debian 13 + sshd"
+# image. apt lists/archives and logs are cleaned inside the builder before
+# publishing, and the Debian base image (a build intermediate only) is deleted
+# afterwards so only the modified vpsmgr/debian-sshd stays on disk.
 set -uo pipefail
 export PATH="$PATH:/snap/bin"
 
@@ -43,10 +46,23 @@ if lxc launch vpsmgr-debian-13 "$NAME"; then
 apt-get update -qq && apt-get install -y -qq openssh-server
 mkdir -p /etc/ssh/sshd_config.d
 printf "PermitRootLogin yes\nPasswordAuthentication yes\n" > /etc/ssh/sshd_config.d/99-vpsmgr.conf
-systemctl enable ssh'; then
+systemctl enable ssh
+# slim the published image: drop apt lists/archives and logs. Without this the
+# image balloons ~70MiB beyond just openssh (apt lists alone are ~50MiB).
+apt-get clean 2>/dev/null || true
+rm -rf /var/lib/apt/lists/* 2>/dev/null || true
+rm -rf /var/log/* 2>/dev/null || true
+rm -rf /tmp/* /var/tmp/* 2>/dev/null || true'; then
     lxc stop "$NAME" --timeout=30 || true
     lxc publish "$NAME" --alias vpsmgr/debian-sshd
     lxc delete --force "$NAME" || true
+    # keep only the modified image — the Debian base was a build intermediate
+    # and is never used to launch containers (fallback is the remote images:).
+    if lxc image delete vpsmgr-debian-13 >/dev/null 2>&1; then
+      log "removed base image vpsmgr-debian-13 (only vpsmgr/debian-sshd kept)"
+    else
+      log "  warn: could not remove base image vpsmgr-debian-13"
+    fi
     log "sshd image published: vpsmgr/debian-sshd"
   else
     log "  warn: sshd install in builder failed; add-user will install sshd on the fly"
