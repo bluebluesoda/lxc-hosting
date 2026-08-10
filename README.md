@@ -56,6 +56,9 @@ net:
   port_base: 10000             # port range start
   ports_per_user: 50           # ports per user (first maps to container 22)
   ext_if: AUTO                 # external NIC, auto-detected from the default route
+  ipv6_subnet: ""              # optional: global prefix for IPv6 pass-through, e.g. "2602:fada:6::/64"
+                               # (/64 or shorter, incl. provider /80 slices like
+                               # "2406:da14:1dd2:a807:753a::/80"); empty = disabled (default)
 
 lxd:
   image: "vpsmgr/debian-sshd"
@@ -79,10 +82,11 @@ sudo ./uninstall.sh --purge  # also delete containers, storage pool and LXD
 - Resources: user i=1..253, container IP 10.42.0.(i+1), port range 10000+(i-1)*50, 50 ports (first one maps to SSH 22).
 - Storage: ZFS disk quota maps onto the ZFS quota; disk can only grow.
 - Network: a single nftables table, DNAT (prerouting+output) + MASQUERADE; reload via idempotent delete+apply; restored on boot by vpsmgr-nft.service.
+- IPv6 (optional): asked at install; the lxdbr0 bridge gets the global prefix (/64 or shorter, incl. provider /80 slices; no NAT), containers get global addresses via SLAAC, the host adds a /128 route + proxy_ndp entry per container so the outside can reach them directly; the address is computed on the fly, never stored. `vpsmgr show` / the panel display each container's IPv6.
 - Reverse proxy: Traefik file provider hot-reloads, 80 proxies, 443 SNI passthrough, the certificate is managed inside the container.
 - Security: the panel sits behind a random path generated at install; state-changes are POST only; 3-day sessions with HttpOnly+Secure+SameSite=Lax; bare 404 for anything off-path (no fingerprint).
 - Traffic accounting: per-container NIC counters come from LXD; a panel goroutine samples every 60s and accumulates deltas into SQLite.
-- Not implemented: IPv6, container isolation, rate-limit/block (egress), snapshots, web terminal, domain ownership verification, audit, multi-host, billing.
+- Not implemented: container isolation, rate-limit/block (egress), snapshots, web terminal, domain ownership verification, audit, multi-host, billing.
 
 ## Layout
 

@@ -14,7 +14,9 @@ net:
   port_base: 10000
   ports_per_user: 50
   ext_if: AUTO             # detected from default route
-  ipv6_subnet: ""          # optional: global /64 for IPv6 pass-through, e.g. "2602:fada:6::/64".
+  ipv6_subnet: ""          # optional: global prefix for IPv6 pass-through, e.g. "2602:fada:6::/64".
+                           # /64 or shorter works (e.g. /56); a provider /80 slice like
+                           # "2406:da14:1dd2:a807:753a::/80" is also supported.
                            # empty = IPv6 disabled (default). Containers get global
                            # addresses via SLAAC; no NAT; set at install time.
 

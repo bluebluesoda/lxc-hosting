@@ -53,8 +53,9 @@ type NetCfg struct {
 	PortBase     int    `yaml:"port_base"`
 	PortsPerUser int    `yaml:"ports_per_user"`
 	ExtIF        string `yaml:"ext_if"`
-	// IPv6Subnet is the global /64 prefix handed out to containers (e.g.
-	// "2602:fada:6::/64"). Empty means IPv6 pass-through is disabled.
+	// IPv6Subnet is the global prefix handed out to containers (e.g.
+	// "2602:fada:6::/64", or a /80 slice the provider assigned the host).
+	// Empty means IPv6 pass-through is disabled.
 	// Containers get global addresses via SLAAC on lxdbr0; the host proxies
 	// their neighbor discovery. No NAT, no DB schema change: a container's
 	// IPv6 is whatever LXD/SLAAC assigned, read live from `lxc list`.
@@ -149,15 +150,17 @@ func (c *Config) FillAuto() error {
 func (c *Config) IPv6Enabled() bool { return c.Net.IPv6Subnet != "" }
 
 // IPv6Network parses and validates the configured IPv6 prefix. It must be a
-// global (non-ULA, non-link-local) /64 (or shorter, e.g. /56). A bare address
-// without a prefix length is treated as /64 for convenience.
+// global (non-ULA, non-link-local) CIDR — /64 or shorter (e.g. /56), or longer
+// up to /80 when the provider hands the host a /80 slice. The prefix length is
+// REQUIRED; a bare address is rejected rather than silently assumed to be /64
+// (a /80 slice would then get addresses outside the routed prefix).
 func (c *Config) IPv6Network() (*net.IPNet, error) {
 	s := c.Net.IPv6Subnet
 	if s == "" {
 		return nil, fmt.Errorf("ipv6_subnet not configured")
 	}
 	if !strings.Contains(s, "/") {
-		s += "/64"
+		return nil, fmt.Errorf("invalid ipv6_subnet %q: prefix length required (e.g. /64 or /80)", s)
 	}
 	_, n, err := net.ParseCIDR(s)
 	if err != nil {
@@ -170,8 +173,11 @@ func (c *Config) IPv6Network() (*net.IPNet, error) {
 		return nil, fmt.Errorf("invalid ipv6_subnet %q: must be a global (public) prefix", s)
 	}
 	ones, _ := n.Mask.Size()
-	if ones > 64 {
-		return nil, fmt.Errorf("invalid ipv6_subnet %q: prefix must be /64 or shorter (got /%d)", s, ones)
+	// The deterministic per-container address fills 48 host bits (sha256 of
+	// the username), so the prefix needs at least that many host bits: any
+	// prefix /80 or shorter works.
+	if ones > 80 {
+		return nil, fmt.Errorf("invalid ipv6_subnet %q: prefix must be /80 or shorter (got /%d)", s, ones)
 	}
 	return n, nil
 }

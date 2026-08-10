@@ -136,11 +136,11 @@ echo
 # ---------------------------------------------------------------------------
 # Phase 2 — candidate prefix
 # ---------------------------------------------------------------------------
-echo "== Phase 2: candidate /64 prefix =="
+echo "== Phase 2: candidate prefix (host /64 or /80 slice) =="
 # The host's own global address only proves the provider routes that single
-# address. We still report the /64 as the *candidate* for pass-through.
+# address. We still report the host's prefix as the *candidate* for pass-through.
 HOST_GLOBAL=""
-HOST_GLOBAL=$(echo "$GLOBALS" | awk '{print $4; exit}')   # e.g. 2602:fada:6::7b:275c/64
+HOST_GLOBAL=$(echo "$GLOBALS" | awk '{print $4; exit}')   # e.g. 2602:fada:6::7b:275c/64 or ...753a::1/80
 HOST_ADDR="${HOST_GLOBAL%%/*}"
 HOST_LEN="${HOST_GLOBAL##*/}"
 CAND_PREFIX=""
@@ -149,7 +149,7 @@ if [[ -n "$HOST_ADDR" ]]; then
   log "host global address: $HOST_ADDR/$HOST_LEN"
   log "candidate prefix: $CAND_PREFIX"
   log "  note: host having an address here proves the provider routes"
-  log "        that single address — NOT yet the whole /64 (verified in phase 3)"
+  log "        that single address — NOT yet the whole $CAND_PREFIX (verified in phase 3)"
 fi
 
 # Optional explicit prefix (from --prefix or first positional arg).
@@ -159,18 +159,19 @@ if [[ -n "$PREFIX_ARG" ]]; then
 fi
 
 # Validate candidate prefix (basic CIDR shape, global, not ULA/link-local).
+# The prefix length is REQUIRED — a bare address is rejected, never assumed /64.
 VALIDATE_PREFIX(){
   python3 - "$1" <<'PY'
 import ipaddress, sys
 p = sys.argv[1]
 if "/" not in p:
-    p += "/64"                       # bare prefix -> /64
+    sys.exit(1)
 try:
     n = ipaddress.IPv6Network(p, strict=False)
 except Exception:
     sys.exit(1)
 a = n.network_address
-if n.prefixlen > 64:                 # need at least /64 to hand out to containers
+if n.prefixlen > 80:                 # need >= 48 host bits to hand out to containers
     sys.exit(1)
 if a.is_private or a.is_link_local or a.is_loopback or a.is_unspecified:
     sys.exit(1)
@@ -179,7 +180,7 @@ PY
 if [[ -n "$CAND_PREFIX" ]] && VALIDATE_PREFIX "$CAND_PREFIX"; then
   :
 else
-  die "invalid candidate prefix '$CAND_PREFIX' (need a global, non-ULA /64 CIDR like 2602:fada:6::/64)"
+  die "invalid candidate prefix '$CAND_PREFIX' (need a global, non-ULA /80-or-shorter CIDR like 2602:fada:6::/64)"
 fi
 
 echo
@@ -368,7 +369,7 @@ if [[ "$TCP_ANY" -gt 0 ]] || [[ "$PING_ANY" -gt 0 ]]; then
   echo "  $(key "Pass-through:             VERIFIED — provider routes the whole prefix")"
   echo "  $(note "Use this prefix as your ipv6_subnet when running ./install.sh")"
 else
-  warn "=> whole /64 NOT verified from outside: no probe got a single reply for"
+  warn "=> prefix NOT verified from outside: no probe got a single reply for"
   warn "   a random address in $CAND_PREFIX."
   warn "   - contact the provider to confirm they route $CAND_PREFIX"
   warn "   - retry later (transient / rate-limit can cause false negatives)"

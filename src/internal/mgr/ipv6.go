@@ -12,12 +12,13 @@ import (
 
 // IPv6 pass-through support (verified empirically):
 //
-//   lxdbr0 is configured with the GLOBAL /64 prefix (ipv6.routing + stateful
-//   DHCPv6). Each container gets a DETERMINISTIC global address derived from
+//   lxdbr0 is configured with the GLOBAL prefix — /64 or shorter (e.g. /56),
+//   or the /80 slice a provider hands the host — with ipv6.routing + stateful
+//   DHCPv6. Each container gets a DETERMINISTIC global address derived from
 //   its username (sha256 → 48 bits), so the address is stable across
 //   reinstalls and never needs to be stored or queried. The host then:
-//     - deletes the duplicate /64 route on lxdbr0 (it conflicts with eth0's
-//       kernel route when the host itself is inside the prefix)
+//     - deletes the duplicate prefix route on lxdbr0 (it conflicts with
+//       eth0's kernel route when the host itself is inside the prefix)
 //     - adds an exact /128 route per container via lxdbr0
 //     - adds a proxy_ndp entry per container on the external interface, so
 //       upstream neighbor solicitations for container addresses are answered
@@ -27,7 +28,9 @@ import (
 // computed from (prefix, username) on the fly.
 
 // ipv6Suffix returns the 48-bit host part of a container's IPv6, derived
-// deterministically from its username (sha256 truncated to 48 bits).
+// deterministically from its username (sha256 truncated to 48 bits). Kept for
+// tests/diagnostics; IPv6Addr writes the same 48 bits directly into the
+// address instead of going through the string form.
 func ipv6Suffix(name string) string {
 	h := sha256.Sum256([]byte(name))
 	v := binary.BigEndian.Uint32(h[:4]) & 0xffff_ffff
@@ -46,13 +49,15 @@ func (m *Manager) IPv6Addr(name string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	// host part = prefix (first 64 bits) + :: + 48-bit username hash
-	base := n.IP.To16()
-	suffix := ipv6Suffix(name)
-	host := net.ParseIP("::" + suffix).To16()
+	// Copy the FULL network address, then overwrite its low 48 bits with the
+	// username hash. The hash only ever touches host bits for any prefix <=
+	// /80, so the result is always inside the configured subnet. For a /64
+	// this yields prefix + "::xxxx:xxxx:xxxx" exactly as before; for a /80
+	// slice (e.g. 2406:da14:1dd2:a807:753a::/80) it fills the 48 host bits.
 	addr := make(net.IP, 16)
-	copy(addr[:8], base[:8])
-	copy(addr[8:], host[8:])
+	copy(addr, n.IP.To16())
+	h := sha256.Sum256([]byte(name))
+	copy(addr[10:], h[:6])
 	return addr.String(), nil
 }
 
@@ -65,14 +70,17 @@ func (m *Manager) SetupIPv6Bridge() error {
 	if err != nil {
 		return err
 	}
-	// The bridge gateway is the first usable address of the prefix (net+1).
-	// The prefix length on the bridge must match the configured prefix (e.g.
-	// /48 or /60), not always /64 — otherwise LXD's dnsmasq would only
-	// advertise a /64 slice of a /48.
+	// The bridge gateway is a free address inside the prefix — normally net+1,
+	// but skipped when the host itself already uses it on the external
+	// interface (common with a /80 slice where the host holds ::1). The prefix
+	// length on the bridge must match the configured prefix (e.g. /48, /60 or
+	// /80), not always /64 — otherwise LXD's dnsmasq would only advertise a
+	// /64 slice of a bigger prefix.
 	ones, _ := n.Mask.Size()
-	gwIP := n.IP.To16()
-	gwIP[15]++ // last octet: ::0 -> ::1
-	gw := gwIP.String()
+	gw, err := m.bridgeGateway(n)
+	if err != nil {
+		return err
+	}
 	bridge := m.cfg.LXD.Bridge
 	for _, kv := range []string{
 		"ipv6.address=" + gw + "/" + strconv.Itoa(ones),
@@ -89,6 +97,84 @@ func (m *Manager) SetupIPv6Bridge() error {
 	_ = exec.Command("ip", "-6", "route", "del", n.String(), "dev", bridge).Run()
 	_ = m.enableForwarding()
 	return nil
+}
+
+// bridgeGateway picks the first usable address inside the prefix (net+1,
+// net+2, ...) that is not already taken by anything the host can see:
+//   - addresses assigned to the host's external interface (e.g. a /80 slice
+//     where the host itself holds ::1)
+//   - the upstream default gateway(s) — a global gateway inside the prefix
+//     (very common with a /64, where the ISP's router is at ::1) must never be
+//     claimed by the bridge, or the host would answer for it and break its own
+//     outbound routing
+//   - any address present in the NDP neighbor table on the external interface
+//     (catches the router and any other device already on the link)
+//
+// A container's hash-derived address is 2^-48 unlikely to collide with any of
+// these, and LXD only uses this address as the dnsmasq/SLAAC anchor.
+func (m *Manager) bridgeGateway(n *net.IPNet) (string, error) {
+	inUse := map[string]bool{}
+	ext := m.cfg.Net.ExtIF
+
+	// 1. Addresses the host itself holds on the external interface.
+	if ext != "" {
+		out, err := exec.Command("ip", "-6", "-o", "addr", "show", "dev", ext, "scope", "global").CombinedOutput()
+		if err != nil {
+			return "", fmt.Errorf("list ipv6 addrs on %s: %s", ext, strings.TrimSpace(string(out)))
+		}
+		for _, f := range strings.Fields(string(out)) {
+			addr := strings.SplitN(f, "/", 2)[0]
+			if ip := net.ParseIP(addr); ip != nil {
+				inUse[ip.String()] = true
+			}
+		}
+	}
+
+	// 2. Default gateway(s) — `via` addresses in `ip -6 route show default`.
+	if out, err := exec.Command("ip", "-6", "route", "show", "default").CombinedOutput(); err == nil {
+		for _, f := range strings.Fields(string(out)) {
+			if ip := net.ParseIP(f); ip != nil {
+				inUse[ip.String()] = true
+			}
+		}
+	}
+
+	// 3. Already-resolved neighbors on the upstream link (router, other hosts).
+	if ext != "" {
+		if out, err := exec.Command("ip", "-6", "neigh", "show", "dev", ext).CombinedOutput(); err == nil {
+			for _, f := range strings.Fields(string(out)) {
+				if ip := net.ParseIP(f); ip != nil {
+					inUse[ip.String()] = true
+				}
+			}
+		}
+	}
+
+	base := n.IP.To16()
+	for k := uint64(1); k < 1<<16; k++ {
+		ip := addHostOffset(base, k)
+		if !inUse[ip.String()] {
+			return ip.String(), nil
+		}
+	}
+	return "", fmt.Errorf("no free gateway address in %s", n.String())
+}
+
+// addHostOffset returns the network address + k, incrementing the low 64 host
+// bits big-endian with carry. k only ever touches host bits for any prefix
+// <= /80 (48+ host bits), so the result stays inside the subnet.
+func addHostOffset(netAddr net.IP, k uint64) net.IP {
+	ip := make(net.IP, 16)
+	copy(ip, netAddr)
+	for i := 15; i >= 8 && k > 0; i-- {
+		v := uint64(ip[i]) + (k & 0xff)
+		ip[i] = byte(v & 0xff)
+		k >>= 8
+		if v > 0xff {
+			k++
+		}
+	}
+	return ip
 }
 
 // enableForwarding turns on IPv6 forwarding (required for pass-through).

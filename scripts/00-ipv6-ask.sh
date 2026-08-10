@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # 00-ipv6-ask.sh — ask whether to enable IPv6 pass-through and capture the
-# global /64 prefix the user provides. The user is trusted; we only validate
-# that the input is a syntactically valid global IPv6 prefix (/64 or shorter).
+# global prefix the user provides. The user is trusted; we only validate
+# that the input is a syntactically valid global IPv6 CIDR (/80 or shorter).
+# The prefix length is REQUIRED (no auto-append of /64 — a /80 slice would
+# silently get the wrong addresses).
 #
 # Behavior:
 #   - interactive: asks y/N, then prompts for the prefix (default = detect
@@ -18,18 +20,19 @@ log(){ echo "[ipv6] $*"; }
 # `exit`) at top level — `exit` would terminate the parent installer.
 die(){ echo "[ipv6] error: $*" >&2; return 1; }
 
-# validate_prefix: exit 0 if arg is a global IPv6 CIDR (/64 or shorter).
+# validate_prefix: exit 0 if arg is a global IPv6 CIDR (/80 or shorter) with
+# an explicit prefix length.
 validate_prefix(){
   python3 - "$1" <<'PY'
 import ipaddress, sys
 p = sys.argv[1]
 if "/" not in p:
-    p += "/64"
+    sys.exit(1)
 try:
     n = ipaddress.IPv6Network(p, strict=False)
 except Exception:
     sys.exit(1)
-if n.prefixlen > 64:
+if n.prefixlen > 80:
     sys.exit(1)
 a = n.network_address
 if a.is_private or a.is_link_local or a.is_loopback or a.is_unspecified:
@@ -43,7 +46,7 @@ if [[ -n "${VPSMGR_IPV6_SUBNET:-}" ]]; then
     log "IPv6 pass-through enabled with prefix $VPSMGR_IPV6_SUBNET (from env)"
     return 0
   else
-    die "VPSMGR_IPV6_SUBNET='$VPSMGR_IPV6_SUBNET' is not a valid global IPv6 /64 (e.g. 2602:fada:6::/64)"
+    die "VPSMGR_IPV6_SUBNET='$VPSMGR_IPV6_SUBNET' is not a valid global IPv6 CIDR — prefix length REQUIRED (e.g. 2602:fada:6::/64, or a /80 like 2406:da14:1dd2:a807:753a::/80)"
   fi
 fi
 
@@ -94,21 +97,21 @@ fi
 if [[ -n "$CAND" ]]; then
   echo
   log "detected host global address: $GLOBAL"
-  read -r -p "Global /64 prefix for containers [default: $CAND] (e.g. 2001:db8::/64): " PREFIX
+  read -r -p "Global prefix for containers — include the length (e.g. /64, /80) [default: $CAND]: " PREFIX
   PREFIX="${PREFIX:-$CAND}"
 else
   echo
-  read -r -p "Global /64 prefix for containers (e.g. 2001:db8::/64, provided by your ISP): " PREFIX
+  read -r -p "Global prefix for containers — include the length (e.g. 2001:db8::/64, provided by your ISP; up to /80): " PREFIX
 fi
 
 PREFIX="${PREFIX%$'\r'}"
-# Normalize: accept "2602:fada:6::" (no length) as /64; always store the
-# canonical CIDR form (with /64) so downstream parsing never fails.
+# Normalize to the canonical CIDR form (the length is mandatory — a bare
+# address is rejected, never silently assumed to be /64).
 PREFIX_NORM=$(python3 - "$PREFIX" <<'PY'
 import ipaddress, sys
 p = sys.argv[1]
 if "/" not in p:
-    p += "/64"
+    sys.exit(1)
 try:
     print(ipaddress.IPv6Network(p, strict=False))
 except Exception:
@@ -119,5 +122,5 @@ if validate_prefix "$PREFIX" && [[ -n "$PREFIX_NORM" ]]; then
   export VPSMGR_IPV6_SUBNET="$PREFIX_NORM"
   log "IPv6 pass-through enabled with prefix $PREFIX_NORM"
 else
-  die "invalid prefix '$PREFIX' — must be a global IPv6 /64 or shorter (e.g. 2602:fada:6::/64)"
+  die "invalid prefix '$PREFIX' — must be a global IPv6 CIDR with an explicit length (e.g. 2602:fada:6::/64, or a /80 like 2406:da14:1dd2:a807:753a::/80)"
 fi
