@@ -57,8 +57,15 @@ else
     SIZE_LINE=""
   else
     FREE_KB=$(df -k --output=avail / | tail -1 | tr -d ' ')
-    POOL_SIZE_MB=$(( FREE_KB / 1024 * 80 / 100 ))
-    log "loop-file zfs pool '$POOL' (~${POOL_SIZE_MB} MiB = 80% of free, created by LXD)"
+    # Pool ceiling = a share of the free space, as a sparse loop file that
+    # grows on demand. Small disks keep 80% so the host / LXD image store /
+    # snap keep enough headroom; big disks (>= 20 GiB free) can afford 90%.
+    PCT=80
+    if (( FREE_KB > 20 * 1024 * 1024 )); then
+      PCT=90
+    fi
+    POOL_SIZE_MB=$(( FREE_KB * PCT / 100 / 1024 ))
+    log "loop-file zfs pool '$POOL' (~${POOL_SIZE_MB} MiB = ${PCT}% of free, created by LXD)"
     SRC_LINE=""
     SIZE_LINE="    size: \"${POOL_SIZE_MB}MiB\""
   fi
