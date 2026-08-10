@@ -2,10 +2,13 @@ package cfg
 
 import (
 	"fmt"
+	"io"
 	"net"
+	"net/http"
 	"os"
 	"os/exec"
 	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
 
@@ -201,12 +204,22 @@ func DetectExtIF() string {
 	return "eth0"
 }
 
-// DetectPublicIP returns the public IP, falling back to the machine's own
-// address on the external interface (may be a private IP).
+// DetectPublicIP returns the publicly reachable IPv4. When the provider puts a
+// global address directly on the NIC that wins. On clouds that NAT (AWS EC2,
+// Aliyun ECS, ...) the NIC carries only a private address and the public IP
+// lives at the edge — ask the cloud metadata service, then a generic echo
+// service. The machine's own address is the last resort.
 func DetectPublicIP(extIF string) string {
 	if extIF != "" {
-		ip, err := firstIPv4(extIF)
-		if err == nil && ip != "" {
+		if ip, err := firstGlobalIPv4(extIF); err == nil && ip != "" {
+			return ip
+		}
+	}
+	if s := cloudPublicIP(); s != "" {
+		return s
+	}
+	if extIF != "" {
+		if ip, err := firstIPv4(extIF); err == nil && ip != "" {
 			return ip
 		}
 	}
@@ -214,6 +227,83 @@ func DetectPublicIP(extIF string) string {
 		return s
 	}
 	return "127.0.0.1"
+}
+
+// cloudPublicIP asks the metadata services of the common NAT-ing clouds (AWS
+// EC2, Aliyun ECS) and, as a last resort, a generic public echo service for
+// the host's public IPv4. Returns "" when none answers.
+func cloudPublicIP() string {
+	// AWS EC2: IMDSv2 first (PUT a token, then GET with it), then IMDSv1.
+	tok := httpGet("http://169.254.169.254/latest/api/token", "PUT",
+		map[string]string{"X-aws-ec2-metadata-token-ttl-seconds": "21600"}, 1)
+	if tok != "" {
+		if s := httpGet("http://169.254.169.254/latest/meta-data/public-ipv4", "GET",
+			map[string]string{"X-aws-ec2-metadata-token": tok}, 1); s != "" {
+			return s
+		}
+	}
+	if s := httpGet("http://169.254.169.254/latest/meta-data/public-ipv4", "GET", nil, 1); s != "" {
+		return s
+	}
+	// Aliyun ECS.
+	for _, k := range []string{"eipv4", "public-ipv4"} {
+		if s := httpGet("http://100.100.100.200/latest/meta-data/"+k, "GET", nil, 1); s != "" {
+			return s
+		}
+	}
+	// Generic fallback: a public echo service.
+	return httpGet("https://api.ipify.org", "GET", nil, 3)
+}
+
+// httpGet issues a request and returns the trimmed body (up to 64 bytes), or
+// "" on any failure / non-200.
+func httpGet(url, method string, headers map[string]string, timeoutSec int) string {
+	req, err := http.NewRequest(method, url, nil)
+	if err != nil {
+		return ""
+	}
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
+	client := &http.Client{Timeout: time.Duration(timeoutSec) * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return ""
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return ""
+	}
+	b, err := io.ReadAll(io.LimitReader(resp.Body, 64))
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(b))
+}
+
+func firstGlobalIPv4(iface string) (string, error) {
+	ifi, err := net.InterfaceByName(iface)
+	if err != nil {
+		return "", err
+	}
+	addrs, err := ifi.Addrs()
+	if err != nil {
+		return "", err
+	}
+	for _, a := range addrs {
+		var ip net.IP
+		switch v := a.(type) {
+		case *net.IPNet:
+			ip = v.IP
+		case *net.IPAddr:
+			ip = v.IP
+		}
+		if ip == nil || ip.To4() == nil || ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() {
+			continue
+		}
+		return ip.String(), nil
+	}
+	return "", fmt.Errorf("no global ipv4 on %s", iface)
 }
 
 func firstIPv4(iface string) (string, error) {

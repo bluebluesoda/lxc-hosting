@@ -73,6 +73,26 @@ PUB_IP=""
 if [[ -n "$EXT_IF" ]]; then
   PUB_IP=$(ip -4 -o addr show dev "$EXT_IF" scope global | awk '{print $4}' | cut -d/ -f1 | head -1)
 fi
+# Clouds that NAT (AWS EC2, Aliyun ECS) put only a private IP on the NIC and
+# the public one at the edge — ask their metadata / an echo service so the log
+# (and later the config via vpsmgr install) shows a reachable address.
+is_private_ip(){
+  local ip="$1" o1 o2
+  o1="${ip%%.*}"; o2="${ip#*.}"; o2="${o2%%.*}"
+  [[ "$o1" == "10" ]] && return 0
+  [[ "$o1" == "172" && $((10#$o2)) -ge 16 && $((10#$o2)) -le 31 ]] && return 0
+  [[ "$o1" == "192" && "$o2" == "168" ]] && return 0
+  return 1
+}
+if [[ -n "$PUB_IP" ]] && is_private_ip "$PUB_IP"; then
+  META_PUB=$(curl -s --max-time 2 http://169.254.169.254/latest/meta-data/public-ipv4 2>/dev/null)
+  [[ -z "$META_PUB" ]] && META_PUB=$(curl -s --max-time 2 http://100.100.100.200/latest/meta-data/eipv4 2>/dev/null)
+  [[ -z "$META_PUB" ]] && META_PUB=$(curl -s --max-time 2 https://api.ipify.org 2>/dev/null)
+  if [[ -n "$META_PUB" ]]; then
+    log "  cloud NAT: NIC IP $PUB_IP is private, public IP is $META_PUB"
+    PUB_IP="$META_PUB"
+  fi
+fi
 if [[ -z "$PUB_IP" ]]; then
   PUB_IP=$(hostname -I | awk '{print $1}')
   log "  warn: no public IP detected on $EXT_IF, using $PUB_IP (private) as fallback"
