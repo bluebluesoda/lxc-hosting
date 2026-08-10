@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -130,10 +131,11 @@ func Load() (*Config, error) {
 }
 
 func Save(c *Config) error {
-	if err := os.MkdirAll(DefaultDataDir, 0o755); err != nil {
+	p := Path()
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
 		return err
 	}
-	return os.WriteFile(Path(), MustYAML(c), 0o600)
+	return os.WriteFile(p, MustYAML(c), 0o600)
 }
 
 func MustYAML(c *Config) []byte {
