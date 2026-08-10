@@ -45,6 +45,8 @@ code{background:var(--code-bg);padding:.05rem .35rem;border-radius:5px;color:var
 .muted{color:var(--muted);font-size:.8rem}
 .btn{display:inline-block;padding:.35rem .75rem;border-radius:7px;border:1px solid var(--border);cursor:pointer;font-size:.82rem;background:var(--card);color:var(--text);font-family:inherit}
 .btn:hover{filter:brightness(1.08)}
+.btn.pending{background:var(--err-bg);color:var(--err-fg);border-color:var(--danger);cursor:wait}
+.btn:disabled{opacity:.85;cursor:wait}
 .accent{background:var(--accent);color:var(--on-accent);border-color:var(--accent)}
 .ok{background:var(--ok);color:#fff;border-color:var(--ok)}
 .warn{background:var(--warn);color:#fff;border-color:var(--warn)}
@@ -80,6 +82,12 @@ footer a{color:var(--muted);text-decoration:underline}
 .modal .frow{margin-bottom:.7rem}
 .modal .actions{display:flex;justify-content:flex-end;gap:.5rem;margin-top:1rem}
 .pw-display{background:var(--code-bg);border:1px solid var(--border);border-radius:8px;padding:.7rem;font-size:1.05rem;color:var(--code);word-break:break-all;margin-bottom:.6rem;text-align:center}
+.reinstall-overlay{position:fixed;inset:0;background:rgba(0,0,0,.55);display:none;align-items:center;justify-content:center;z-index:200;padding:1rem}
+.reinstall-overlay.show{display:flex}
+.reinstall-box{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:1.5rem 1.8rem;text-align:center;box-shadow:var(--shadow);max-width:420px}
+.reinstall-box .msg{color:var(--text);font-size:.92rem;margin-top:.6rem}
+.spinner{width:2rem;height:2rem;border:3px solid var(--border);border-top-color:var(--danger);border-radius:50%;margin:0 auto;animation:spin 1s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
 </style>
 </head>
 <body>
@@ -169,13 +177,20 @@ footer a{color:var(--muted);text-decoration:underline}
 <div class="modal">
 <h3>{{if eq .Lang "zh"}}重装系统{{else}}Reinstall{{end}}</h3>
 <p class="muted">{{if eq .Lang "zh"}}将删除容器内全部数据，以相同 IP / 端口 / 配额重建 Debian 13。域名与端口规则保留。面板登录密码不变，重装后自动生成新的 root 密码。{{else}}All data inside the container will be deleted and Debian 13 rebuilt with the same IP / ports / quota. Domain bindings and port rules are kept. The panel login password stays the same; a new root password is generated on reinstall.{{end}}</p>
-<form action="{{.Prefix}}/reinstall" method="post">
+<form action="{{.Prefix}}/reinstall" method="post" id="reForm">
 <input type="hidden" name="confirm" value="1">
 <div class="actions">
 <button class="btn" type="button" id="reCancel">{{if eq .Lang "zh"}}取消{{else}}Cancel{{end}}</button>
-<button class="btn danger" type="submit">{{if eq .Lang "zh"}}确认重装（数据全部丢弃）{{else}}Confirm reinstall (all data lost){{end}}</button>
+<button class="btn danger" type="submit" id="reConfirm">{{if eq .Lang "zh"}}确认重装（数据全部丢弃）{{else}}Confirm reinstall (all data lost){{end}}</button>
 </div>
 </form>
+</div>
+</div>
+
+<div class="reinstall-overlay" id="reOverlay">
+<div class="reinstall-box">
+<div class="spinner"></div>
+<div class="msg">{{if eq .Lang "zh"}}正在重装系统，请稍候（约 1-2 分钟）...{{else}}Reinstalling, please wait (about 1-2 minutes)...{{end}}</div>
 </div>
 </div>
 
@@ -217,6 +232,21 @@ footer a{color:var(--muted);text-decoration:underline}
   reBtn.addEventListener('click',function(){reModal.classList.add('show');});
   reCancel.addEventListener('click',function(){reModal.classList.remove('show');});
   reModal.addEventListener('click',function(e){if(e.target===reModal)reModal.classList.remove('show');});
+  // Reinstall is slow (rebuild + provision): submit via fetch so the button
+  // can show "reinstalling..." and a full-page overlay appears immediately,
+  // instead of the page silently hanging on a synchronous POST.
+  document.getElementById('reForm').addEventListener('submit',function(e){
+    e.preventDefault();
+    var btn=document.getElementById('reConfirm');
+    btn.classList.add('pending');btn.disabled=true;
+    btn.textContent={{if eq .Lang "zh"}}'重装中...'{{else}}'Reinstalling...'{{end}};
+    reModal.classList.remove('show');
+    document.getElementById('reOverlay').classList.add('show');
+    var body=new URLSearchParams(new FormData(e.target));
+    fetch(P+'/reinstall',{method:'POST',body:body,redirect:'follow',credentials:'same-origin'})
+      .then(function(){window.location=P+'/';})
+      .catch(function(){window.location=P+'/';});
+  });
   function closeDisp(){dispModal.classList.remove('show');}
   document.getElementById('dispClose').addEventListener('click',closeDisp);
   document.getElementById('dispCopy').addEventListener('click',function(){
