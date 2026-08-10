@@ -8,7 +8,7 @@ import (
 )
 
 func TestIPv6Suffix(t *testing.T) {
-	want := "2bd8:06c9:7f0e"
+	want := "2bd8:06c9:1"
 	if got := ipv6Suffix("alice"); got != want {
 		t.Errorf("ipv6Suffix(alice) = %q, want %q", got, want)
 	}
@@ -22,7 +22,7 @@ func TestIPv6Addr(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "2602:fada:6::2bd8:6c9:7f0e"
+	want := "2602:fada:6::2bd8:6c9:1"
 	if addr != want {
 		t.Errorf("IPv6Addr(alice) = %q, want %q", addr, want)
 	}
@@ -30,8 +30,8 @@ func TestIPv6Addr(t *testing.T) {
 
 // A computed address must always fall inside the configured subnet, for any
 // supported prefix length (/64 down to /48, plus /80 provider slices). The
-// 48-bit username hash only touches the low 48 bits, which are host bits for
-// every prefix <= /80.
+// 32-bit username hash + fixed 0001 block only touch the low 48 bits, which
+// are host bits for every prefix <= /80.
 func TestIPv6AddrWithinSubnet(t *testing.T) {
 	for _, sub := range []string{"2602:fada:6::/48", "2602:fada:6::/56", "2602:fada:6::/60", "2602:fada:6::/64", "2406:da14:1dd2:a807:753a::/80"} {
 		c := cfg.Default()
@@ -52,7 +52,7 @@ func TestIPv6AddrWithinSubnet(t *testing.T) {
 }
 
 // A /80 provider slice must keep ALL prefix bits (e.g. the 753a hextet) — only
-// the low 48 host bits may come from the username hash.
+// the low 48 host bits may come from the username hash + the fixed 0001 block.
 func TestIPv6Addr80(t *testing.T) {
 	c := cfg.Default()
 	c.Net.IPv6Subnet = "2406:da14:1dd2:a807:753a::/80"
@@ -61,7 +61,7 @@ func TestIPv6Addr80(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "2406:da14:1dd2:a807:753a:2bd8:6c9:7f0e"
+	want := "2406:da14:1dd2:a807:753a:2bd8:6c9:1"
 	if addr != want {
 		t.Errorf("IPv6Addr(alice) = %q, want %q", addr, want)
 	}

@@ -15,8 +15,9 @@ import (
 //   lxdbr0 is configured with the GLOBAL prefix — /64 or shorter (e.g. /56),
 //   or the /80 slice a provider hands the host — with ipv6.routing + stateful
 //   DHCPv6. Each container gets a DETERMINISTIC global address derived from
-//   its username (sha256 → 48 bits), so the address is stable across
-//   reinstalls and never needs to be stored or queried. The host then:
+//   its username (sha256 → 32 bits, last block fixed to 0001), so the address
+//   is stable across reinstalls and never needs to be stored or queried. The
+//   host then:
 //     - deletes the duplicate prefix route on lxdbr0 (it conflicts with
 //       eth0's kernel route when the host itself is inside the prefix)
 //     - adds an exact /128 route per container via lxdbr0
@@ -27,16 +28,14 @@ import (
 // No NAT, no nftables changes, no DB schema changes: the IPv6 address is
 // computed from (prefix, username) on the fly.
 
-// ipv6Suffix returns the 48-bit host part of a container's IPv6, derived
-// deterministically from its username (sha256 truncated to 48 bits). Kept for
-// tests/diagnostics; IPv6Addr writes the same 48 bits directly into the
-// address instead of going through the string form.
+// ipv6Suffix returns the 48-bit host part of a container's IPv6: a 32-bit
+// username hash followed by a fixed 0001 last block (a /64 address reads
+// prefix:0:<32random>:1). Kept for tests/diagnostics; IPv6Addr writes the same
+// bits directly into the address instead of going through the string form.
 func ipv6Suffix(name string) string {
 	h := sha256.Sum256([]byte(name))
-	v := binary.BigEndian.Uint32(h[:4]) & 0xffff_ffff
-	lo := binary.BigEndian.Uint16(h[4:6])
-	// Format as three 16-bit hextets: xx:xxxx:xxxx (48 bits total).
-	return fmt.Sprintf("%x:%04x:%04x", v>>16, v&0xffff, lo)
+	v := binary.BigEndian.Uint32(h[:4])
+	return fmt.Sprintf("%x:%04x:1", v>>16, v&0xffff)
 }
 
 // IPv6Addr computes the deterministic global IPv6 address of a container from
@@ -49,15 +48,16 @@ func (m *Manager) IPv6Addr(name string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	// Copy the FULL network address, then overwrite its low 48 bits with the
-	// username hash. The hash only ever touches host bits for any prefix <=
-	// /80, so the result is always inside the configured subnet. For a /64
-	// this yields prefix + "::xxxx:xxxx:xxxx" exactly as before; for a /80
-	// slice (e.g. 2406:da14:1dd2:a807:753a::/80) it fills the 48 host bits.
+	// Copy the FULL network address, then set the low 48 host bits to
+	// [32-bit username hash][0001]. The fixed 0001 last block keeps every
+	// container address off the all-zero subnet-router anycast and reads
+	// nicely (for a /64: prefix:0:<32random>:1). Works for any prefix <= /80;
+	// for a /80 slice it fills exactly the 48 host bits.
 	addr := make(net.IP, 16)
 	copy(addr, n.IP.To16())
 	h := sha256.Sum256([]byte(name))
-	copy(addr[10:], h[:6])
+	copy(addr[10:], h[:4])
+	addr[14], addr[15] = 0, 1
 	return addr.String(), nil
 }
 
@@ -110,8 +110,9 @@ func (m *Manager) SetupIPv6Bridge() error {
 //   - any address present in the NDP neighbor table on the external interface
 //     (catches the router and any other device already on the link)
 //
-// A container's hash-derived address is 2^-48 unlikely to collide with any of
-// these, and LXD only uses this address as the dnsmasq/SLAAC anchor.
+// A container's hash-derived address is 2^-32 unlikely to collide with any of
+// these (and its 0001 last block can never be the all-zero anycast), and LXD
+// only uses this address as the dnsmasq/SLAAC anchor.
 func (m *Manager) bridgeGateway(n *net.IPNet) (string, error) {
 	inUse := map[string]bool{}
 	ext := m.cfg.Net.ExtIF
