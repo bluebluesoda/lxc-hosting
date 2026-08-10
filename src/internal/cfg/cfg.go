@@ -53,6 +53,14 @@ type PanelCfg struct {
 	// URLPath is the immutable secret prefix protecting the whole panel
 	// (e.g. /Ab1_cdE-9x). Generated once on first install.
 	URLPath string `yaml:"url_path"`
+	// AdminPath is the secret prefix of the admin panel (e.g. /Xy-9ab_cdE),
+	// a second random path generated at install. Requests that match neither
+	// URLPath nor AdminPath get a bare, headerless 404.
+	AdminPath string `yaml:"admin_url_path,omitempty"`
+	// AdminPass is the bcrypt hash of the admin panel password. There is no
+	// admin username — only this password is checked. Stored in the config
+	// (0600) instead of the DB to avoid touching the user database schema.
+	AdminPass string `yaml:"admin_pass_hash,omitempty"`
 }
 
 type NetCfg struct {
@@ -152,6 +160,9 @@ func (c *Config) FillAuto() error {
 	}
 	if c.Panel.URLPath == "" {
 		c.Panel.URLPath = pw.URLSafe(10)
+	}
+	if c.Panel.AdminPath == "" {
+		c.Panel.AdminPath = pw.URLSafe(10)
 	}
 	// VPSMGR_IPV6_SUBNET lets the installer inject the /64 prefix at first
 	// install (it overrides whatever is in the config file).

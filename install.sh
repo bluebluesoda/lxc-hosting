@@ -57,7 +57,10 @@ rm -rf /var/lib/apt/lists/* 2>/dev/null || true
 echo
 echo "===== install complete ====="
 if command -v vpsmgr >/dev/null 2>&1; then
-  echo "panel address: $(vpsmgr panel-url)"
+  echo "panel address:"
+  vpsmgr panel-url
+  echo "admin panel:   the password above was shown once by 'vpsmgr install'."
+  echo "               forgot it? run: vpsmgr admin-passwd"
 fi
 echo "try: vpsmgr add alice"
 echo "     ssh -p <base> root@<public-ip>"

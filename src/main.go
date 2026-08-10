@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"vpsmgr/internal/admin"
 	"vpsmgr/internal/cert"
 	"vpsmgr/internal/cfg"
 	"vpsmgr/internal/db"
@@ -22,6 +23,7 @@ import (
 	"vpsmgr/internal/inter"
 	"vpsmgr/internal/mgr"
 	"vpsmgr/internal/panel"
+	"vpsmgr/internal/pw"
 	"vpsmgr/internal/ver"
 )
 
@@ -102,6 +104,8 @@ func main() {
 			break
 		}
 		err = userResetPasswd(os.Args[2])
+	case "admin-passwd":
+		err = cmdAdminPasswd()
 	case "show":
 		if len(os.Args) != 3 {
 			err = fmt.Errorf("usage: vpsmgr show <name>")
@@ -131,6 +135,7 @@ usage:
   vpsmgr add <name> [--password X] [--cpu 1] [--mem 1G] [--disk 10G]
   vpsmgr update <name> [--cpu 2] [--mem 2G] [--disk 20G]
   vpsmgr reset-passwd <name>    # reissue panel password (shown once)
+  vpsmgr admin-passwd           # reset admin panel password (shown once)
   vpsmgr start|stop|restart <name>
   vpsmgr del <name>
   vpsmgr list
@@ -232,6 +237,23 @@ func cmdInstall() error {
 	if out, err := exec.Command("systemctl", "enable", "--now", "vpsmgr-panel.service").CombinedOutput(); err != nil {
 		return fmt.Errorf("enable vpsmgr-panel: %s", strings.TrimSpace(string(out)))
 	}
+	// Admin panel: on a FRESH install generate a random admin password and show
+	// it once. On adoption/upgrade the existing hash is kept — never reprint a
+	// password the admin may not expect to be displayed.
+	fresh := c.Panel.AdminPass == ""
+	if fresh {
+		pass := pw.Generate(20)
+		hash, err := pw.Hash(pass)
+		if err != nil {
+			return err
+		}
+		c.Panel.AdminPass = hash
+		if err := cfg.Save(c); err != nil {
+			return err
+		}
+		fmt.Printf("admin panel initialized: https://%s:8443/%s\n", c.DisplayIP(), c.Panel.AdminPath)
+		fmt.Printf("admin password (shown once): %s\n", pass)
+	}
 	fmt.Printf("panel initialized: https://%s:8443%s\n", c.DisplayIP(), panelPath(c))
 	return nil
 }
@@ -272,11 +294,37 @@ func cmdServe() error {
 	}
 	defer d.Close()
 	m := mgr.New(c, d)
-	srv := panel.New(c, d, m)
+	userSrv := panel.New(c, d, m)
+	adminSrv := admin.New(c, d, m)
+	userPath := panelPath(c)
+	adminPath := "/" + c.Panel.AdminPath
+	dispatch := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case pathUnder(r.URL.Path, userPath):
+			userSrv.Handler().ServeHTTP(w, r)
+		case pathUnder(r.URL.Path, adminPath):
+			adminSrv.Handler().ServeHTTP(w, r)
+		default:
+			// Neither secret path: bare 404, no body, no headers, no
+			// fingerprint — identical to the user panel's behavior.
+			w.WriteHeader(http.StatusNotFound)
+		}
+	})
 	tlsCfg := &tls.Config{MinVersion: tls.VersionTLS12}
 	go sampleTrafficLoop(m)
 	log.Printf("panel listening on %s (https, self-signed)", c.Panel.Listen)
-	return startTLS(c, srv.Handler(), tlsCfg)
+	return startTLS(c, dispatch, tlsCfg)
+}
+
+// pathUnder reports whether path equals prefix or starts with prefix+"/".
+func pathUnder(path, prefix string) bool {
+	if prefix == "" || prefix == "/" {
+		return false
+	}
+	if path == prefix {
+		return true
+	}
+	return strings.HasPrefix(path, prefix+"/")
 }
 
 // sampleTrafficLoop runs the monthly traffic collector until the process ends.
@@ -303,7 +351,29 @@ func cmdPanelURL() error {
 	if err != nil {
 		return err
 	}
-	fmt.Printf("https://%s:8443%s\n", c.DisplayIP(), panelPath(c))
+	fmt.Printf("user panel:  https://%s:8443%s\n", c.DisplayIP(), panelPath(c))
+	fmt.Printf("admin panel: https://%s:8443/%s\n", c.DisplayIP(), c.Panel.AdminPath)
+	return nil
+}
+
+// cmdAdminPasswd resets the admin panel password to a new random 20-char value
+// and prints it once. The password is stored as a bcrypt hash in the config.
+func cmdAdminPasswd() error {
+	c, err := cfg.Load()
+	if err != nil {
+		return err
+	}
+	pass := pw.Generate(20)
+	hash, err := pw.Hash(pass)
+	if err != nil {
+		return err
+	}
+	c.Panel.AdminPass = hash
+	if err := cfg.Save(c); err != nil {
+		return err
+	}
+	fmt.Printf("admin password reset: %s\n", pass)
+	fmt.Printf("admin panel: https://%s:8443/%s\n", c.DisplayIP(), c.Panel.AdminPath)
 	return nil
 }
 

@@ -137,6 +137,56 @@ func (c *Client) list() ([]info, error) {
 }
 
 // State returns the status of one container.
+// ContainerInfo is one snapshot of a container taken from a single
+// `lxc list --format=json` call.
+type ContainerInfo struct {
+	Status   string
+	CPUUsage int64 // nanoseconds of CPU time since start (0 if not running)
+	MemUsage int64 // bytes currently used (0 if not running)
+	MemTotal int64 // memory limit in bytes (0 if not running)
+	Rx       int64 // cumulative bytes received (download) since start
+	Tx       int64 // cumulative bytes sent (upload) since start
+	IPv4     string
+}
+
+// Containers returns a live snapshot of every container in ONE `lxc list`
+// call. Stopped containers have no state and yield zeroed CPU/mem/traffic
+// values with Status reflecting the real status. This is the batch query the
+// admin panel uses so a full refresh costs a single lxc invocation regardless
+// of the number of containers.
+func (c *Client) Containers() (map[string]ContainerInfo, error) {
+	items, err := c.list()
+	if err != nil {
+		return nil, err
+	}
+	m := make(map[string]ContainerInfo, len(items))
+	for _, it := range items {
+		ci := ContainerInfo{Status: it.Status}
+		if it.State == nil {
+			m[it.Name] = ci
+			continue
+		}
+		if it.State.CPU != nil {
+			ci.CPUUsage = it.State.CPU.Usage
+		}
+		if it.State.Memory != nil {
+			ci.MemUsage = it.State.Memory.Usage
+			ci.MemTotal = it.State.Memory.Total
+		}
+		for _, ifs := range it.State.Network {
+			ci.Rx += ifs.Counters.BytesReceived
+			ci.Tx += ifs.Counters.BytesSent
+			for _, a := range ifs.Addresses {
+				if ci.IPv4 == "" && a.Family == "inet" && a.Address != "127.0.0.1" {
+					ci.IPv4 = a.Address
+				}
+			}
+		}
+		m[it.Name] = ci
+	}
+	return m, nil
+}
+
 func (c *Client) State(name string) (string, error) {
 	items, err := c.list()
 	if err != nil {

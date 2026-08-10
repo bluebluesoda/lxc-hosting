@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{if eq .Lang "zh"}}管理员面板 — VPS Manager{{else}}Admin Panel — VPS Manager{{end}}</title>
+<style>
+:root { color-scheme: light dark; }
+* { box-sizing: border-box; }
+body { margin: 0; font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; background: #f5f6f8; color: #1c1e21; }
+@media (prefers-color-scheme: dark) { body { background: #14161a; color: #e6e8eb; } }
+header { display: flex; align-items: center; justify-content: space-between; padding: 14px 22px; background: #fff; border-bottom: 1px solid #e5e7eb; }
+@media (prefers-color-scheme: dark) { header { background: #1e2126; border-bottom-color: #2c3036; } }
+header h1 { font-size: 17px; margin: 0; }
+header .actions { display: flex; gap: 8px; align-items: center; }
+main { padding: 18px 22px; max-width: 1280px; margin: 0 auto; }
+.card { background: #fff; border: 1px solid #e5e7eb; border-radius: 10px; padding: 16px 18px; margin-bottom: 18px; }
+@media (prefers-color-scheme: dark) { .card { background: #1e2126; border-color: #2c3036; } }
+.card h2 { font-size: 14px; text-transform: uppercase; letter-spacing: .04em; color: #6b7280; margin: 0 0 12px; }
+@media (prefers-color-scheme: dark) { .card h2 { color: #9aa0a8; } }
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
+.stat { border: 1px solid #e5e7eb; border-radius: 8px; padding: 12px 14px; }
+@media (prefers-color-scheme: dark) { .stat { border-color: #2c3036; } }
+.stat .label { font-size: 12px; color: #6b7280; }
+@media (prefers-color-scheme: dark) { .stat .label { color: #9aa0a8; } }
+.stat .value { font-size: 17px; font-weight: 700; margin-top: 4px; }
+.stat .detail { font-size: 12px; color: #6b7280; margin-top: 2px; }
+@media (prefers-color-scheme: dark) { .stat .detail { color: #9aa0a8; } }
+.reboot { background: #fef3c7; color: #92400e; border: 1px solid #fde68a; border-radius: 8px; padding: 10px 14px; font-size: 14px; margin-bottom: 18px; }
+@media (prefers-color-scheme: dark) { .reboot { background: #3b2f10; color: #fcd34d; border-color: #78350f; } }
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th, td { text-align: left; padding: 8px 8px; border-bottom: 1px solid #eef0f2; white-space: nowrap; }
+@media (prefers-color-scheme: dark) { th, td { border-bottom-color: #2c3036; } }
+th { color: #6b7280; font-weight: 600; }
+@media (prefers-color-scheme: dark) { th { color: #9aa0a8; } }
+.up { color: #16a34a; font-weight: 600; }
+.down { color: #9ca3af; }
+.ops { display: flex; gap: 6px; flex-wrap: wrap; }
+button, .btn { padding: 4px 10px; font-size: 12px; border-radius: 6px; border: 1px solid #d1d5db; cursor: pointer; background: #fff; color: #1c1e21; text-decoration: none; }
+@media (prefers-color-scheme: dark) { button, .btn { background: #2a2e34; border-color: #3a3f47; color: #e6e8eb; } }
+button:hover, .btn:hover { background: #f3f4f6; }
+@media (prefers-color-scheme: dark) { button:hover, .btn:hover { background: #343a41; } }
+button.ok { border-color: #86efac; color: #15803d; }
+button.warn { border-color: #fca5a5; color: #b91c1c; }
+@media (prefers-color-scheme: dark) { button.warn { color: #f87171; } }
+button.danger { border-color: #fca5a5; color: #b91c1c; }
+@media (prefers-color-scheme: dark) { button.danger { color: #f87171; } }
+button.primary { background: #2563eb; border-color: #2563eb; color: #fff; }
+button.primary:hover { background: #1d4ed8; }
+button:disabled { opacity: .5; cursor: default; }
+form.inline { display: inline; }
+.form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; align-items: end; }
+.field label { display: block; font-size: 12px; color: #6b7280; margin-bottom: 4px; }
+@media (prefers-color-scheme: dark) { .field label { color: #9aa0a8; } }
+.field input { width: 100%; padding: 8px 10px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 13px; background: #fff; color: inherit; }
+@media (prefers-color-scheme: dark) { .field input { background: #15171b; border-color: #3a3f47; } }
+.empty { color: #9ca3af; text-align: center; padding: 20px; }
+.msg { background: #dcfce7; color: #166534; border: 1px solid #bbf7d0; padding: 8px 12px; border-radius: 8px; font-size: 13px; margin-bottom: 14px; }
+@media (prefers-color-scheme: dark) { .msg { background: #123a24; color: #86efac; border-color: #14532d; } }
+.err { background: #fee2e2; color: #991b1b; border: 1px solid #fecaca; padding: 8px 12px; border-radius: 8px; font-size: 13px; margin-bottom: 14px; }
+@media (prefers-color-scheme: dark) { .err { background: #3b1414; color: #fca5a5; border-color: #7f1d1d; } }
+/* modal */
+.overlay { position: fixed; inset: 0; background: rgba(0,0,0,.45); display: none; align-items: center; justify-content: center; z-index: 50; }
+.overlay.open { display: flex; }
+.modal { background: #fff; border-radius: 12px; padding: 22px; width: min(460px, 92vw); max-height: 84vh; overflow: auto; }
+@media (prefers-color-scheme: dark) { .modal { background: #1e2126; } }
+.modal h3 { margin: 0 0 10px; font-size: 15px; }
+.modal .body { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; white-space: pre-wrap; background: #f3f4f6; border-radius: 8px; padding: 12px; margin-bottom: 14px; }
+@media (prefers-color-scheme: dark) { .modal .body { background: #14161a; } }
+.modal .foot { display: flex; gap: 8px; justify-content: flex-end; }
+a.copy { padding: 4px 10px; font-size: 12px; border: 1px solid #d1d5db; border-radius: 6px; cursor: pointer; background: #fff; color: #1c1e21; text-decoration: none; }
+@media (prefers-color-scheme: dark) { a.copy { background: #2a2e34; border-color: #3a3f47; color: #e6e8eb; } }
+.lang a { color: #6b7280; text-decoration: none; font-size: 12px; margin-left: 8px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>{{if eq .Lang "zh"}}管理员面板{{else}}Admin Panel{{end}}</h1>
+  <div class="actions">
+    <span class="lang"><a href="?lang=zh">中文</a><a href="?lang=en">EN</a></span>
+    <form action="{{.Prefix}}/logout" method="post" class="inline"><button class="btn">{{if eq .Lang "zh"}}退出{{else}}Logout{{end}}</button></form>
+  </div>
+</header>
+<main>
+  {{if .Msg}}<div class="msg">{{.Msg}}</div>{{end}}
+  {{if .Err}}<div class="err">{{.Err}}</div>{{end}}
+
+  {{if .Reboot}}
+  <div class="reboot">{{if eq .Lang "zh"}}⚠ 系统需要重启以完成内核/软件更新（例如 unattended-upgrades 或 livepatch 已暂存新内核）。请尽快执行 reboot。{{else}}⚠ The host needs a reboot to finish kernel/software updates (e.g. unattended-upgrades or livepatch staged a new kernel). Please reboot soon.{{end}}</div>
+  {{end}}
+
+  <div class="card">
+    <div style="display:flex;justify-content:space-between;align-items:center;">
+      <h2>{{if eq .Lang "zh"}}宿主机状态{{else}}Host status{{end}}</h2>
+      <a href="{{.Prefix}}" class="btn">{{if eq .Lang "zh"}}刷新 / Refresh{{else}}Refresh{{end}}</a>
+    </div>
+    <div class="stats">
+      <div class="stat">
+        <div class="label">{{if eq .Lang "zh"}}内存{{else}}Memory{{end}}</div>
+        <div class="value">{{.Host.MemUsed}} / {{.Host.MemTotal}}</div>
+        <div class="detail">{{if eq .Lang "zh"}}已用 {{.Host.MemPct}}{{else}}{{.Host.MemPct}} used{{end}}</div>
+      </div>
+      <div class="stat">
+        <div class="label">{{if eq .Lang "zh"}}Swap{{else}}Swap{{end}}</div>
+        <div class="value">{{.Host.SwapUsed}} / {{.Host.SwapTotal}}</div>
+        <div class="detail">{{if eq .Lang "zh"}}已用 {{.Host.SwapPct}}{{else}}{{.Host.SwapPct}} used{{end}}</div>
+      </div>
+      <div class="stat">
+        <div class="label">{{if eq .Lang "zh"}}存储池 ({{.UserPath}} pool){{else}}Storage pool{{end}}</div>
+        <div class="value">{{.Host.PoolUsed}} / {{.Host.PoolTotal}}</div>
+        <div class="detail">{{if eq .Lang "zh"}}可用 {{.Host.PoolAvail}} (已用 {{.Host.PoolPct}}){{else}}{{.Host.PoolAvail}} free ({{.Host.PoolPct}} used){{end}}</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>{{if eq .Lang "zh"}}创建用户{{else}}Create user{{end}}</h2>
+    <form action="{{.Prefix}}/user-add" method="post" class="form-grid">
+      <div class="field"><label>{{if eq .Lang "zh"}}用户名{{else}}Username{{end}}</label><input name="name" pattern="[a-z0-9][a-z0-9-]*" maxlength="63" required></div>
+      <div class="field"><label>{{if eq .Lang "zh"}}密码（留空自动生成）{{else}}Password (blank = auto){{end}}</label><input name="password" type="text"></div>
+      <div class="field"><label>CPU</label><input name="cpu" type="number" min="1" value="1" required></div>
+      <div class="field"><label>{{if eq .Lang "zh"}}内存 MiB{{else}}Memory MiB{{end}}</label><input name="mem" value="1024" required></div>
+      <div class="field"><label>{{if eq .Lang "zh"}}磁盘 GiB{{else}}Disk GiB{{end}}</label><input name="disk" type="number" min="1" value="10" required></div>
+      <button type="submit" class="primary">{{if eq .Lang "zh"}}创建{{else}}Create{{end}}</button>
+    </form>
+  </div>
+
+  <div class="card">
+    <h2>{{if eq .Lang "zh"}}用户列表{{else}}Users{{end}}</h2>
+    {{if .Users}}
+    <table>
+      <thead>
+        <tr>
+          <th>{{if eq .Lang "zh"}}名称{{else}}Name{{end}}</th>
+          <th>{{if eq .Lang "zh"}}状态{{else}}State{{end}}</th>
+          <th>{{if eq .Lang "zh"}}端口 (SSH){{else}}Ports (SSH){{end}}</th>
+          <th>{{if eq .Lang "zh"}}配额 CPU/内存/磁盘{{else}}Quota CPU/Mem/Disk{{end}}</th>
+          <th>{{if eq .Lang "zh"}}CPU 使用{{else}}CPU use{{end}}</th>
+          <th>{{if eq .Lang "zh"}}内存使用{{else}}Mem use{{end}}</th>
+          <th>{{if eq .Lang "zh"}}磁盘用量{{else}}Disk used{{end}}</th>
+          <th>{{if eq .Lang "zh"}}本月流量 上/下{{else}}Traffic ↑/↓{{end}}</th>
+          <th>{{if eq .Lang "zh"}}操作{{else}}Actions{{end}}</th>
+        </tr>
+      </thead>
+      <tbody>
+        {{range .Users}}
+        <tr>
+          <td>{{.Name}}</td>
+          <td class="{{if eq .State "Running"}}up{{else}}down{{end}}">{{.State}}</td>
+          <td>{{.Ports}}<br><small>ssh -p {{.SSHPort}}</small></td>
+          <td>{{.QuotaCPU}} / {{.QuotaMem}} / {{.QuotaDisk}}</td>
+          <td>{{.CPUUse}}</td>
+          <td>{{.MemUse}}</td>
+          <td>{{.DiskUsed}}</td>
+          <td>↑ {{.UpGB}} / ↓ {{.DownGB}}</td>
+          <td>
+            <div class="ops">
+              {{if eq .State "Running"}}
+              <form action="{{$.Prefix}}/power" method="post" class="inline"><input type="hidden" name="name" value="{{.Name}}"><input type="hidden" name="action" value="stop"><button class="warn">{{if eq $.Lang "zh"}}停止{{else}}Stop{{end}}</button></form>
+              <form action="{{$.Prefix}}/power" method="post" class="inline"><input type="hidden" name="name" value="{{.Name}}"><input type="hidden" name="action" value="restart"><button>{{if eq $.Lang "zh"}}重启{{else}}Restart{{end}}</button></form>
+              {{else}}
+              <form action="{{$.Prefix}}/power" method="post" class="inline"><input type="hidden" name="name" value="{{.Name}}"><input type="hidden" name="action" value="start"><button class="ok">{{if eq $.Lang "zh"}}启动{{else}}Start{{end}}</button></form>
+              {{end}}
+              <button onclick="quota('{{.Name}}','{{.QuotaCPU}}','{{.QuotaMem}}','{{.QuotaDisk}}')">{{if eq $.Lang "zh"}}配额{{else}}Quota{{end}}</button>
+              <form action="{{$.Prefix}}/reset-panel-pass" method="post" class="inline"><input type="hidden" name="name" value="{{.Name}}"><button>{{if eq $.Lang "zh"}}重置密码{{else}}Reset pw{{end}}</button></form>
+              <button class="danger" onclick="del('{{.Name}}')">{{if eq $.Lang "zh"}}删除{{else}}Delete{{end}}</button>
+            </div>
+          </td>
+        </tr>
+        {{end}}
+      </tbody>
+    </table>
+    {{else}}
+    <div class="empty">{{if eq .Lang "zh"}}暂无用户{{else}}No users yet{{end}}</div>
+    {{end}}
+  </div>
+
+  <div class="card">
+    <h2>{{if eq .Lang "zh"}}修改管理员密码{{else}}Change admin password{{end}}</h2>
+    <form action="{{.Prefix}}/admin-pass" method="post" class="form-grid">
+      <div class="field"><label>{{if eq .Lang "zh"}}新密码（至少 15 位）{{else}}New password (15+ chars){{end}}</label><input name="new_password" type="password" minlength="15" required></div>
+      <div class="field"><label>{{if eq .Lang "zh"}}确认密码{{else}}Confirm{{end}}</label><input name="confirm_password" type="password" minlength="15" required></div>
+      <button type="submit" class="primary">{{if eq .Lang "zh"}}修改{{else}}Change{{end}}</button>
+    </form>
+  </div>
+</main>
+
+<!-- modal -->
+<div class="overlay" id="modal">
+  <div class="modal">
+    <h3>{{if eq .Lang "zh"}}一次性信息{{else}}One-time info{{end}}</h3>
+    <div class="body" id="modalBody"></div>
+    <div class="foot">
+      <a class="copy" id="modalCopy" onclick="copyModal()">{{if eq .Lang "zh"}}复制{{else}}Copy{{end}}</a>
+      <button onclick="closeModal()">{{if eq .Lang "zh"}}关闭{{else}}Close{{end}}</button>
+    </div>
+  </div>
+</div>
+
+<!-- quota modal -->
+<div class="overlay" id="quotaModal">
+  <div class="modal">
+    <h3>{{if eq .Lang "zh"}}调整配额{{else}}Update quotas{{end}}: <span id="quotaName"></span></h3>
+    <form action="{{.Prefix}}/user-quota" method="post" class="form-grid">
+      <input type="hidden" name="name" id="quotaNameHidden">
+      <div class="field"><label>CPU</label><input name="cpu" id="quotaCpu" type="number" min="1" required></div>
+      <div class="field"><label>{{if eq .Lang "zh"}}内存 MiB{{else}}Memory MiB{{end}}</label><input name="mem" id="quotaMem" required></div>
+      <div class="field"><label>{{if eq .Lang "zh"}}磁盘 GiB{{else}}Disk GiB{{end}}</label><input name="disk" id="quotaDisk" type="number" min="1" required></div>
+      <button type="submit" class="primary">{{if eq .Lang "zh"}}保存{{else}}Save{{end}}</button>
+      <button type="button" onclick="closeQuota()">{{if eq .Lang "zh"}}取消{{else}}Cancel{{end}}</button>
+    </form>
+  </div>
+</div>
+
+<script>
+var P = "{{.Prefix}}";
+function openModal(msg){ document.getElementById('modalBody').textContent = msg; document.getElementById('modal').classList.add('open'); }
+function closeModal(){ document.getElementById('modal').classList.remove('open'); }
+function copyModal(){
+  var b = document.getElementById('modalBody');
+  if (navigator.clipboard) { navigator.clipboard.writeText(b.textContent); }
+  else { var ta=document.createElement('textarea'); ta.value=b.textContent; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove(); }
+}
+function quota(name, cpu, mem, disk){
+  document.getElementById('quotaName').textContent = name;
+  document.getElementById('quotaNameHidden').value = name;
+  document.getElementById('quotaCpu').value = parseInt(cpu);
+  document.getElementById('quotaMem').value = parseInt(mem);
+  document.getElementById('quotaDisk').value = parseInt(disk);
+  document.getElementById('quotaModal').classList.add('open');
+}
+function closeQuota(){ document.getElementById('quotaModal').classList.remove('open'); }
+function del(name){
+  if (!confirm("{{if eq .Lang "zh"}}删除用户 " + name + "？此操作将删除容器和所有数据，不可恢复。{{else}}Delete user " + name + "? This deletes the container and all data. This cannot be undone.{{end}}")) return;
+  var f = document.createElement('form'); f.method='post'; f.action = P + '/user-del';
+  f.innerHTML = '<input type="hidden" name="name" value="'+name+'"><input type="hidden" name="confirm" value="1">';
+  document.body.appendChild(f); f.submit();
+}
+// consume flash banner once
+fetch(P + '/flash', {method:'POST'}).then(function(r){return r.json();}).then(function(j){
+  if (j.msg) { if (j.kind === 'modal') openModal(j.msg); else alert(j.msg); }
+});
+</script>
+</body>
+</html>

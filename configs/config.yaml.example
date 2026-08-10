@@ -9,6 +9,9 @@ panel:
                            # auto-fetched from ipv4.ip.sb when public_ip is private; empty = fall back to public_ip
   session_days: 3
   url_path: AUTO           # 10-char random [a-zA-Z0-9_-] secret prefix, generated once at install
+  admin_url_path: AUTO     # 10-char random secret prefix for the ADMIN panel, generated once at install
+  admin_pass_hash: AUTO    # bcrypt hash of the admin panel password; generated at install,
+                           # reset via `vpsmgr admin-passwd`. No admin username — password only.
 
 net:
   subnet: "10.42.0.0/24"
