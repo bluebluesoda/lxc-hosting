@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # 50-image.sh — pre-pull Debian 13 and build a slim local "Debian 13 + sshd"
-# image. apt lists/archives and logs are cleaned inside the builder before
-# publishing, and the Debian base image (a build intermediate only) is deleted
-# afterwards so only the modified vpsmgr/debian-sshd stays on disk.
+# image with the universal tooling baked in (curl/wget/ca-certificates/less/
+# bind9-dnsutils/openssh-client/unzip/nano). apt lists/archives and logs are
+# cleaned inside the builder before publishing, and the Debian base image (a
+# build intermediate only) is deleted afterwards so only the modified
+# vpsmgr/debian-sshd stays on disk.
 set -uo pipefail
 export PATH="$PATH:/snap/bin"
 
@@ -43,7 +45,9 @@ if lxc launch vpsmgr-debian-13 "$NAME"; then
     sleep 2
   done
   if lxc exec "$NAME" -- sh -c 'export DEBIAN_FRONTEND=noninteractive
-apt-get update -qq && apt-get install -y -qq openssh-server
+# universal user tooling (small, every container hits these): curl/wget need
+# ca-certificates or HTTPS fails; dnsutils is bind9-dnsutils on Debian 13.
+apt-get update -qq && apt-get install -y -qq openssh-server ca-certificates curl wget less bind9-dnsutils openssh-client unzip nano
 mkdir -p /etc/ssh/sshd_config.d
 printf "PermitRootLogin yes\nPasswordAuthentication yes\n" > /etc/ssh/sshd_config.d/99-vpsmgr.conf
 systemctl enable ssh
