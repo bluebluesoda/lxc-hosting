@@ -21,6 +21,20 @@ src/      Go source (single binary: CLI + panel)
 - **nftables** — one table `inet vpsmgr`: DNAT (prerouting+output) for port
   ranges, MASQUERADE for NAT4. Reload is idempotent (delete+apply). Restored
   on boot by `vpsmgr-nft.service`.
+- **UFW** — vpsmgr manages its firewall through its own nftables table, so the
+  installer **disables UFW** when it is active: UFW's default-DROP policy runs
+  before LXD's `table inet lxd` rules and silently kills container IPv4 (no
+  DHCP, no DNS, no forwarded traffic), which makes both the image build and
+  every container's network fail. This is a known LXD issue:
+  <https://canonical.com/lxd/docs/latest/howto/network_bridge_firewalld/>.
+  If you keep UFW, you must add these rules yourself (see `00-check.sh`);
+  note that UFW's `route allow` is IPv4-only:
+
+  ```sh
+  ufw allow in on lxdbr0 to any port 67 proto udp   # DHCP
+  ufw allow in on lxdbr0 to any port 53             # DNS
+  ufw route allow in on lxdbr0 from 10.42.0.0/24    # container forwarding
+  ```
 - **Traefik** — file provider, hot-reloads `/etc/traefik/dynamic`. Port 80
   proxies per domain; 443 SNI passthrough (TLS is managed inside the container).
 - **SQLite** — users, domains, sessions, traffic counters. Located at
