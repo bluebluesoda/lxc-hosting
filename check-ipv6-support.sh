@@ -50,15 +50,41 @@ key(){ echo "${C_GREEN}${C_BOLD}$*${C_OFF}"; }
 # note: secondary emphasis (yellow)
 note(){ echo "${C_YELLOW}$*${C_OFF}"; }
 
-# derive_prefix — compute the network address of an IPv6 address for its
-# configured prefix length (e.g. /64, /48, /60) via Python's stdlib.
-# Example: derive_prefix 2602:fada:6::7b:275c 64  ->  2602:fada:6::
+# derive_prefix — compute the canonical CIDR (network + prefix length) of an
+# IPv6 address for its configured prefix length (e.g. /64, /80).
+# Example: derive_prefix 2602:fada:6::7b:275c 64  ->  2602:fada:6::/64
 derive_prefix(){
   python3 -c 'import ipaddress,sys
 a=ipaddress.IPv6Address(sys.argv[1])
 plen=int(sys.argv[2])
 n=ipaddress.IPv6Network((int(a), plen), strict=False)
-print(n.network_address)' "$1" "$2"
+print(f"{n.network_address}/{n.prefixlen}")' "$1" "$2"
+}
+
+# routed_prefix — the longest on-link (proto kernel) prefix on the interface,
+# at most /80, that covers addr: the address block the provider actually
+# routes to this interface (e.g. AWS assigns a whole /80 to the ENI). Returns
+# the canonical CIDR, or empty. More authoritative than the address's own
+# configured length and still correct when the address is a bare /128.
+routed_prefix(){
+  python3 - "$1" <<'PY'
+import ipaddress, sys
+target = ipaddress.IPv6Address(sys.argv[1])
+best = None
+for line in sys.stdin:
+    f = line.split()
+    if not f or "/" not in f[0]:
+        continue
+    try:
+        n = ipaddress.IPv6Network(f[0], strict=False)
+    except Exception:
+        continue
+    if n.prefixlen <= 80 and n.network_address <= target <= n.broadcast_address:
+        if best is None or n.prefixlen > best.prefixlen:
+            best = n
+if best:
+    print(f"{best.network_address}/{best.prefixlen}")
+PY
 }
 
 if [[ $EUID -ne 0 ]]; then die "must run as root"; fi
@@ -120,12 +146,13 @@ if [[ -z "$GLOBALS" ]]; then
   die "no global IPv6 address on $EXT_IF — provider likely gives IPv4 only; pass-through needs a routable /64"
 fi
 log "global IPv6 addresses on $EXT_IF:"
-echo "$GLOBALS" | while read -r _ addr _; do
+echo "$GLOBALS" | while read -r _ _ _ addr _; do
   log "  - $addr"
 done
 
-# Default v6 route (gateway).
-V6GW=$(ip -6 route show default 2>/dev/null | awk '{print $3; exit}')
+# Default v6 route (gateway). Newer iproute2 prints "default nhid <id> via
+# <gw>" — grab the token after "via", not the nhid number.
+V6GW=$(ip -6 route show default 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="via"){print $(i+1); exit}}')
 if [[ -n "$V6GW" ]]; then
   log "default IPv6 gateway: $V6GW"
 else
@@ -134,18 +161,25 @@ fi
 
 echo
 # ---------------------------------------------------------------------------
-# Phase 2 — candidate prefix
+# Phase 2 — candidate prefix: the host's own /64 or /80 slice, auto-measured
+# from the on-link routed block where possible (always includes the /length).
 # ---------------------------------------------------------------------------
-echo "== Phase 2: candidate prefix (host /64 or /80 slice) =="
-# The host's own global address only proves the provider routes that single
-# address. We still report the host's prefix as the *candidate* for pass-through.
 HOST_GLOBAL=""
 HOST_GLOBAL=$(echo "$GLOBALS" | awk '{print $4; exit}')   # e.g. 2602:fada:6::7b:275c/64 or ...753a::1/80
 HOST_ADDR="${HOST_GLOBAL%%/*}"
 HOST_LEN="${HOST_GLOBAL##*/}"
 CAND_PREFIX=""
 if [[ -n "$HOST_ADDR" ]]; then
-  CAND_PREFIX=$(derive_prefix "$HOST_ADDR" "${HOST_LEN:-64}")
+  # The block actually routed to this interface (AWS: the /80 on the ENI) is
+  # the authoritative subnet size; prefer it over the address's configured
+  # length, which also covers bare /128-address setups.
+  ROUTED=$(ip -6 route show dev "$EXT_IF" proto kernel 2>/dev/null | routed_prefix "$HOST_ADDR")
+  if [[ -n "$ROUTED" ]]; then
+    log "routed block on $EXT_IF (kernel route): $ROUTED"
+    CAND_PREFIX="$ROUTED"
+  else
+    CAND_PREFIX=$(derive_prefix "$HOST_ADDR" "${HOST_LEN:-64}")
+  fi
   log "host global address: $HOST_ADDR/$HOST_LEN"
   log "candidate prefix: $CAND_PREFIX"
   log "  note: host having an address here proves the provider routes"
