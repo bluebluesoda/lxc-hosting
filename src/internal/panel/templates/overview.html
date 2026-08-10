@@ -63,6 +63,10 @@ a{color:var(--accent);text-decoration:none}
 .domlist li{display:flex;align-items:center;justify-content:space-between;gap:.5rem;padding:.22rem 0;border-bottom:1px solid var(--border)}
 .domlist li:last-child{border-bottom:0}
 .domlist code{background:none;padding:0}
+.qgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:.55rem;margin:.15rem 0 .7rem}
+.qitem{background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:.45rem .55rem;text-align:center;min-width:0}
+.qlabel{display:block;color:var(--muted);font-size:.72rem;letter-spacing:.02em;margin-bottom:.2rem}
+.qval{display:block;font-size:.98rem;font-weight:600;font-variant-numeric:tabular-nums;white-space:nowrap}
 footer{margin-top:1.5rem;text-align:center;color:var(--muted);font-size:.8rem}
 footer a{color:var(--muted);text-decoration:underline}
 .toast{position:fixed;top:1rem;left:50%;transform:translateX(-50%);z-index:100;background:var(--ok);color:#fff;padding:.6rem 1rem;border-radius:8px;font-size:.88rem;box-shadow:var(--shadow);max-width:90vw;opacity:1;transition:opacity .3s}
@@ -96,13 +100,18 @@ footer a{color:var(--muted);text-decoration:underline}
 <tr><th>{{if eq .Lang "zh"}}可用端口{{else}}Ports{{end}}</th><td colspan="3"><code>{{.PublicPorts}}</code><span class="muted">&nbsp;SSH: {{.PortBase}}</span></td></tr>
 {{if .IPv6}}<tr><th>IPv6</th><td colspan="3"><code>{{.IPv6}}</code></td></tr>{{end}}
 <tr><th>{{if eq .Lang "zh"}}SSH 登录{{else}}SSH access{{end}}</th><td colspan="3"><code>{{.SSH}}</code></td></tr>
-<tr><th>{{if eq .Lang "zh"}}配额{{else}}Quota{{end}}</th><td>{{.Quota}}</td><th>{{if eq .Lang "zh"}}本月流量{{else}}Traffic (this month){{end}}</th><td>↑ {{.UpGB}} GB / ↓ {{.DownGB}} GB</td></tr>
+<tr><th>{{if eq .Lang "zh"}}本月流量{{else}}Traffic (this month){{end}}</th><td colspan="3">↑ {{.UpGB}} GB / ↓ {{.DownGB}} GB</td></tr>
 </table>
 </div>
 
 <div class="grid">
 <div class="card">
-<h2>{{if eq .Lang "zh"}}机器管理{{else}}Machine{{end}}<span> · {{.User.Name}}</span>{{if eq .State "Running"}}<span class="pill up" style="margin-left:.5rem">{{if eq .Lang "zh"}}运行中{{else}}Running{{end}}</span>{{else}}<span class="pill down" style="margin-left:.5rem">{{.State}}</span>{{end}}</h2>
+<h2>{{if eq .Lang "zh"}}机器管理{{else}}Machine{{end}}{{if eq .State "Running"}}<span class="pill up" style="margin-left:.5rem">{{if eq .Lang "zh"}}运行中{{else}}Running{{end}}</span>{{else}}<span class="pill down" style="margin-left:.5rem">{{.State}}</span>{{end}}</h2>
+<div class="qgrid">
+<div class="qitem"><span class="qlabel">CPU</span><span class="qval">{{.QuotaCPU}}</span></div>
+<div class="qitem"><span class="qlabel">{{if eq .Lang "zh"}}内存{{else}}Memory{{end}}</span><span class="qval">{{.QuotaMem}}</span></div>
+<div class="qitem"><span class="qlabel">{{if eq .Lang "zh"}}磁盘{{else}}Disk{{end}}</span><span class="qval">{{.QuotaDisk}}</span></div>
+</div>
 <div class="btnrow">
 <form action="{{.Prefix}}/power" method="post" class="inline"><input type="hidden" name="action" value="start"><button class="btn ok">{{if eq .Lang "zh"}}开机{{else}}Start{{end}}</button></form>
 <form action="{{.Prefix}}/power" method="post" class="inline"><input type="hidden" name="action" value="stop"><button class="btn warn">{{if eq .Lang "zh"}}关机{{else}}Stop{{end}}</button></form>
@@ -115,7 +124,7 @@ footer a{color:var(--muted);text-decoration:underline}
 </div>
 
 <div class="card">
-<h2>{{if eq .Lang "zh"}}域名{{else}}Domains{{end}}<span> · {{.User.Name}}</span></h2>
+<h2>{{if eq .Lang "zh"}}域名{{else}}Domains{{end}}</h2>
 <p class="muted">{{if eq .Lang "zh"}}绑定后，域名的 80 / 443 端口转发到容器对应端口；HTTPS 证书请在容器内自行申请，面板只负责转发。{{else}}Once bound, the domain's 80 / 443 traffic is forwarded to the matching container ports; request the HTTPS certificate inside the container yourself — the panel only proxies.{{end}}</p>
 <ul class="domlist">
 {{$prefix := .Prefix}}{{if eq .Lang "zh"}}{{range .Domains}}<li><code>{{.}}</code> <form action="{{$prefix}}/domain-del" method="post" class="inline"><input type="hidden" name="domain" value="{{.}}"><button class="btn danger">删除</button></form></li>{{else}}<li class="muted">未绑定域名</li>{{end}}{{else}}{{range .Domains}}<li><code>{{.}}</code> <form action="{{$prefix}}/domain-del" method="post" class="inline"><input type="hidden" name="domain" value="{{.}}"><button class="btn danger">Remove</button></form></li>{{else}}<li class="muted">No domains bound</li>{{end}}{{end}}

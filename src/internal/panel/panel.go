@@ -111,7 +111,9 @@ type pageData struct {
 	Ports       string
 	PublicPorts string
 	SSH         string
-	Quota       string
+	QuotaCPU    string
+	QuotaMem    string
+	QuotaDisk   string
 	Domains     []string
 	Msg         string
 	Err         string
@@ -240,7 +242,9 @@ func (s *Server) buildData(u *db.User, msg, errMsg string) pageData {
 		Ports:       portRange(u.PortBase, s.cfg.Net.PortsPerUser),
 		PublicPorts: s.cfg.Panel.PublicIP + ":" + portRange(u.PortBase, s.cfg.Net.PortsPerUser),
 		SSH:         "ssh -p " + itoa(u.PortBase) + " root@" + s.cfg.Panel.PublicIP,
-		Quota:       itoa(u.CPU) + " CPU / " + itoa(u.MemMB) + " MiB / " + itoa(u.DiskGB) + " GiB",
+		QuotaCPU:    itoa(u.CPU),
+		QuotaMem:    itoa(u.MemMB) + " MiB",
+		QuotaDisk:   itoa(u.DiskGB) + " GiB",
 		Msg:         msg,
 		Err:         errMsg,
 	}
