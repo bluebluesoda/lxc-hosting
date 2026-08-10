@@ -20,6 +20,20 @@ log(){ echo "[ipv6] $*"; }
 # `exit`) at top level — `exit` would terminate the parent installer.
 die(){ echo "[ipv6] error: $*" >&2; return 1; }
 
+# --- dependency: python3 (prefix parsing/validation below). This script runs
+# before 00-check.sh, so the check must live here. Ubuntu 24.04/26.04 ship
+# python3 by default, but install it on a minimal image if missing.
+if ! command -v python3 >/dev/null 2>&1; then
+  log "python3 not found, installing..."
+  if apt-get update -qq 2>/dev/null \
+     && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq python3 >/dev/null 2>&1 \
+     && command -v python3 >/dev/null 2>&1; then
+    :
+  else
+    die "python3 required (apt install python3 failed)"
+  fi
+fi
+
 # validate_prefix: exit 0 if arg is a global IPv6 CIDR (/80 or shorter) with
 # an explicit prefix length.
 validate_prefix(){
