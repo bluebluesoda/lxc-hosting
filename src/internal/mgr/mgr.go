@@ -1,6 +1,7 @@
 package mgr
 
 import (
+	"crypto/rand"
 	"errors"
 	"fmt"
 	"os/exec"
@@ -101,12 +102,38 @@ func rootPassScript(pass string) string {
 	return fmt.Sprintf("printf 'root:%s\\n' | chpasswd\n", pass)
 }
 
-// Provision sets the root password and ensures sshd is running. If the image
-// is the prebuilt sshd image only a light setup is done; otherwise sshd is
-// installed on the fly.
+// randomHostname returns a random, non-revealing hostname for a container
+// (e.g. "vps-3fa9c2b1"), drawn from crypto/rand. It never contains the
+// username, so users can't identify each other from prompts/logs/banners on
+// the internal network, and it is re-rolled on every install/reinstall.
+func randomHostname() string {
+	b := make([]byte, 4)
+	if _, err := rand.Read(b); err != nil {
+		return fmt.Sprintf("vps-%08x", time.Now().UnixNano()&0xffffffff)
+	}
+	return fmt.Sprintf("vps-%08x", b)
+}
+
+// Provision sets the root password and ensures sshd is running. It also gives
+// the container a random hostname (never the username). If the image is the
+// prebuilt sshd image only a light setup is done; otherwise sshd is installed
+// on the fly.
 func (m *Manager) Provision(name, image, pass string) error {
+	host := randomHostname()
+	// hostSetup: apply the hostname live + persist it, and stop cloud-init
+	// (present in images:debian/13) from resetting it back to the instance
+	// name (= username) on the next boot.
+	hostSetup := `
+VPSMGR_HOST='` + host + `'
+printf '%s\n' "$VPSMGR_HOST" > /etc/hostname
+hostname "$VPSMGR_HOST" 2>/dev/null || true
+hostnamectl set-hostname "$VPSMGR_HOST" 2>/dev/null || true
+sed -i "s/^127\.0\.1\.1.*/127.0.1.1 $VPSMGR_HOST/" /etc/hosts 2>/dev/null || true
+mkdir -p /etc/cloud/cloud.cfg.d
+printf 'preserve_hostname: true\n' > /etc/cloud/cloud.cfg.d/99-vpsmgr-hostname.cfg
+`
 	if image == m.cfg.LXD.Image {
-		script := rootPassScript(pass) + `
+		script := hostSetup + rootPassScript(pass) + `
 if command -v sshd >/dev/null 2>&1; then
   systemctl is-active ssh >/dev/null 2>&1 || systemctl start ssh
   systemctl enable ssh >/dev/null 2>&1 || true
@@ -114,7 +141,7 @@ fi`
 		_, err := m.lx.ExecSH(name, script)
 		return err
 	}
-	script := rootPassScript(pass) + `
+	script := hostSetup + rootPassScript(pass) + `
 export DEBIAN_FRONTEND=noninteractive
 if ! command -v sshd >/dev/null 2>&1; then
   apt-get update -qq

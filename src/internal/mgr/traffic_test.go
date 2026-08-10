@@ -1,6 +1,20 @@
 package mgr
 
-import "testing"
+import (
+	"regexp"
+	"testing"
+)
+
+func TestRandomHostname(t *testing.T) {
+	re := regexp.MustCompile(`^vps-[0-9a-f]{8}$`)
+	a, b := randomHostname(), randomHostname()
+	if !re.MatchString(a) || !re.MatchString(b) {
+		t.Errorf("unexpected hostnames: %q, %q", a, b)
+	}
+	if a == b {
+		t.Errorf("expected distinct random hostnames, got %q twice", a)
+	}
+}
 
 func TestFormatGB(t *testing.T) {
 	cases := []struct {
