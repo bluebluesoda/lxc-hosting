@@ -176,6 +176,9 @@ func (m *Manager) Add(name string, opt AddOptions) (*Result, error) {
 	ip := fmt.Sprintf("10.42.0.%d", idx+1)
 	portBase := m.cfg.Net.PortBase + (idx-1)*m.cfg.Net.PortsPerUser
 	ipv6, _ := m.IPv6Addr(name)
+	if err := m.checkIPv6Collision(name, ipv6); err != nil {
+		return nil, err
+	}
 	if err := m.lx.Launch(name, image, ip, ipv6, opt.CPU, opt.MemMB, opt.DiskGB); err != nil {
 		return nil, fmt.Errorf("launch container: %w", err)
 	}
@@ -198,6 +201,33 @@ func (m *Manager) Add(name string, opt AddOptions) (*Result, error) {
 		return nil, err
 	}
 	return m.ResultFor(u, opt.Password), nil
+}
+
+// checkIPv6Collision refuses a new container if its deterministic IPv6 address
+// already belongs to another user (32-bit hash space; ~1 in 135k for 253
+// users, but a silent routing clash would be nasty to debug). No-op when IPv6
+// is disabled.
+func (m *Manager) checkIPv6Collision(name, addr string) error {
+	if !m.cfg.IPv6Enabled() || addr == "" {
+		return nil
+	}
+	users, err := m.db.ListUsers()
+	if err != nil {
+		return err
+	}
+	for _, u := range users {
+		if u.Name == name {
+			continue
+		}
+		v6, err := m.IPv6Addr(u.Name)
+		if err != nil {
+			return err
+		}
+		if v6 == addr {
+			return fmt.Errorf("ipv6 address %s already assigned to user %q (hash collision); choose another name", addr, u.Name)
+		}
+	}
+	return nil
 }
 
 type Result struct {

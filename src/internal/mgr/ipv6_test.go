@@ -2,9 +2,12 @@ package mgr
 
 import (
 	"net"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"vpsmgr/internal/cfg"
+	"vpsmgr/internal/db"
 )
 
 func TestIPv6Suffix(t *testing.T) {
@@ -85,5 +88,40 @@ func TestAddHostOffset(t *testing.T) {
 		if got1 != c.want1 || got2 != c.want2 {
 			t.Errorf("%s: net+1=%q (want %q), net+2=%q (want %q)", c.subnet, got1, c.want1, got2, c.want2)
 		}
+	}
+}
+
+// checkIPv6Collision must refuse a new container whose deterministic address
+// is already taken by another user, skip the user itself, and be a no-op when
+// IPv6 is disabled.
+func TestCheckIPv6Collision(t *testing.T) {
+	c := cfg.Default()
+	c.Net.IPv6Subnet = "2602:fada:6::/64"
+	d, err := db.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	if _, err := d.CreateUser("alice", "x", "10.42.0.2", 1, 10000, 1, 1024, 10); err != nil {
+		t.Fatal(err)
+	}
+	m := &Manager{cfg: c, db: d}
+	aAddr, err := m.IPv6Addr("alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A different name colliding with alice's address must be refused.
+	err = m.checkIPv6Collision("bob", aAddr)
+	if err == nil || !strings.Contains(err.Error(), "alice") {
+		t.Errorf("expected collision error naming alice, got %v", err)
+	}
+	// Re-adding the same name is always fine (self is skipped).
+	if err := m.checkIPv6Collision("alice", aAddr); err != nil {
+		t.Errorf("self should be skipped: %v", err)
+	}
+	// IPv6 disabled -> no-op.
+	c.Net.IPv6Subnet = ""
+	if err := m.checkIPv6Collision("bob", aAddr); err != nil {
+		t.Errorf("disabled ipv6 should be a no-op: %v", err)
 	}
 }
