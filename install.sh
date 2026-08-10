@@ -59,8 +59,16 @@ echo "===== install complete ====="
 if command -v vpsmgr >/dev/null 2>&1; then
   echo "panel address:"
   vpsmgr panel-url
-  echo "admin panel:   the password above was shown once by 'vpsmgr install'."
-  echo "               forgot it? run: vpsmgr admin-passwd"
+  # On a FRESH install `vpsmgr install` printed the one-time admin password
+  # mid-install (captured by 40-panel.sh); re-show it here so it cannot be
+  # missed. On adoption/upgrade nothing is printed (no new password exists).
+  INSTALL_OUT="${TMPDIR:-/tmp}/vpsmgr-install.out"
+  if [ -s "$INSTALL_OUT" ]; then
+    echo
+    grep -E "admin password|admin panel initialized" "$INSTALL_OUT" || true
+    rm -f "$INSTALL_OUT"
+  fi
+  echo "forgot the admin password? run: vpsmgr admin-passwd"
 fi
 echo "try: vpsmgr add alice"
 echo "     ssh -p <base> root@<public-ip>"

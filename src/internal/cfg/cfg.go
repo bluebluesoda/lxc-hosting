@@ -144,6 +144,9 @@ func MustYAML(c *Config) []byte {
 	return b
 }
 
+// FillAuto fills every AUTO-detected field that is still empty, mirroring what
+// a fresh `vpsmgr install` writes: ext_if, public_ip, display_ip and the two
+// secret panel paths (user 10 chars, admin 12 chars).
 func (c *Config) FillAuto() error {
 	if c.Net.ExtIF == "" {
 		c.Net.ExtIF = DetectExtIF()
@@ -162,7 +165,9 @@ func (c *Config) FillAuto() error {
 		c.Panel.URLPath = pw.URLSafe(10)
 	}
 	if c.Panel.AdminPath == "" {
-		c.Panel.AdminPath = pw.URLSafe(10)
+		// The admin panel path is longer than the user panel path so the two
+		// secrets are visually distinguishable (12 vs 10 chars).
+		c.Panel.AdminPath = pw.URLSafe(12)
 	}
 	// VPSMGR_IPV6_SUBNET lets the installer inject the /64 prefix at first
 	// install (it overrides whatever is in the config file).
@@ -180,6 +185,28 @@ func (c *Config) DisplayIP() string {
 		return c.Panel.DisplayIP
 	}
 	return c.Panel.PublicIP
+}
+
+// ValidatePaths checks the two secret panel paths are both present, long
+// enough and distinct. A broken config would otherwise silently merge the
+// user and admin panels or leave one reachable at "/" — refuse to start.
+func (c *Config) ValidatePaths() error {
+	if c.Panel.URLPath == "" {
+		return fmt.Errorf("panel url_path is empty — run `vpsmgr install` to initialize")
+	}
+	if c.Panel.AdminPath == "" {
+		return fmt.Errorf("panel admin_url_path is empty — run `vpsmgr install` to initialize")
+	}
+	if len(c.Panel.URLPath) < 10 {
+		return fmt.Errorf("panel url_path too short (%d chars, want >= 10)", len(c.Panel.URLPath))
+	}
+	if len(c.Panel.AdminPath) < 10 {
+		return fmt.Errorf("panel admin_url_path too short (%d chars, want >= 10)", len(c.Panel.AdminPath))
+	}
+	if c.Panel.URLPath == c.Panel.AdminPath {
+		return fmt.Errorf("panel url_path and admin_url_path must differ")
+	}
+	return nil
 }
 
 // isPrivateIPv4 reports whether s is a non-public IPv4: RFC1918, CGNAT

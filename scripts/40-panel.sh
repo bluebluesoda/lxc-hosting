@@ -71,6 +71,14 @@ else
 fi
 
 log "running vpsmgr install (config/cert/db/nft/systemd)..."
-/usr/local/bin/vpsmgr install
+# Capture the install output so the one-time admin password printed by a fresh
+# `vpsmgr install` can be re-shown at the very end of the main installer.
+INSTALL_OUT="${TMPDIR:-/tmp}/vpsmgr-install.out"
+if /usr/local/bin/vpsmgr install 2>&1 | tee "$INSTALL_OUT"; then
+  :
+else
+  rm -f "$INSTALL_OUT"
+  exit 1
+fi
 
 echo "[40] panel ready"

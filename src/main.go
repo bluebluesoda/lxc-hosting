@@ -164,9 +164,19 @@ func panelPath(c *cfg.Config) string {
 func cmdInstall() error {
 	c := cfg.Default()
 	if _, err := os.Stat(cfg.Path()); err == nil {
+		// Load() fills missing admin_url_path via FillAuto; persist it when the
+		// on-disk config predates the admin panel feature so the generated
+		// secret survives the restart.
+		raw, _ := os.ReadFile(cfg.Path())
+		hadAdminPath := strings.Contains(string(raw), "admin_url_path")
 		c, err = cfg.Load()
 		if err != nil {
 			return err
+		}
+		if !hadAdminPath {
+			if err := cfg.Save(c); err != nil {
+				return err
+			}
 		}
 	} else {
 		if err := c.FillAuto(); err != nil {
@@ -175,6 +185,9 @@ func cmdInstall() error {
 		if err := cfg.Save(c); err != nil {
 			return err
 		}
+	}
+	if err := c.ValidatePaths(); err != nil {
+		return err
 	}
 	if err := os.MkdirAll(cfg.DefaultDataDir, 0o755); err != nil {
 		return err
@@ -284,9 +297,16 @@ func writeUnit(name, content string) error {
 }
 
 func cmdServe() error {
+	// cfg.Load() auto-fills missing secret paths exactly like install does
+	// (user 10 chars, admin 12 chars), so an empty path is repaired, not a
+	// startup failure. ValidatePaths still guards the real hazards: paths too
+	// short (after fill) or the two paths colliding.
 	c, err := cfg.Load()
 	if err != nil {
 		return err
+	}
+	if err := c.ValidatePaths(); err != nil {
+		return fmt.Errorf("invalid panel paths: %w", err)
 	}
 	d, err := db.Open(c.Panel.DB)
 	if err != nil {
