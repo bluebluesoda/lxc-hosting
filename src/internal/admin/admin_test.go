@@ -16,19 +16,37 @@ import (
 
 const testAdminSecret = "Adm1n-SecretX"
 
+// newTestServer builds an admin Server against a temp DB and points
+// VPSMGR_CONFIG at a temp config file so the per-login disk read in
+// currentAdminHash() stays isolated from the host's real config.
 func newTestServer(t *testing.T) (*Server, *db.DB) {
 	t.Helper()
+	cfgPath := t.TempDir() + "/config.yaml"
+	t.Setenv("VPSMGR_CONFIG", cfgPath)
 	c := cfg.Default()
 	c.Panel.URLPath = "UserSecRet99"
 	c.Panel.AdminPath = testAdminSecret
 	c.Panel.PublicIP = "127.0.0.1"
 	c.Panel.SessionDays = 3
+	if err := cfg.Save(c); err != nil {
+		t.Fatal(err)
+	}
 	d, err := db.Open(t.TempDir() + "/test.db")
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { d.Close() })
 	return New(c, d, mgr.New(c, d)), d
+}
+
+// setAdminPass stores the admin password hash both in the in-memory config and
+// in the temp config file, mirroring what `vpsmgr admin-passwd` writes.
+func setAdminPass(t *testing.T, srv *Server, pass string) {
+	t.Helper()
+	srv.cfg.Panel.AdminPass = mustHash(t, pass)
+	if err := cfg.Save(srv.cfg); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func doReq(t *testing.T, h http.Handler, method, target string, form url.Values, cookie *http.Cookie) *httptest.ResponseRecorder {
@@ -66,7 +84,7 @@ func adminLogin(t *testing.T, h http.Handler, prefix, pass string) *http.Cookie 
 
 func TestAdminLoginAndSession(t *testing.T) {
 	srv, _ := newTestServer(t)
-	srv.cfg.Panel.AdminPass = mustHash(t, "correct-horse-battery")
+	setAdminPass(t, srv, "correct-horse-battery")
 	h := srv.Handler()
 	prefix := "/" + testAdminSecret
 
@@ -75,9 +93,9 @@ func TestAdminLoginAndSession(t *testing.T) {
 	if rr.Code != http.StatusOK || !strings.Contains(rr.Body.String(), "Admin") {
 		t.Fatalf("GET %s/login = %d, want login page", prefix, rr.Code)
 	}
-	// Wrong password: no redirect, error shown.
+	// Wrong password: no redirect, error shown (English by default).
 	rr = doReq(t, h, http.MethodPost, prefix+"/login", url.Values{"password": {"nope"}}, nil)
-	if rr.Code != http.StatusOK || !strings.Contains(rr.Body.String(), "invalid password") {
+	if rr.Code != http.StatusOK || !strings.Contains(rr.Body.String(), "invalid admin password") {
 		t.Fatalf("bad admin login: code=%d body=%s", rr.Code, rr.Body.String())
 	}
 	// Correct password: 302 + session cookie scoped to admin prefix.
@@ -120,7 +138,7 @@ func TestAdminRequiresSession(t *testing.T) {
 
 func TestAdminPasswordChange(t *testing.T) {
 	srv, _ := newTestServer(t)
-	srv.cfg.Panel.AdminPass = mustHash(t, "old-pass-12345678")
+	setAdminPass(t, srv, "old-pass-12345678")
 	h := srv.Handler()
 	prefix := "/" + testAdminSecret
 	sess := adminLogin(t, h, prefix, "old-pass-12345678")
@@ -147,7 +165,7 @@ func TestAdminPasswordChange(t *testing.T) {
 
 func TestAdminLogout(t *testing.T) {
 	srv, _ := newTestServer(t)
-	srv.cfg.Panel.AdminPass = mustHash(t, "logout-pass-12345")
+	setAdminPass(t, srv, "logout-pass-12345")
 	h := srv.Handler()
 	prefix := "/" + testAdminSecret
 	sess := adminLogin(t, h, prefix, "logout-pass-12345")
@@ -209,4 +227,57 @@ func mustHash(t *testing.T, pass string) string {
 		t.Fatal(err)
 	}
 	return h
+}
+
+// TestLanguageSwitch verifies the admin language is resolved from ?lang=, the
+// cookie and the browser header (mirroring the user panel), and that an
+// explicit ?lang= choice persists in a scoped cookie.
+func TestLanguageSwitch(t *testing.T) {
+	srv, _ := newTestServer(t)
+	h := srv.Handler()
+	prefix := "/" + testAdminSecret
+
+	// zh browser -> zh login page.
+	req := httptest.NewRequest(http.MethodGet, prefix+"/login", nil)
+	req.Header.Set("Accept-Language", "zh-CN,zh;q=0.9")
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if !strings.Contains(rr.Body.String(), "管理员登录") {
+		t.Fatalf("zh login page missing Chinese title")
+	}
+
+	// English browser (or no header) -> en page.
+	rr = doReq(t, h, http.MethodGet, prefix+"/login", nil, nil)
+	if !strings.Contains(rr.Body.String(), "Admin Login") {
+		t.Fatalf("default login page missing English title")
+	}
+
+	// Explicit ?lang=en on a zh browser wins and sets the cookie.
+	req = httptest.NewRequest(http.MethodGet, prefix+"/login?lang=en", nil)
+	req.Header.Set("Accept-Language", "zh-CN,zh;q=0.9")
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if !strings.Contains(rr.Body.String(), "Admin Login") {
+		t.Fatalf("?lang=en did not switch the page to English")
+	}
+	var langCookieFound *http.Cookie
+	for _, c := range rr.Result().Cookies() {
+		if c.Name == langCookie {
+			v := *c
+			langCookieFound = &v
+		}
+	}
+	if langCookieFound == nil || langCookieFound.Value != langEn {
+		t.Fatalf("?lang=en did not persist the %s cookie", langCookie)
+	}
+
+	// The cookie overrides the zh browser header.
+	req = httptest.NewRequest(http.MethodGet, prefix+"/login", nil)
+	req.Header.Set("Accept-Language", "zh-CN,zh;q=0.9")
+	req.AddCookie(langCookieFound)
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if !strings.Contains(rr.Body.String(), "Admin Login") {
+		t.Fatalf("cookie did not override browser language")
+	}
 }

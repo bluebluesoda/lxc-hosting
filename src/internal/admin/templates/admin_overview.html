@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="{{if eq .Lang "zh"}}zh-CN{{else}}en{{end}}">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -48,6 +48,9 @@ button.danger { border-color: #fca5a5; color: #b91c1c; }
 button.primary { background: #2563eb; border-color: #2563eb; color: #fff; }
 button.primary:hover { background: #1d4ed8; }
 button:disabled { opacity: .5; cursor: default; }
+button.busy { position: relative; padding-left: 26px; }
+button.busy::before { content: ""; position: absolute; left: 8px; top: 50%; width: 12px; height: 12px; margin-top: -6px; border: 2px solid rgba(255,255,255,.5); border-top-color: #fff; border-radius: 50%; animation: spin .7s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
 form.inline { display: inline; }
 .form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; align-items: end; }
 .field label { display: block; font-size: 12px; color: #6b7280; margin-bottom: 4px; }
@@ -70,6 +73,8 @@ form.inline { display: inline; }
 .modal .foot { display: flex; gap: 8px; justify-content: flex-end; }
 a.copy { padding: 4px 10px; font-size: 12px; border: 1px solid #d1d5db; border-radius: 6px; cursor: pointer; background: #fff; color: #1c1e21; text-decoration: none; }
 @media (prefers-color-scheme: dark) { a.copy { background: #2a2e34; border-color: #3a3f47; color: #e6e8eb; } }
+a.copy.copied { border-color: #86efac; background: #dcfce7; color: #15803d; }
+@media (prefers-color-scheme: dark) { a.copy.copied { background: #123a24; border-color: #14532d; color: #86efac; } }
 .lang a { color: #6b7280; text-decoration: none; font-size: 12px; margin-left: 8px; }
 </style>
 </head>
@@ -77,7 +82,7 @@ a.copy { padding: 4px 10px; font-size: 12px; border: 1px solid #d1d5db; border-r
 <header>
   <h1>{{if eq .Lang "zh"}}管理员面板{{else}}Admin Panel{{end}}</h1>
   <div class="actions">
-    <span class="lang"><a href="?lang=zh">中文</a><a href="?lang=en">EN</a></span>
+    <span class="lang"><a href="{{.Prefix}}/?lang=zh">中文</a><a href="{{.Prefix}}/?lang=en">EN</a></span>
     <form action="{{.Prefix}}/logout" method="post" class="inline"><button class="btn">{{if eq .Lang "zh"}}退出{{else}}Logout{{end}}</button></form>
   </div>
 </header>
@@ -106,7 +111,7 @@ a.copy { padding: 4px 10px; font-size: 12px; border: 1px solid #d1d5db; border-r
         <div class="detail">{{if eq .Lang "zh"}}已用 {{.Host.SwapPct}}{{else}}{{.Host.SwapPct}} used{{end}}</div>
       </div>
       <div class="stat">
-        <div class="label">{{if eq .Lang "zh"}}存储池 ({{.UserPath}} pool){{else}}Storage pool{{end}}</div>
+        <div class="label">{{if eq .Lang "zh"}}存储池{{else}}Storage pool{{end}}</div>
         <div class="value">{{.Host.PoolUsed}} / {{.Host.PoolTotal}}</div>
         <div class="detail">{{if eq .Lang "zh"}}可用 {{.Host.PoolAvail}} (已用 {{.Host.PoolPct}}){{else}}{{.Host.PoolAvail}} free ({{.Host.PoolPct}} used){{end}}</div>
       </div>
@@ -115,13 +120,13 @@ a.copy { padding: 4px 10px; font-size: 12px; border: 1px solid #d1d5db; border-r
 
   <div class="card">
     <h2>{{if eq .Lang "zh"}}创建用户{{else}}Create user{{end}}</h2>
-    <form action="{{.Prefix}}/user-add" method="post" class="form-grid">
+    <form action="{{.Prefix}}/user-add" method="post" class="form-grid" id="createForm">
       <div class="field"><label>{{if eq .Lang "zh"}}用户名{{else}}Username{{end}}</label><input name="name" pattern="[a-z0-9][a-z0-9-]*" maxlength="63" required></div>
       <div class="field"><label>{{if eq .Lang "zh"}}密码（留空自动生成）{{else}}Password (blank = auto){{end}}</label><input name="password" type="text"></div>
-      <div class="field"><label>CPU</label><input name="cpu" type="number" min="1" value="1" required></div>
-      <div class="field"><label>{{if eq .Lang "zh"}}内存 MiB{{else}}Memory MiB{{end}}</label><input name="mem" value="1024" required></div>
-      <div class="field"><label>{{if eq .Lang "zh"}}磁盘 GiB{{else}}Disk GiB{{end}}</label><input name="disk" type="number" min="1" value="10" required></div>
-      <button type="submit" class="primary">{{if eq .Lang "zh"}}创建{{else}}Create{{end}}</button>
+      <div class="field"><label>CPU</label><input name="cpu" id="cfCpu" type="number" min="1" value="1" required></div>
+      <div class="field"><label>{{if eq .Lang "zh"}}内存 MiB{{else}}Memory MiB{{end}}</label><input name="mem" id="cfMem" value="1024" required></div>
+      <div class="field"><label>{{if eq .Lang "zh"}}磁盘 GiB{{else}}Disk GiB{{end}}</label><input name="disk" id="cfDisk" type="number" min="1" value="10" required></div>
+      <button type="submit" class="primary" id="cfBtn">{{if eq .Lang "zh"}}创建{{else}}Create{{end}}</button>
     </form>
   </div>
 
@@ -177,10 +182,10 @@ a.copy { padding: 4px 10px; font-size: 12px; border: 1px solid #d1d5db; border-r
 
   <div class="card">
     <h2>{{if eq .Lang "zh"}}修改管理员密码{{else}}Change admin password{{end}}</h2>
-    <form action="{{.Prefix}}/admin-pass" method="post" class="form-grid">
-      <div class="field"><label>{{if eq .Lang "zh"}}新密码（至少 15 位）{{else}}New password (15+ chars){{end}}</label><input name="new_password" type="password" minlength="15" required></div>
-      <div class="field"><label>{{if eq .Lang "zh"}}确认密码{{else}}Confirm{{end}}</label><input name="confirm_password" type="password" minlength="15" required></div>
-      <button type="submit" class="primary">{{if eq .Lang "zh"}}修改{{else}}Change{{end}}</button>
+    <form action="{{.Prefix}}/admin-pass" method="post" class="form-grid" id="adminPassForm">
+      <div class="field"><label>{{if eq .Lang "zh"}}新密码（至少 14 位）{{else}}New password (14+ chars){{end}}</label><input name="new_password" type="password" minlength="14" required></div>
+      <div class="field"><label>{{if eq .Lang "zh"}}确认密码{{else}}Confirm{{end}}</label><input name="confirm_password" type="password" minlength="14" required></div>
+      <button type="submit" class="primary" id="adminPassBtn">{{if eq .Lang "zh"}}修改{{else}}Change{{end}}</button>
     </form>
   </div>
 </main>
@@ -214,12 +219,20 @@ a.copy { padding: 4px 10px; font-size: 12px; border: 1px solid #d1d5db; border-r
 
 <script>
 var P = "{{.Prefix}}";
+var COPY_OK = {{if eq .Lang "zh"}}"已复制 ✓"{{else}}"Copied ✓"{{end}};
+var COPY_LBL = {{if eq .Lang "zh"}}"复制"{{else}}"Copy"{{end}};
+var CREATE_ING = {{if eq .Lang "zh"}}"创建中…"{{else}}"Creating…"{{end}};
 function openModal(msg){ document.getElementById('modalBody').textContent = msg; document.getElementById('modal').classList.add('open'); }
 function closeModal(){ document.getElementById('modal').classList.remove('open'); }
 function copyModal(){
   var b = document.getElementById('modalBody');
-  if (navigator.clipboard) { navigator.clipboard.writeText(b.textContent); }
-  else { var ta=document.createElement('textarea'); ta.value=b.textContent; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove(); }
+  var done = function(){
+    var c = document.getElementById('modalCopy');
+    c.textContent = COPY_OK; c.classList.add('copied');
+    setTimeout(function(){ c.textContent = COPY_LBL; c.classList.remove('copied'); }, 1500);
+  };
+  if (navigator.clipboard) { navigator.clipboard.writeText(b.textContent).then(done, done); }
+  else { var ta=document.createElement('textarea'); ta.value=b.textContent; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove(); done(); }
 }
 function quota(name, cpu, mem, disk){
   document.getElementById('quotaName').textContent = name;
@@ -236,6 +249,31 @@ function del(name){
   f.innerHTML = '<input type="hidden" name="name" value="'+name+'"><input type="hidden" name="confirm" value="1">';
   document.body.appendChild(f); f.submit();
 }
+// Create user: remember cpu/mem/disk in localStorage, show a busy state while
+// the container is being created (~30s) so the page does not look dead.
+(function(){
+  var KEY = 'vpsmgr_admin_create';
+  var cpu = document.getElementById('cfCpu'), mem = document.getElementById('cfMem'), disk = document.getElementById('cfDisk'), btn = document.getElementById('cfBtn');
+  try {
+    var saved = JSON.parse(localStorage.getItem(KEY) || 'null');
+    if (saved) { if (saved.cpu) cpu.value = saved.cpu; if (saved.mem) mem.value = saved.mem; if (saved.disk) disk.value = saved.disk; }
+  } catch (e) {}
+  function persist(){ try { localStorage.setItem(KEY, JSON.stringify({cpu: cpu.value, mem: mem.value, disk: disk.value})); } catch (e) {} }
+  cpu.addEventListener('input', persist); mem.addEventListener('input', persist); disk.addEventListener('input', persist);
+  document.getElementById('createForm').addEventListener('submit', function(){
+    btn.disabled = true; btn.classList.add('busy'); btn.textContent = CREATE_ING;
+  });
+})();
+// Admin password change: brief busy state on submit.
+(function(){
+  var f = document.getElementById('adminPassForm');
+  if (!f) return;
+  var btn = document.getElementById('adminPassBtn');
+  f.addEventListener('submit', function(){
+    if (!f.checkValidity()) return;
+    btn.disabled = true; btn.classList.add('busy');
+  });
+})();
 // consume flash banner once
 fetch(P + '/flash', {method:'POST'}).then(function(r){return r.json();}).then(function(j){
   if (j.msg) { if (j.kind === 'modal') openModal(j.msg); else alert(j.msg); }

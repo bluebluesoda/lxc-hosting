@@ -192,7 +192,7 @@ func (s *Server) handleReinstall(w http.ResponseWriter, r *http.Request) {
 	s.redirectModal(w, r, s.p(""), s.t(r, "reinstall_done", pass))
 }
 
-// handlePanelPassword changes only the panel login password (must be > 14
+// handlePanelPassword changes only the panel login password (must be >= 14
 // chars) and kicks all other sessions. Container root password is untouched.
 func (s *Server) handlePanelPassword(w http.ResponseWriter, r *http.Request) {
 	u := s.currentUser(r)
@@ -206,8 +206,8 @@ func (s *Server) handlePanelPassword(w http.ResponseWriter, r *http.Request) {
 		s.redirect(w, r, s.p(""), "error: "+s.t(r, "err_pass_mismatch"))
 		return
 	}
-	if len(pass) <= 14 {
-		s.redirect(w, r, s.p(""), "error: panel password must be longer than 14 characters")
+	if len(pass) < 14 {
+		s.redirect(w, r, s.p(""), "error: panel password must be at least 14 characters")
 		return
 	}
 	token := ""

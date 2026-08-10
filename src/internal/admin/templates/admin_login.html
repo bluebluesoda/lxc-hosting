@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="{{if eq .Lang "zh"}}zh-CN{{else}}en{{end}}">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -53,6 +53,9 @@ button:hover { background: #1d4ed8; }
     <input type="password" id="password" name="password" autocomplete="current-password" required autofocus>
     <button type="submit">{{if eq .Lang "zh"}}登 录{{else}}Log in{{end}}</button>
   </form>
+  <p class="lang" style="text-align:center;margin-top:14px;margin-bottom:0;position:static;">
+    {{if eq .Lang "zh"}}<a href="{{.Prefix}}/login?lang=en">English</a>{{else}}<a href="{{.Prefix}}/login?lang=zh">中文</a>{{end}}
+  </p>
 </div>
 </body>
 </html>

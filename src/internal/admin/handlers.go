@@ -21,17 +21,14 @@ var loginDummyHash = func() string { h, _ := pw.Hash("vpsmgr-admin-timing-pad");
 
 // pageData is the data handed to the admin templates.
 type pageData struct {
-	Title     string
-	Prefix    string
-	Msg       string
-	Err       string
-	AdminPath string
-	UserPath  string
-	DisplayIP string
-	Host      hostView
-	Reboot    bool
-	Users     []userView
-	Lang      string
+	Title  string
+	Prefix string
+	Msg    string
+	Err    string
+	Host   hostView
+	Reboot bool
+	Users  []userView
+	Lang   string
 }
 
 // hostView carries host memory/swap/pool numbers for the overview cards.
@@ -67,13 +64,10 @@ type userView struct {
 
 func (s *Server) buildPageData(msg, errMsg string) pageData {
 	d := pageData{
-		Title:     "VPS Manager Admin",
-		Prefix:    s.prefix(),
-		AdminPath: s.cfg.Panel.AdminPath,
-		UserPath:  s.cfg.Panel.URLPath,
-		DisplayIP: s.cfg.DisplayIP(),
-		Msg:       msg,
-		Err:       errMsg,
+		Title:  "VPS Manager Admin",
+		Prefix: s.prefix(),
+		Msg:    msg,
+		Err:    errMsg,
 	}
 	hs := s.mgr.HostStats()
 	d.Reboot = hs.RebootNeeded
@@ -156,13 +150,25 @@ func (s *Server) storeFlash(r *http.Request, msg, kind string) {
 	}
 }
 
+// currentAdminHash reads the admin password hash fresh from the config file on
+// every login. The CLI (`vpsmgr admin-passwd`) and the web UI both write the
+// hash to the config, so this makes a CLI reset effective immediately without
+// restarting the panel service. Login is low-frequency, so the extra read is
+// negligible.
+func (s *Server) currentAdminHash() string {
+	if c, err := cfg.Load(); err == nil {
+		return c.Panel.AdminPass
+	}
+	return s.cfg.Panel.AdminPass
+}
+
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodPost {
 		ip := clientIP(r)
 		s.limiter.prune()
 		if !s.limiter.allowed(ip) {
 			s.renderStatus(w, r, http.StatusTooManyRequests, "admin_login.html",
-				pageData{Title: "Admin Login", Prefix: s.prefix(), Err: "too many attempts, please wait 1 minute"})
+				pageData{Title: "Admin Login", Prefix: s.prefix(), Err: s.t(r, "err_too_many")})
 			return
 		}
 		if err := r.ParseForm(); err != nil {
@@ -173,14 +179,14 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		// Password-only login: no username. Compare against the configured
 		// bcrypt hash; when unset (fresh install before admin-passwd) burn the
 		// same bcrypt time as a real compare.
-		hash := s.cfg.Panel.AdminPass
+		hash := s.currentAdminHash()
 		if hash == "" {
 			pw.Verify(loginDummyHash, pass)
-			s.render(w, r, "admin_login.html", pageData{Title: "Admin Login", Prefix: s.prefix(), Err: "admin not configured yet — run `vpsmgr admin-passwd`"})
+			s.render(w, r, "admin_login.html", pageData{Title: "Admin Login", Prefix: s.prefix(), Err: s.t(r, "err_not_configured")})
 			return
 		}
 		if !pw.Verify(hash, pass) {
-			s.render(w, r, "admin_login.html", pageData{Title: "Admin Login", Prefix: s.prefix(), Err: "invalid password"})
+			s.render(w, r, "admin_login.html", pageData{Title: "Admin Login", Prefix: s.prefix(), Err: s.t(r, "err_bad_login")})
 			return
 		}
 		token, err := s.sessions.create(s.cfg.Panel.SessionDays)
@@ -236,7 +242,7 @@ func (s *Server) handleUserAdd(w http.ResponseWriter, r *http.Request) {
 	name := r.FormValue("name")
 	cpu, err := strconv.Atoi(r.FormValue("cpu"))
 	if err != nil {
-		s.redirect(w, r, s.p(""), "error: cpu must be an integer")
+		s.redirect(w, r, s.p(""), "error: "+s.t(r, "err_invalid_cpu"))
 		return
 	}
 	memMB, err := parseMem(r.FormValue("mem"))
@@ -246,7 +252,7 @@ func (s *Server) handleUserAdd(w http.ResponseWriter, r *http.Request) {
 	}
 	diskGB, err := strconv.Atoi(r.FormValue("disk"))
 	if err != nil {
-		s.redirect(w, r, s.p(""), "error: disk must be an integer (GiB)")
+		s.redirect(w, r, s.p(""), "error: "+s.t(r, "err_invalid_disk"))
 		return
 	}
 	pass := r.FormValue("password")
@@ -275,7 +281,7 @@ func (s *Server) handleUserDel(w http.ResponseWriter, r *http.Request) {
 		s.redirect(w, r, s.p(""), "error: "+err.Error())
 		return
 	}
-	s.redirect(w, r, s.p(""), "ok: user "+name+" deleted")
+	s.redirect(w, r, s.p(""), s.t(r, "user_deleted", name))
 }
 
 func (s *Server) handleUserQuota(w http.ResponseWriter, r *http.Request) {
@@ -286,7 +292,7 @@ func (s *Server) handleUserQuota(w http.ResponseWriter, r *http.Request) {
 	name := r.FormValue("name")
 	cpu, err := strconv.Atoi(r.FormValue("cpu"))
 	if err != nil {
-		s.redirect(w, r, s.p(""), "error: cpu must be an integer")
+		s.redirect(w, r, s.p(""), "error: "+s.t(r, "err_invalid_cpu"))
 		return
 	}
 	memMB, err := parseMem(r.FormValue("mem"))
@@ -296,14 +302,14 @@ func (s *Server) handleUserQuota(w http.ResponseWriter, r *http.Request) {
 	}
 	diskGB, err := strconv.Atoi(r.FormValue("disk"))
 	if err != nil {
-		s.redirect(w, r, s.p(""), "error: disk must be an integer (GiB)")
+		s.redirect(w, r, s.p(""), "error: "+s.t(r, "err_invalid_disk"))
 		return
 	}
 	if _, err := s.mgr.UpdateQuotas(name, cpu, memMB, diskGB); err != nil {
 		s.redirect(w, r, s.p(""), "error: "+err.Error())
 		return
 	}
-	s.redirect(w, r, s.p(""), "ok: quotas updated for "+name)
+	s.redirect(w, r, s.p(""), s.t(r, "quota_updated", name))
 }
 
 func (s *Server) handlePower(w http.ResponseWriter, r *http.Request) {
@@ -317,7 +323,7 @@ func (s *Server) handlePower(w http.ResponseWriter, r *http.Request) {
 		s.redirect(w, r, s.p(""), "error: "+err.Error())
 		return
 	}
-	s.redirect(w, r, s.p(""), "ok: "+action+" "+name)
+	s.redirect(w, r, s.p(""), s.t(r, "power_ok", name, action))
 }
 
 // handleResetPanelPass resets a user's panel login password and shows it once.
@@ -332,7 +338,8 @@ func (s *Server) handleResetPanelPass(w http.ResponseWriter, r *http.Request) {
 		s.redirect(w, r, s.p(""), "error: "+err.Error())
 		return
 	}
-	s.redirectModal(w, r, s.p(""), "user:      "+name+"\npassword:  "+pass+"\npanel:     https://"+s.cfg.DisplayIP()+":8443/"+s.cfg.Panel.URLPath)
+	panel := "https://" + s.cfg.DisplayIP() + ":8443/" + s.cfg.Panel.URLPath
+	s.redirectModal(w, r, s.p(""), s.t(r, "new_panel_password", name, pass, panel))
 }
 
 // handleAdminPass changes the admin panel password (no username). The current
@@ -345,11 +352,11 @@ func (s *Server) handleAdminPass(w http.ResponseWriter, r *http.Request) {
 	pass := r.FormValue("new_password")
 	confirm := r.FormValue("confirm_password")
 	if pass != confirm {
-		s.redirect(w, r, s.p(""), "error: the two passwords do not match")
+		s.redirect(w, r, s.p(""), "error: "+s.t(r, "err_pass_mismatch"))
 		return
 	}
-	if len(pass) <= 14 {
-		s.redirect(w, r, s.p(""), "error: admin password must be longer than 14 characters")
+	if len(pass) < 14 {
+		s.redirect(w, r, s.p(""), "error: "+s.t(r, "err_pass_short"))
 		return
 	}
 	hash, err := pw.Hash(pass)
@@ -362,7 +369,7 @@ func (s *Server) handleAdminPass(w http.ResponseWriter, r *http.Request) {
 		s.redirect(w, r, s.p(""), "error: "+err.Error())
 		return
 	}
-	s.redirect(w, r, s.p(""), "ok: admin password changed")
+	s.redirect(w, r, s.p(""), s.t(r, "admin_pass_changed"))
 }
 
 // parseMem parses a memory string ("512" or "1G") into MiB, mirroring the CLI.

@@ -83,8 +83,23 @@ func (s *Server) Handler() http.Handler {
 		h.Set("Content-Security-Policy",
 			"default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; "+
 				"img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; form-action 'self'; base-uri 'self'")
+		// Resolve the admin language once per request and persist an explicit
+		// ?lang= choice in a scoped cookie so it survives page navigations
+		// (same behavior as the user panel).
+		l := s.lang(r)
+		if l != "" && r.URL.Query().Get("lang") != "" {
+			http.SetCookie(w, &http.Cookie{
+				Name:     langCookie,
+				Value:    l,
+				Path:     prefix,
+				MaxAge:   365 * 24 * 3600,
+				HttpOnly: true,
+				SameSite: http.SameSiteLaxMode,
+			})
+		}
 		r2 := r.Clone(r.Context())
 		r2.URL.Path = rest
+		r2 = r2.WithContext(withLang(r2.Context(), l))
 		mux.ServeHTTP(w, r2)
 	})
 }
@@ -228,27 +243,17 @@ func (s *Server) renderStatus(w http.ResponseWriter, r *http.Request, status int
 		http.Error(w, "template error: "+err.Error(), 500)
 		return
 	}
+	// Language is resolved once per request in the top-level handler; fall
+	// back to a direct detection for direct template execution (tests).
 	if data.Lang == "" {
-		data.Lang = langFromHeader(r.Header.Get("Accept-Language"))
+		data.Lang = langEn
+		if l, ok := r.Context().Value(langCtxKey).(string); ok && l != "" {
+			data.Lang = l
+		}
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(status)
 	if err := t.ExecuteTemplate(w, name, data); err != nil {
 		http.Error(w, err.Error(), 500)
 	}
-}
-
-// langFromHeader picks zh or en from the browser's Accept-Language (English
-// fallback), matching the user panel behavior.
-func langFromHeader(h string) string {
-	for _, field := range strings.Split(h, ",") {
-		tag := strings.ToLower(strings.TrimSpace(strings.SplitN(field, ";", 2)[0]))
-		if strings.HasPrefix(tag, "zh") {
-			return "zh"
-		}
-		if strings.HasPrefix(tag, "en") {
-			return "en"
-		}
-	}
-	return "en"
 }

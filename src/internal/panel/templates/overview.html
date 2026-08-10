@@ -149,9 +149,9 @@ footer a{color:var(--muted);text-decoration:underline}
 <div class="overlay" id="pwModal">
 <div class="modal">
 <h3>{{if eq .Lang "zh"}}修改面板登录密码{{else}}Change panel login password{{end}}</h3>
-<p class="muted">{{if eq .Lang "zh"}}只修改面板登录密码，不影响容器 root 密码。长度需大于 14 位。{{else}}Only changes the panel login password; the container root password is untouched. Must be longer than 14 characters.{{end}}</p>
+<p class="muted">{{if eq .Lang "zh"}}只修改面板登录密码，不影响容器 root 密码。密码长度至少 14 位。{{else}}Only changes the panel login password; the container root password is untouched. Password must be at least 14 characters.{{end}}</p>
 <form action="{{.Prefix}}/password" method="post" id="pwForm">
-<div class="frow"><label>{{if eq .Lang "zh"}}新密码{{else}}New password{{end}}</label><input id="npw" name="new_password" type="password" minlength="15" required></div>
+<div class="frow"><label>{{if eq .Lang "zh"}}新密码{{else}}New password{{end}}</label><input id="npw" name="new_password" type="password" minlength="14" required></div>
 <div class="frow"><label>{{if eq .Lang "zh"}}确认{{else}}Confirm{{end}}</label><input id="npwc" name="confirm_password" type="password" required></div>
 <div class="actions">
 <button class="btn" type="button" id="pwClose">{{if eq .Lang "zh"}}取消{{else}}Cancel{{end}}</button>
