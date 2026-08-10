@@ -77,9 +77,13 @@ fi
 V6_IP="none"
 V6_NAT="false"
 if [[ -n "${VPSMGR_IPV6_SUBNET:-}" ]]; then
-  # gateway = prefix + 1, keep the configured prefix length (/64, /48, /60...)
+  # gateway = prefix + 1. Bridge prefix is clamped to >= /64: LXD's dnsmasq
+  # refuses non-/64 networks, and every container address lives in the first
+  # /64 of the configured prefix anyway (the Go side re-asserts this at
+  # `vpsmgr install`).
   V6_LEN=$(echo "$VPSMGR_IPV6_SUBNET" | cut -d/ -f2)
   V6_LEN="${V6_LEN:-64}"
+  [[ "$V6_LEN" -lt 64 ]] && V6_LEN=64
   V6_IP="$(echo "$VPSMGR_IPV6_SUBNET" | cut -d/ -f1)1/$V6_LEN"
   log "IPv6 pass-through enabled: lxdbr0 will use global prefix $VPSMGR_IPV6_SUBNET"
 fi

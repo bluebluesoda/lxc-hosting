@@ -91,6 +91,19 @@ func TestAddHostOffset(t *testing.T) {
 	}
 }
 
+// The bridge is always >= /64: LXD's dnsmasq rejects non-/64 networks, and
+// all deterministic container addresses live in the first /64 of the prefix.
+func TestBridgePrefixLen(t *testing.T) {
+	cases := []struct{ ones, want int }{
+		{48, 64}, {56, 64}, {60, 64}, {64, 64}, {80, 80},
+	}
+	for _, c := range cases {
+		if got := bridgePrefixLen(c.ones); got != c.want {
+			t.Errorf("bridgePrefixLen(%d) = %d, want %d", c.ones, got, c.want)
+		}
+	}
+}
+
 // checkIPv6Collision must refuse a new container whose deterministic address
 // is already taken by another user, skip the user itself, and be a no-op when
 // IPv6 is disabled.

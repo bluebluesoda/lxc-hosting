@@ -14,10 +14,12 @@ import (
 //
 //   lxdbr0 is configured with the GLOBAL prefix — /64 or shorter (e.g. /56),
 //   or the /80 slice a provider hands the host — with ipv6.routing + stateful
-//   DHCPv6. Each container gets a DETERMINISTIC global address derived from
-//   its username (sha256 → 32 bits, last block fixed to 0001), so the address
-//   is stable across reinstalls and never needs to be stored or queried. The
-//   host then:
+//   DHCPv6. For a shorter prefix (/48 /56 /60) the bridge carries the FIRST
+//   /64 slice of it, because LXD's dnsmasq rejects non-/64 networks and every
+//   deterministic container address falls in that /64 anyway. Each container
+//   gets a DETERMINISTIC global address derived from its username (sha256 → 32
+//   bits, last block fixed to 0001), so the address is stable across
+//   reinstalls and never needs to be stored or queried. The host then:
 //     - deletes the duplicate prefix route on lxdbr0 (it conflicts with
 //       eth0's kernel route when the host itself is inside the prefix)
 //     - adds an exact /128 route per container via lxdbr0
@@ -72,18 +74,23 @@ func (m *Manager) SetupIPv6Bridge() error {
 	}
 	// The bridge gateway is a free address inside the prefix — normally net+1,
 	// but skipped when the host itself already uses it on the external
-	// interface (common with a /80 slice where the host holds ::1). The prefix
-	// length on the bridge must match the configured prefix (e.g. /48, /60 or
-	// /80), not always /64 — otherwise LXD's dnsmasq would only advertise a
-	// /64 slice of a bigger prefix.
+	// interface (common with a /80 slice where the host holds ::1).
+	//
+	// Bridge prefix length: LXD's dnsmasq only serves /64 networks (a shorter
+	// prefix like /48 /56 /60 makes it error "only /64 allowed"). Since every
+	// deterministic container address lives in the FIRST /64 of the configured
+	// prefix (bits [prefixlen:79] are zero-filled), we clamp the bridge to /64
+	// for those — containers still fall inside it. /64 and /80 use their own
+	// length.
 	ones, _ := n.Mask.Size()
+	bridgeOnes := bridgePrefixLen(ones)
 	gw, err := m.bridgeGateway(n)
 	if err != nil {
 		return err
 	}
 	bridge := m.cfg.LXD.Bridge
 	for _, kv := range []string{
-		"ipv6.address=" + gw + "/" + strconv.Itoa(ones),
+		"ipv6.address=" + gw + "/" + strconv.Itoa(bridgeOnes),
 		"ipv6.nat=false",
 		"ipv6.routing=true",
 		"ipv6.dhcp.stateful=true",
@@ -92,9 +99,11 @@ func (m *Manager) SetupIPv6Bridge() error {
 			return err
 		}
 	}
-	// Remove the conflicting /64 route LXD auto-creates on the bridge when the
-	// host itself is inside the prefix (eth0 keeps the authoritative /64).
-	_ = exec.Command("ip", "-6", "route", "del", n.String(), "dev", bridge).Run()
+	// Remove the conflicting route LXD auto-creates on the bridge for the
+	// bridge's own prefix when the host itself is inside it (eth0 keeps the
+	// authoritative route).
+	bridgeNet := &net.IPNet{IP: net.ParseIP(gw).Mask(net.CIDRMask(bridgeOnes, 128)), Mask: net.CIDRMask(bridgeOnes, 128)}
+	_ = exec.Command("ip", "-6", "route", "del", bridgeNet.String(), "dev", bridge).Run()
 	_ = m.enableForwarding()
 	return nil
 }
@@ -176,6 +185,18 @@ func addHostOffset(netAddr net.IP, k uint64) net.IP {
 		}
 	}
 	return ip
+}
+
+// bridgePrefixLen clamps the configured prefix length for the lxdbr0 bridge.
+// LXD's dnsmasq only serves /64 networks (a /48 /56 /60 makes it error "only
+// /64 allowed"), and every deterministic container address falls inside the
+// FIRST /64 of the configured prefix — so shorter prefixes ride on that /64;
+// /64 and /80 keep their own length.
+func bridgePrefixLen(ones int) int {
+	if ones < 64 {
+		return 64
+	}
+	return ones
 }
 
 // enableForwarding turns on IPv6 forwarding (required for pass-through).
