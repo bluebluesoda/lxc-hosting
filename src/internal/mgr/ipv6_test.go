@@ -7,37 +7,55 @@ import (
 	"vpsmgr/internal/cfg"
 )
 
-func TestIPv6Suffix(t *testing.T) {
-	want := "2bd8:06c9:7f0e"
-	if got := ipv6Suffix("alice"); got != want {
-		t.Errorf("ipv6Suffix(alice) = %q, want %q", got, want)
+// sha256("alice")[:4] == 2b d8 06 c9 — the 32-bit block index used below.
+
+func TestIPv6Block(t *testing.T) {
+	cases := []struct {
+		subnet, want string
+	}{
+		// /64 parent: bits 64-79 padded with 0 -> "::" before the hash.
+		{"2602:fada:6::/64", "2602:fada:6::2bd8:6c9:0/112"},
+		// /80 parent: the 753a hextet is part of the prefix, hash follows.
+		{"2406:da14:1dd2:a807:753a::/80", "2406:da14:1dd2:a807:753a:2bd8:6c9:0/112"},
+	}
+	for _, c := range cases {
+		cfg := cfg.Default()
+		cfg.Net.IPv6Subnet = c.subnet
+		m := &Manager{cfg: cfg}
+		b, err := m.IPv6Block("alice")
+		if err != nil {
+			t.Fatalf("%s: %v", c.subnet, err)
+		}
+		if got := b.String(); got != c.want {
+			t.Errorf("IPv6Block(%s) = %s, want %s", c.subnet, got, c.want)
+		}
 	}
 }
 
 func TestIPv6Addr(t *testing.T) {
-	c := cfg.Default()
-	c.Net.IPv6Subnet = "2602:fada:6::/64"
-	m := &Manager{cfg: c}
+	cfg := cfg.Default()
+	cfg.Net.IPv6Subnet = "2406:da14:1dd2:a807:753a::/80"
+	m := &Manager{cfg: cfg}
 	addr, err := m.IPv6Addr("alice")
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "2602:fada:6::2bd8:6c9:7f0e"
+	want := "2406:da14:1dd2:a807:753a:2bd8:6c9:1"
 	if addr != want {
 		t.Errorf("IPv6Addr(alice) = %q, want %q", addr, want)
 	}
 }
 
-// A computed address must always fall inside the configured subnet, for any
+// A computed block must always fall inside the configured subnet, for every
 // supported prefix length (/64 down to /48, plus /80 provider slices). The
-// 48-bit username hash only touches the low 48 bits, which are host bits for
-// every prefix <= /80.
-func TestIPv6AddrWithinSubnet(t *testing.T) {
+// 32-bit hash only touches bits 80-111, which are host bits for any prefix
+// <= /80.
+func TestIPv6BlockWithinSubnet(t *testing.T) {
 	for _, sub := range []string{"2602:fada:6::/48", "2602:fada:6::/56", "2602:fada:6::/60", "2602:fada:6::/64", "2406:da14:1dd2:a807:753a::/80"} {
 		c := cfg.Default()
 		c.Net.IPv6Subnet = sub
 		m := &Manager{cfg: c}
-		addr, err := m.IPv6Addr("alice")
+		b, err := m.IPv6Block("alice")
 		if err != nil {
 			t.Fatalf("%s: %v", sub, err)
 		}
@@ -45,25 +63,9 @@ func TestIPv6AddrWithinSubnet(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !ipnet.Contains(net.ParseIP(addr)) {
-			t.Errorf("%s: addr %s not inside subnet", sub, addr)
+		if !ipnet.Contains(b.IP) {
+			t.Errorf("%s: block %s not inside subnet", sub, b)
 		}
-	}
-}
-
-// A /80 provider slice must keep ALL prefix bits (e.g. the 753a hextet) — only
-// the low 48 host bits may come from the username hash.
-func TestIPv6Addr80(t *testing.T) {
-	c := cfg.Default()
-	c.Net.IPv6Subnet = "2406:da14:1dd2:a807:753a::/80"
-	m := &Manager{cfg: c}
-	addr, err := m.IPv6Addr("alice")
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := "2406:da14:1dd2:a807:753a:2bd8:6c9:7f0e"
-	if addr != want {
-		t.Errorf("IPv6Addr(alice) = %q, want %q", addr, want)
 	}
 }
 

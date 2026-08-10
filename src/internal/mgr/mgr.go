@@ -3,6 +3,7 @@ package mgr
 import (
 	"errors"
 	"fmt"
+	"net"
 	"os/exec"
 	"regexp"
 	"strconv"
@@ -176,14 +177,24 @@ func (m *Manager) Add(name string, opt AddOptions) (*Result, error) {
 	ip := fmt.Sprintf("10.42.0.%d", idx+1)
 	portBase := m.cfg.Net.PortBase + (idx-1)*m.cfg.Net.PortsPerUser
 	ipv6, _ := m.IPv6Addr(name)
-	if err := m.lx.Launch(name, image, ip, ipv6, opt.CPU, opt.MemMB, opt.DiskGB); err != nil {
+	block, _ := m.IPv6Block(name)
+	if block != nil {
+		if err := m.checkBlockCollision(name, block); err != nil {
+			return nil, err
+		}
+	}
+	blockStr := ""
+	if block != nil {
+		blockStr = block.String()
+	}
+	if err := m.lx.Launch(name, image, ip, ipv6, blockStr, opt.CPU, opt.MemMB, opt.DiskGB); err != nil {
 		return nil, fmt.Errorf("launch container: %w", err)
 	}
 	if err := m.Provision(name, image, opt.Password); err != nil {
 		return nil, fmt.Errorf("provision container: %w", err)
 	}
-	// IPv6 pass-through: attach the /128 route + proxy_ndp entry for the
-	// container's SLAAC global address (no-op when IPv6 is disabled).
+	// IPv6 pass-through: register the container's /112 with the NDP proxy
+	// (no-op when IPv6 is disabled).
 	if err := m.WireIPv6(name); err != nil {
 		return nil, fmt.Errorf("wire ipv6: %w", err)
 	}
@@ -249,6 +260,30 @@ func (m *Manager) decorateUsage(r *Result, use map[string]lx.Usage) {
 	r.MemUse = "-"
 }
 
+// checkBlockCollision refuses a new container if its deterministic /112 block
+// already belongs to another user (32-bit hash space; ~1 in 135k for 253
+// users, but a silent routing clash would be nasty to debug).
+func (m *Manager) checkBlockCollision(name string, block *net.IPNet) error {
+	users, err := m.db.ListUsers()
+	if err != nil {
+		return err
+	}
+	blockStr := block.IP.String()
+	for _, u := range users {
+		if u.Name == name {
+			continue
+		}
+		b, err := m.IPv6Block(u.Name)
+		if err != nil {
+			return err
+		}
+		if b != nil && b.IP.String() == blockStr {
+			return fmt.Errorf("ipv6 block %s already assigned to user %q (hash collision); choose another name", block.String(), u.Name)
+		}
+	}
+	return nil
+}
+
 func (m *Manager) ResultFor(u *db.User, pass string) *Result {
 	st, _ := m.lx.State(u.Name)
 	domains, _ := m.db.ListDomains(u.ID)
@@ -257,10 +292,14 @@ func (m *Manager) ResultFor(u *db.User, pass string) *Result {
 		ds[i] = d.Domain
 	}
 	up, down := m.TrafficFor(u.ID)
-	v6, _ := m.IPv6Addr(u.Name)
+	v6, _ := m.IPv6Block(u.Name)
+	v6Str := ""
+	if v6 != nil {
+		v6Str = v6.String()
+	}
 	return &Result{User: u, Password: pass, PublicIP: m.cfg.Panel.PublicIP,
 		State: st, Domains: ds, PortsPerUser: m.cfg.Net.PortsPerUser,
-		UpGB: FormatGB(up), DownGB: FormatGB(down), IPv6: v6}
+		UpGB: FormatGB(up), DownGB: FormatGB(down), IPv6: v6Str}
 }
 
 func (m *Manager) Del(name string) error {
@@ -437,7 +476,12 @@ func (m *Manager) Reinstall(name string) (string, error) {
 		return "", err
 	}
 	ipv6, _ := m.IPv6Addr(u.Name)
-	if err := m.lx.Launch(u.Name, image, u.IP, ipv6, u.CPU, u.MemMB, u.DiskGB); err != nil {
+	block, _ := m.IPv6Block(u.Name)
+	blockStr := ""
+	if block != nil {
+		blockStr = block.String()
+	}
+	if err := m.lx.Launch(u.Name, image, u.IP, ipv6, blockStr, u.CPU, u.MemMB, u.DiskGB); err != nil {
 		return "", fmt.Errorf("recreate container: %w", err)
 	}
 	pass := pw.Generate(20)

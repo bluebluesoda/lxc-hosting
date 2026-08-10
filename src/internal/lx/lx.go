@@ -230,9 +230,10 @@ func (c *Client) ImageExists(alias string) (bool, error) {
 }
 
 // Launch creates a container with limits, static IPv4 (and optional static
-// IPv6) and autostart enabled, then starts it and waits until it is ready.
-// security.nesting allows running Docker / nested containers inside.
-func (c *Client) Launch(name, image, ip, ipv6 string, cpu, memMB, diskGB int) error {
+// IPv6 primary address + routed /112 block) and autostart enabled, then starts
+// it and waits until it is ready. security.nesting allows running Docker /
+// nested containers inside.
+func (c *Client) Launch(name, image, ip, ipv6, block string, cpu, memMB, diskGB int) error {
 	args := []string{"init", image, name,
 		"-c", "limits.cpu=" + strconv.Itoa(cpu),
 		"-c", "limits.memory=" + strconv.Itoa(memMB) + "MiB",
@@ -242,12 +243,15 @@ func (c *Client) Launch(name, image, ip, ipv6 string, cpu, memMB, diskGB int) er
 	if _, err := c.Run(args...); err != nil {
 		return err
 	}
-	// Static IPv4 (and optional static IPv6) on the eth0 device inherited
-	// from the default profile. Both go in ONE override call — LXD refuses a
-	// second override of the same device ("device already exists").
+	// Static IPv4 (and optional IPv6 primary + routed /112) on the eth0 device
+	// inherited from the default profile. All go in ONE override call — LXD
+	// refuses a second override of the same device ("device already exists").
 	devArgs := []string{"config", "device", "override", name, "eth0", "ipv4.address=" + ip}
 	if ipv6 != "" {
 		devArgs = append(devArgs, "ipv6.address="+ipv6)
+	}
+	if block != "" {
+		devArgs = append(devArgs, "ipv6.routes="+block)
 	}
 	if _, err := c.Run(devArgs...); err != nil {
 		return fmt.Errorf("override eth0: %w", err)

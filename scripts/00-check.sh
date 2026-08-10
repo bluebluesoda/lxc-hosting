@@ -57,6 +57,13 @@ for p in snapd nftables zstd curl; do
   fi
 done
 
+# --- ndppd (only needed when IPv6 pass-through is enabled) ---
+if [[ -n "${VPSMGR_IPV6_SUBNET:-}" ]] && ! command -v ndppd >/dev/null 2>&1; then
+  log "installing ndppd (IPv6 pass-through NDP proxy)"
+  apt-get update -qq
+  DEBIAN_FRONTEND=noninteractive apt-get install -y -qq ndppd
+fi
+
 # --- Go toolchain (only needed for local build; installed lazily by 40-panel.sh) ---
 if command -v go >/dev/null 2>&1; then
   log "go: $(go version 2>/dev/null | awk '{print $3}')"

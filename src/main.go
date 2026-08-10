@@ -52,7 +52,7 @@ WantedBy=multi-user.target
 `
 
 const ipv6Unit = `[Unit]
-Description=vpsmgr IPv6 pass-through routes
+Description=vpsmgr IPv6 pass-through (/112 blocks via ndppd)
 After=network-online.target lxd.service vpsmgr-nft.service
 Wants=network-online.target
 Before=vpsmgr-panel.service
@@ -109,7 +109,7 @@ func main() {
 		}
 		err = userShow(os.Args[2])
 	case "ipv6-reapply":
-		// Re-attach IPv6 routes/proxy_ndp for all existing containers.
+		// Re-register every container's /112 with the NDP proxy (ndppd).
 		// Run by the vpsmgr-ipv6.service boot unit and `vpsmgr install`.
 		err = cmdIPv6Reapply()
 	case "version":
@@ -187,8 +187,8 @@ func cmdInstall() error {
 		}
 		d.Close()
 	}
-	// IPv6 pass-through: configure bridge + re-attach routes for existing
-	// containers (no-op when ipv6_subnet empty).
+	// IPv6 pass-through: configure bridge + register every container's /112
+	// with the NDP proxy (no-op when ipv6_subnet empty).
 	d, err := db.Open(c.Panel.DB)
 	if err != nil {
 		return err
@@ -603,7 +603,7 @@ func printAdded(r *mgr.Result) {
 	fmt.Printf("ports:    %d-%d (ssh: %d)\n", u.PortBase, u.PortBase+r.PortsPerUser-1, u.PortBase)
 	fmt.Printf("quotas:   %d cpu / %d MiB / %d GiB\n", u.CPU, u.MemMB, u.DiskGB)
 	if r.IPv6 != "" {
-		fmt.Printf("ipv6:     %s\n", r.IPv6)
+		fmt.Printf("ipv6 block: %s\n", r.IPv6)
 	}
 	if r.Password != "" {
 		fmt.Printf("password: %s  (panel + root)\n", r.Password)
@@ -619,7 +619,7 @@ func printResult(r *mgr.Result) {
 	fmt.Printf("state:    %s\n", r.State)
 	fmt.Printf("ip:       %s\n", u.IP)
 	if r.IPv6 != "" {
-		fmt.Printf("ipv6:     %s\n", r.IPv6)
+		fmt.Printf("ipv6 block: %s\n", r.IPv6)
 	}
 	fmt.Printf("ports:    %d-%d (ssh: %d)\n", u.PortBase, u.PortBase+r.PortsPerUser-1, u.PortBase)
 	fmt.Printf("quotas:   %d cpu / %d MiB / %d GiB\n", u.CPU, u.MemMB, u.DiskGB)

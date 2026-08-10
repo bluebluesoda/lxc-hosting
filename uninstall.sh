@@ -20,6 +20,10 @@ if [[ -f /etc/vpsmgr/config.yaml ]]; then
 fi
 if [[ -n "$V6SUBNET" ]]; then
   log "cleaning IPv6 pass-through ($V6SUBNET)..."
+  # stop the NDP proxy daemon and drop its config
+  service ndppd stop >/dev/null 2>&1 || true
+  systemctl disable ndppd.service >/dev/null 2>&1 || true
+  rm -f /etc/ndppd.conf
   # remove proxy_ndp entries on the ext iface for the prefix
   EXT_IF=$(ip route show default 2>/dev/null | awk '{print $5; exit}')
   if [[ -n "$EXT_IF" ]]; then

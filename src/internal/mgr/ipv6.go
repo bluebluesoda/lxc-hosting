@@ -2,10 +2,11 @@ package mgr
 
 import (
 	"crypto/sha256"
-	"encoding/binary"
 	"fmt"
 	"net"
+	"os"
 	"os/exec"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -14,51 +15,65 @@ import (
 //
 //   lxdbr0 is configured with the GLOBAL prefix — /64 or shorter (e.g. /56),
 //   or the /80 slice a provider hands the host — with ipv6.routing + stateful
-//   DHCPv6. Each container gets a DETERMINISTIC global address derived from
-//   its username (sha256 → 48 bits), so the address is stable across
-//   reinstalls and never needs to be stored or queried. The host then:
-//     - deletes the duplicate prefix route on lxdbr0 (it conflicts with
-//       eth0's kernel route when the host itself is inside the prefix)
-//     - adds an exact /128 route per container via lxdbr0
-//     - adds a proxy_ndp entry per container on the external interface, so
-//       upstream neighbor solicitations for container addresses are answered
-//       by the host (verified: external clients reach container addresses).
+//   DHCPv6. Each container gets its own DETERMINISTIC /112 block derived from
+//   its username (sha256 → 32-bit block index), so the block is stable across
+//   reinstalls and never needs to be stored or queried:
 //
-// No NAT, no nftables changes, no DB schema changes: the IPv6 address is
-// computed from (prefix, username) on the fly.
+//       block = <prefix>< 32-bit sha256(name) >::/112
+//                 bits 0-79           bits 80-111     bits 112-127 (host)
+//
+//   For a /64 parent the bits 64-79 are zero (the network address already
+//   zeroes all host bits), i.e. the "::" padding — a /80 parent keeps them as
+//   part of the prefix. Either way the 32-bit hash always lands at bits 80-111
+//   and the container owns the trailing 16 host bits.
+//
+//   Per container:
+//     - LXD routes the whole /112 to the container: the eth0 device override
+//       sets ipv6.address=<block>::1 (a DHCPv6 reservation, the container's
+//       primary address) and ipv6.routes=<block>::/112 (LXD programs the
+//       route on lxdbr0). Any address in the /112 the container binds is
+//       therefore delivered to it.
+//     - The kernel's proxy_ndp only works per single address, so a /112 can't
+//       be ND-proxied with `ip neigh add proxy` (verified: route-covered
+//       addresses are NOT answered). Instead ndppd proxies the /112 at the
+//       upstream: a Neighbor Solicitation on the external interface for an
+//       address in a container's /112 is relayed to lxdbr0, the container
+//       answers for the addresses it binds, and ndppd relays the NA back.
+//
+//   No NAT, no nftables changes, no DB schema changes: the /112 block is
+//   computed from (prefix, username) on the fly.
 
-// ipv6Suffix returns the 48-bit host part of a container's IPv6, derived
-// deterministically from its username (sha256 truncated to 48 bits). Kept for
-// tests/diagnostics; IPv6Addr writes the same 48 bits directly into the
-// address instead of going through the string form.
-func ipv6Suffix(name string) string {
-	h := sha256.Sum256([]byte(name))
-	v := binary.BigEndian.Uint32(h[:4]) & 0xffff_ffff
-	lo := binary.BigEndian.Uint16(h[4:6])
-	// Format as three 16-bit hextets: xx:xxxx:xxxx (48 bits total).
-	return fmt.Sprintf("%x:%04x:%04x", v>>16, v&0xffff, lo)
-}
+// blockBits is the length of the per-container routed prefix.
+const blockBits = 112
 
-// IPv6Addr computes the deterministic global IPv6 address of a container from
-// the configured prefix + username. Never queries LXD and never stores it.
-func (m *Manager) IPv6Addr(name string) (string, error) {
+// IPv6Block computes the deterministic /112 block a container owns, derived
+// from the configured prefix + username. Never queries LXD, never stores it.
+func (m *Manager) IPv6Block(name string) (*net.IPNet, error) {
 	if !m.cfg.IPv6Enabled() {
-		return "", nil
+		return nil, nil
 	}
 	n, err := m.cfg.IPv6Network()
 	if err != nil {
+		return nil, err
+	}
+	// Copy the FULL network address (host bits are zero), then write the
+	// 32-bit username hash at bytes 10-13 (bits 80-111). Bytes 14-15 stay
+	// zero: they are the /112's 16 host bits.
+	block := make(net.IP, 16)
+	copy(block, n.IP.To16())
+	h := sha256.Sum256([]byte(name))
+	copy(block[10:14], h[:4])
+	return &net.IPNet{IP: block, Mask: net.CIDRMask(blockBits, 128)}, nil
+}
+
+// IPv6Addr returns the container's primary global address inside its /112
+// (block + ::1), used as the LXD eth0 DHCPv6 reservation.
+func (m *Manager) IPv6Addr(name string) (string, error) {
+	b, err := m.IPv6Block(name)
+	if err != nil || b == nil {
 		return "", err
 	}
-	// Copy the FULL network address, then overwrite its low 48 bits with the
-	// username hash. The hash only ever touches host bits for any prefix <=
-	// /80, so the result is always inside the configured subnet. For a /64
-	// this yields prefix + "::xxxx:xxxx:xxxx" exactly as before; for a /80
-	// slice (e.g. 2406:da14:1dd2:a807:753a::/80) it fills the 48 host bits.
-	addr := make(net.IP, 16)
-	copy(addr, n.IP.To16())
-	h := sha256.Sum256([]byte(name))
-	copy(addr[10:], h[:6])
-	return addr.String(), nil
+	return addHostOffset(b.IP, 1).String(), nil
 }
 
 // SetupIPv6Bridge configures lxdbr0 for IPv6 pass-through. Idempotent.
@@ -92,8 +107,8 @@ func (m *Manager) SetupIPv6Bridge() error {
 			return err
 		}
 	}
-	// Remove the conflicting /64 route LXD auto-creates on the bridge when the
-	// host itself is inside the prefix (eth0 keeps the authoritative /64).
+	// Remove the conflicting prefix route LXD auto-creates on the bridge when
+	// the host itself is inside the prefix (eth0 keeps the authoritative one).
 	_ = exec.Command("ip", "-6", "route", "del", n.String(), "dev", bridge).Run()
 	_ = m.enableForwarding()
 	return nil
@@ -110,7 +125,7 @@ func (m *Manager) SetupIPv6Bridge() error {
 //   - any address present in the NDP neighbor table on the external interface
 //     (catches the router and any other device already on the link)
 //
-// A container's hash-derived address is 2^-48 unlikely to collide with any of
+// A container's hash-derived block is 2^-32 unlikely to collide with any of
 // these, and LXD only uses this address as the dnsmasq/SLAAC anchor.
 func (m *Manager) bridgeGateway(n *net.IPNet) (string, error) {
 	inUse := map[string]bool{}
@@ -186,86 +201,112 @@ func (m *Manager) enableForwarding() error {
 	return nil
 }
 
-// proxyNDP adds or removes a proxy_ndp entry for one address on the external
-// interface, and ensures kernel proxy_ndp is enabled. Idempotent.
-func (m *Manager) proxyNDP(addr string, add bool) error {
+const ndppdConfPath = "/etc/ndppd.conf"
+
+// ndppdRules renders the ndppd config: one `rule <block>::/112` per container
+// under a `proxy <ext_if>` section, so upstream neighbor solicitations for any
+// address in a container's /112 are relayed to the LXD bridge (the container
+// answers for the addresses it binds). `add` / `drop` let a single user be
+// added or removed without racing the DB transaction in Add/Del.
+func (m *Manager) ndppdRules(add, drop string) (string, error) {
 	if !m.cfg.IPv6Enabled() {
+		return "", nil
+	}
+	names := map[string]bool{}
+	if users, err := m.db.ListUsers(); err != nil {
+		return "", err
+	} else {
+		for _, u := range users {
+			names[u.Name] = true
+		}
+	}
+	if drop != "" {
+		delete(names, drop)
+	}
+	if add != "" {
+		names[add] = true
+	}
+	if len(names) == 0 {
+		return "", nil
+	}
+	sorted := make([]string, 0, len(names))
+	for n := range names {
+		sorted = append(sorted, n)
+	}
+	sort.Strings(sorted)
+	var b strings.Builder
+	fmt.Fprintf(&b, "proxy %s {\n", m.cfg.Net.ExtIF)
+	for _, n := range sorted {
+		block, err := m.IPv6Block(n)
+		if err != nil {
+			return "", err
+		}
+		fmt.Fprintf(&b, "   rule %s {\n      iface %s\n   }\n", block.String(), m.cfg.LXD.Bridge)
+	}
+	b.WriteString("}\n")
+	return b.String(), nil
+}
+
+// writeNDPPD renders the config for the current container set (plus/minus one
+// container) and reloads the daemon. When no container has IPv6 routing the
+// daemon is stopped, so a stale config can never misroute.
+func (m *Manager) writeNDPPD(add, drop string) error {
+	cfg, err := m.ndppdRules(add, drop)
+	if err != nil {
+		return err
+	}
+	if cfg == "" {
+		// No container has IPv6 routing; leave no stale rules behind.
+		_ = exec.Command("service", "ndppd", "stop").Run()
 		return nil
 	}
-	ext := m.cfg.Net.ExtIF
-	if ext == "" {
-		return fmt.Errorf("no external interface for proxy_ndp")
+	tmp := ndppdConfPath + ".tmp"
+	if err := os.WriteFile(tmp, []byte(cfg), 0o644); err != nil {
+		return err
 	}
-	if add {
-		_ = exec.Command("sysctl", "-w", "net.ipv6.conf."+ext+".proxy_ndp=1").Run()
-		// `ip -6 neigh add proxy` is idempotent-ish; ignore "already exists".
-		if out, err := exec.Command("ip", "-6", "neigh", "add", "proxy", addr, "dev", ext).CombinedOutput(); err != nil &&
-			!strings.Contains(string(out), "File exists") {
-			return fmt.Errorf("proxy_ndp add %s: %s", addr, strings.TrimSpace(string(out)))
-		}
-	} else {
-		_ = exec.Command("ip", "-6", "neigh", "del", "proxy", addr, "dev", ext).Run()
+	if err := os.Rename(tmp, ndppdConfPath); err != nil {
+		return err
+	}
+	return m.reloadNDPPD()
+}
+
+// reloadNDPPD applies the new rules by restarting the daemon. ndppd 0.2.4 has
+// no live reload — SIGHUP terminates it (verified) — so a quick restart is the
+// only way to pick up config changes. The init script owns the pidfile, so
+// vpsmgr can never spawn a second instance. A restart also works when the
+// daemon is not running yet (boot, before any container exists).
+func (m *Manager) reloadNDPPD() error {
+	if out, err := exec.Command("service", "ndppd", "restart").CombinedOutput(); err != nil {
+		return fmt.Errorf("restart ndppd: %s", strings.TrimSpace(string(out)))
+	}
+	// The init.d script reports success even if the daemon dies right after
+	// starting (e.g. bad config); verify it is actually alive.
+	if _, err := exec.Command("pgrep", "-x", "ndppd").CombinedOutput(); err != nil {
+		return fmt.Errorf("ndppd not running after restart")
 	}
 	return nil
 }
 
-// syncRoute adds or removes the exact /128 route for one container via the
-// bridge. Idempotent.
-func (m *Manager) syncRoute(addr string, add bool) error {
-	if !m.cfg.IPv6Enabled() || addr == "" {
-		return nil
-	}
-	bridge := m.cfg.LXD.Bridge
-	if add {
-		if out, err := exec.Command("ip", "-6", "route", "add", addr+"/128", "dev", bridge).CombinedOutput(); err != nil &&
-			!strings.Contains(string(out), "File exists") {
-			return fmt.Errorf("route add %s: %s", addr, strings.TrimSpace(string(out)))
-		}
-	} else {
-		_ = exec.Command("ip", "-6", "route", "del", addr+"/128", "dev", bridge).Run()
-	}
-	return nil
-}
-
-// WireIPv6 attaches the global IPv6 plumbing for one container: /128 route +
-// proxy_ndp entry. The address is computed from the username (no waiting).
+// WireIPv6 registers the container's /112 with the NDP proxy (ndppd). The
+// block is computed from the username, no LXD query needed.
 func (m *Manager) WireIPv6(name string) error {
 	if !m.cfg.IPv6Enabled() {
 		return nil
 	}
-	addr, err := m.IPv6Addr(name)
-	if err != nil {
-		return err
-	}
-	return m.wireAddr(name, addr)
+	return m.writeNDPPD(name, "")
 }
 
-// wireAddr applies the /128 route + proxy_ndp entry for an address.
-func (m *Manager) wireAddr(name, addr string) error {
-	if err := m.syncRoute(addr, true); err != nil {
-		return err
-	}
-	return m.proxyNDP(addr, true)
-}
-
-// UnwireIPv6 removes the /128 route and proxy_ndp entry for a container.
+// UnwireIPv6 removes the container's /112 rule from the NDP proxy.
 func (m *Manager) UnwireIPv6(name string) {
 	if !m.cfg.IPv6Enabled() {
 		return
 	}
-	addr, err := m.IPv6Addr(name)
-	if err != nil || addr == "" {
-		return
-	}
-	_ = m.syncRoute(addr, false)
-	_ = m.proxyNDP(addr, false)
+	_ = m.writeNDPPD("", name)
 }
 
-// RewireAllIPv6 re-attaches /128 routes + proxy_ndp entries for every existing
-// container. Called at boot (after LXD is up) and by `vpsmgr install` so that
-// pass-through survives reboots. Idempotent. A container that exists in the DB
-// but not in LXD (e.g. half-removed state) is skipped, not fatal — otherwise
-// one stale row would break re-wiring for every other container.
+// RewireAllIPv6 re-registers every existing container's /112 with the NDP
+// proxy and re-applies the bridge config. Called at boot (after LXD is up) and
+// by `vpsmgr install` so pass-through survives reboots. Idempotent.
 func (m *Manager) RewireAllIPv6() error {
 	if !m.cfg.IPv6Enabled() {
 		return nil
@@ -273,15 +314,5 @@ func (m *Manager) RewireAllIPv6() error {
 	if err := m.SetupIPv6Bridge(); err != nil {
 		return err
 	}
-	users, err := m.db.ListUsers()
-	if err != nil {
-		return err
-	}
-	var firstErr error
-	for _, u := range users {
-		if err := m.WireIPv6(u.Name); err != nil && firstErr == nil {
-			firstErr = err
-		}
-	}
-	return firstErr
+	return m.writeNDPPD("", "")
 }

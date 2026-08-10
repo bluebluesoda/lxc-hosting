@@ -83,7 +83,7 @@ sudo ./uninstall.sh --purge  # 连容器、存储池、LXD 一起删
 - 资源：用户 i=1..253，容器 IP 10.42.0.(i+1)，端口段 10000+(i-1)*50 共 50 个（第 1 个 SSH→22）
 - 存储：ZFS 磁盘配额映射 ZFS quota，只许扩大。
 - 网络：nftables 单表，DNAT（prerouting+output）+ MASQUERADE；reload 用 delete+apply 幂等；开机由 vpsmgr-nft.service 恢复。
-- IPv6（可选）：安装时询问是否启用；启用后在 lxdbr0 配全球前缀（/64 或更短，也支持服务商的 /80 片，无 NAT），容器经 SLAAC 自动拿全球地址，宿主用 /128 路由 + proxy_ndp 让外部直达容器；地址现算展示、不入库。`vpsmgr show` / 面板可见每台容器的 IPv6。
+- IPv6（可选）：安装时询问是否启用；启用后在 lxdbr0 配全球前缀（/64 或更短，也支持服务商的 /80 片，无 NAT）。每台容器按用户名 sha256 派生一个确定性的 /112 块（32 位块号），LXD 把整块路由给容器，ndppd 在公网侧做 NDP 中继，容器绑定的任一地址都外部可达；地址现算展示、不入库。`vpsmgr show` / 面板可见每台容器的 IPv6 块。
 - 反代：Traefik file provider 热加载，80 反代、443 SNI 直通，证书在容器内自管。
 - 安全：面板挂在安装时生成的随机 path；修改操作仅 POST；会话 3 天、HttpOnly+Secure+SameSite=Lax；路径外一律裸 404（无指纹）。
 - 流量统计：每容器网卡计数器由 LXD 提供，面板协程每 60s 采样，增量累加到 SQLite。
