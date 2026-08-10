@@ -10,9 +10,10 @@ if [[ $EUID -ne 0 ]]; then die "must run as root"; fi
 # --- distro ---
 if [[ ! -f /etc/os-release ]]; then die "cannot find /etc/os-release"; fi
 . /etc/os-release
-if [[ "${ID:-}" != "ubuntu" ]] || [[ "${VERSION_ID:-}" != "24.04" ]]; then
-  die "this installer targets Ubuntu 24.04 (got ${PRETTY_NAME:-unknown})"
-fi
+case "${ID:-}:${VERSION_ID:-}" in
+  ubuntu:24.04|ubuntu:26.04) ;;
+  *) die "this installer targets Ubuntu 24.04 / 26.04 (got ${PRETTY_NAME:-unknown})" ;;
+esac
 
 # --- virtualization (require physical or KVM) ---
 if command -v systemd-detect-virt >/dev/null 2>&1; then
