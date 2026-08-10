@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
-# uninstall.sh — remove vpsmgr. --purge also removes containers and storage.
+# uninstall.sh — remove vpsmgr. Without --purge the manager's config/db/certs
+# and the traefik config are KEPT so a plain reinstall adopts the previous
+# users/domains/settings. --purge also removes those, plus containers/storage.
 set -uo pipefail
 export PATH="$PATH:/snap/bin"
 
@@ -50,11 +52,15 @@ fi
 log "removing files..."
 rm -f /usr/local/bin/vpsmgr /usr/local/bin/traefik
 rm -f /etc/systemd/system/vpsmgr-panel.service /etc/systemd/system/vpsmgr-nft.service /etc/systemd/system/vpsmgr-ipv6.service /etc/systemd/system/traefik.service
-rm -rf /etc/vpsmgr /etc/traefik
 rm -f /etc/sysctl.d/99-vpsmgr.conf
 nft delete table inet vpsmgr 2>/dev/null || true
+# /etc/vpsmgr (config/db/certs) and /etc/traefik are deliberately KEPT here:
+# without --purge, a reinstall should adopt the existing users/domains/settings.
+log "  kept /etc/vpsmgr and /etc/traefik (reinstall will adopt them)"
 
 if [[ $PURGE -eq 1 ]]; then
+  log "purging vpsmgr config/db/certs and traefik config..."
+  rm -rf /etc/vpsmgr /etc/traefik
   log "purging LXD instances..."
   for c in $(lxc list --format=csv -c n 2>/dev/null); do
     log "  deleting container $c"
@@ -70,4 +76,8 @@ if [[ $PURGE -eq 1 ]]; then
   snap remove lxd --purge >/dev/null 2>&1 || true
 fi
 
-log "done. use ./install.sh to reinstall."
+if [[ $PURGE -eq 1 ]]; then
+  log "done. use ./install.sh to reinstall (config/db removed)."
+else
+  log "done. use ./install.sh to reinstall (config/db kept)."
+fi

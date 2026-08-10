@@ -64,6 +64,18 @@ if [[ -n "${VPSMGR_IPV6_SUBNET:-}" ]]; then
   fi
 fi
 
+# Reinstall after a non-purging uninstall: an existing config already holds
+# ipv6_subnet — keep it instead of re-asking (a different answer would set the
+# bridge to a prefix the config doesn't know and break pass-through).
+if [[ -f /etc/vpsmgr/config.yaml ]]; then
+  EXISTING=$(grep -E '^\s+ipv6_subnet:' /etc/vpsmgr/config.yaml 2>/dev/null | awk -F': ' '{print $2}' | tr -d '"')
+  if [[ -n "$EXISTING" ]]; then
+    log "existing config has ipv6_subnet=$EXISTING — keeping it"
+    export VPSMGR_IPV6_SUBNET="$EXISTING"
+    return 0
+  fi
+fi
+
 # Non-interactive with no env var: IPv6 stays disabled.
 if [[ ! -t 0 ]] && [[ -z "${FORCE_ASK:-}" ]]; then
   log "non-interactive install, no VPSMGR_IPV6_SUBNET set — IPv6 pass-through disabled"

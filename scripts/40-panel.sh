@@ -54,11 +54,13 @@ install_prebuilt(){
   log "installed /usr/local/bin/vpsmgr from release ($(/usr/local/bin/vpsmgr version))"
 }
 
-if [[ ! -x /usr/local/bin/vpsmgr ]]; then
-  if [[ "${VPSMGR_BUILD_MODE:-}" == "local" ]]; then
-    log "local build requested (--local-build)"
-    build_local
-  elif install_prebuilt; then
+if [[ "${VPSMGR_BUILD_MODE:-}" == "local" ]]; then
+  # --local-build always rebuilds from this repo (never reuse an installed
+  # stable binary), so what runs is exactly what the shown branch compiled.
+  log "local build requested (--local-build)"
+  build_local
+elif [[ ! -x /usr/local/bin/vpsmgr ]]; then
+  if install_prebuilt; then
     :
   else
     log "prebuilt install failed — falling back to local build"

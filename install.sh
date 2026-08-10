@@ -20,6 +20,22 @@ if [[ $EUID -ne 0 ]]; then
   exit 1
 fi
 
+# Local build: make it obvious WHICH branch will be compiled, and give the user
+# a chance to abort — some people want a dev build but end up building stable.
+if [[ "$BUILD_MODE" == "local" ]]; then
+  BRANCH=$(git -C "$ROOT" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "(no git repo / unknown)")
+  echo
+  echo "!! --local-build: compiling vpsmgr from this repository — branch: $BRANCH !!"
+  echo "   Install starts in 10 seconds; Ctrl-C now if this is not the branch you intended."
+  sleep 10
+fi
+
+# Reinstall after a non-purging uninstall: /etc/vpsmgr survives, adopt the
+# previous users/domains/settings instead of starting over.
+if [[ -f /etc/vpsmgr/config.yaml ]]; then
+  echo "[install] found existing /etc/vpsmgr/config.yaml — adopting previous setup"
+fi
+
 echo "==> vpsmgr installer starting (panel binary mode: $BUILD_MODE)"
 echo
 echo "===== 00-ipv6-ask ====="
