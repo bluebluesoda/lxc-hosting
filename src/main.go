@@ -164,24 +164,17 @@ func panelPath(c *cfg.Config) string {
 func cmdInstall() error {
 	c := cfg.Default()
 	if _, err := os.Stat(cfg.Path()); err == nil {
-		// Load() fills missing admin_url_path via FillAuto; persist it when the
-		// on-disk config predates the admin panel feature so the generated
-		// secret survives the restart.
-		raw, _ := os.ReadFile(cfg.Path())
-		hadAdminPath := strings.Contains(string(raw), "admin_url_path")
 		c, err = cfg.Load()
 		if err != nil {
 			return err
-		}
-		if !hadAdminPath {
-			if err := cfg.Save(c); err != nil {
-				return err
-			}
 		}
 	} else {
 		if err := c.FillAuto(); err != nil {
 			return err
 		}
+		// Fresh install: generate both secret paths (user 10 / admin 12).
+		// After this, an empty path is a deliberate "panel disabled" choice.
+		c.EnsurePaths()
 		if err := cfg.Save(c); err != nil {
 			return err
 		}
@@ -250,11 +243,11 @@ func cmdInstall() error {
 	if out, err := exec.Command("systemctl", "enable", "--now", "vpsmgr-panel.service").CombinedOutput(); err != nil {
 		return fmt.Errorf("enable vpsmgr-panel: %s", strings.TrimSpace(string(out)))
 	}
-	// Admin panel: on a FRESH install generate a random admin password and show
-	// it once. On adoption/upgrade the existing hash is kept — never reprint a
-	// password the admin may not expect to be displayed.
-	fresh := c.Panel.AdminPass == ""
-	if fresh {
+	// Admin panel: on a FRESH install (admin enabled and no password yet)
+	// generate a random admin password and show it once. On adoption/upgrade
+	// the existing hash is kept — never reprint a password the admin may not
+	// expect to be displayed. When admin is disabled nothing is printed.
+	if c.Panel.AdminPath != "" && c.Panel.AdminPass == "" {
 		pass := pw.Generate(20)
 		hash, err := pw.Hash(pass)
 		if err != nil {
@@ -267,7 +260,9 @@ func cmdInstall() error {
 		fmt.Printf("admin panel initialized: https://%s:8443/%s\n", c.DisplayIP(), c.Panel.AdminPath)
 		fmt.Printf("admin password (shown once): %s\n", pass)
 	}
-	fmt.Printf("panel initialized: https://%s:8443%s\n", c.DisplayIP(), panelPath(c))
+	if c.Panel.URLPath != "" {
+		fmt.Printf("panel initialized: https://%s:8443%s\n", c.DisplayIP(), panelPath(c))
+	}
 	return nil
 }
 
@@ -297,10 +292,6 @@ func writeUnit(name, content string) error {
 }
 
 func cmdServe() error {
-	// cfg.Load() auto-fills missing secret paths exactly like install does
-	// (user 10 chars, admin 12 chars), so an empty path is repaired, not a
-	// startup failure. ValidatePaths still guards the real hazards: paths too
-	// short (after fill) or the two paths colliding.
 	c, err := cfg.Load()
 	if err != nil {
 		return err
@@ -308,25 +299,36 @@ func cmdServe() error {
 	if err := c.ValidatePaths(); err != nil {
 		return fmt.Errorf("invalid panel paths: %w", err)
 	}
+	// Empty path = that panel is disabled. When BOTH are empty the panel
+	// service is intentionally off: do not even listen on the port.
+	if c.Panel.URLPath == "" && c.Panel.AdminPath == "" {
+		log.Printf("both url_path and admin_url_path are empty — panel disabled, not listening on %s", c.Panel.Listen)
+		return nil
+	}
 	d, err := db.Open(c.Panel.DB)
 	if err != nil {
 		return err
 	}
 	defer d.Close()
 	m := mgr.New(c, d)
-	userSrv := panel.New(c, d, m)
-	adminSrv := admin.New(c, d, m)
 	userPath := panelPath(c)
 	adminPath := "/" + c.Panel.AdminPath
+	var userSrv, adminSrv http.Handler
+	if userPath != "" {
+		userSrv = panel.New(c, d, m).Handler()
+	}
+	if c.Panel.AdminPath != "" {
+		adminSrv = admin.New(c, d, m).Handler()
+	}
 	dispatch := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case pathUnder(r.URL.Path, userPath):
-			userSrv.Handler().ServeHTTP(w, r)
-		case pathUnder(r.URL.Path, adminPath):
-			adminSrv.Handler().ServeHTTP(w, r)
+		case userSrv != nil && pathUnder(r.URL.Path, userPath):
+			userSrv.ServeHTTP(w, r)
+		case adminSrv != nil && pathUnder(r.URL.Path, adminPath):
+			adminSrv.ServeHTTP(w, r)
 		default:
-			// Neither secret path: bare 404, no body, no headers, no
-			// fingerprint — identical to the user panel's behavior.
+			// No matching enabled panel: bare 404, no body, no headers, no
+			// fingerprint.
 			w.WriteHeader(http.StatusNotFound)
 		}
 	})
@@ -371,8 +373,15 @@ func cmdPanelURL() error {
 	if err != nil {
 		return err
 	}
-	fmt.Printf("user panel:  https://%s:8443%s\n", c.DisplayIP(), panelPath(c))
-	fmt.Printf("admin panel: https://%s:8443/%s\n", c.DisplayIP(), c.Panel.AdminPath)
+	if c.Panel.URLPath != "" {
+		fmt.Printf("user panel:  https://%s:8443%s\n", c.DisplayIP(), panelPath(c))
+	}
+	if c.Panel.AdminPath != "" {
+		fmt.Printf("admin panel: https://%s:8443/%s\n", c.DisplayIP(), c.Panel.AdminPath)
+	}
+	if c.Panel.URLPath == "" && c.Panel.AdminPath == "" {
+		fmt.Println("both panels are disabled (url_path and admin_url_path are empty)")
+	}
 	return nil
 }
 
@@ -382,6 +391,9 @@ func cmdAdminPasswd() error {
 	c, err := cfg.Load()
 	if err != nil {
 		return err
+	}
+	if c.Panel.AdminPath == "" {
+		return fmt.Errorf("admin panel is disabled (admin_url_path is empty) — set it in %s to enable", cfg.Path())
 	}
 	pass := pw.Generate(20)
 	hash, err := pw.Hash(pass)

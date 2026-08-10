@@ -48,12 +48,30 @@ func TestValidatePaths(t *testing.T) {
 	if err := good.ValidatePaths(); err != nil {
 		t.Fatalf("valid config rejected: %v", err)
 	}
+	// Empty path = panel disabled: a single enabled panel or none at all is OK.
+	onlyUser := Default()
+	onlyUser.Panel.URLPath = "UserSecRet99"
+	onlyUser.Panel.AdminPath = ""
+	if err := onlyUser.ValidatePaths(); err != nil {
+		t.Fatalf("user-only config rejected: %v", err)
+	}
+	onlyAdmin := Default()
+	onlyAdmin.Panel.URLPath = ""
+	onlyAdmin.Panel.AdminPath = "Adm1n-SecretX"
+	if err := onlyAdmin.ValidatePaths(); err != nil {
+		t.Fatalf("admin-only config rejected: %v", err)
+	}
+	bothOff := Default()
+	bothOff.Panel.URLPath = ""
+	bothOff.Panel.AdminPath = ""
+	if err := bothOff.ValidatePaths(); err != nil {
+		t.Fatalf("both-disabled config rejected: %v", err)
+	}
+	// Rejections: too short (enabled path) or the two paths colliding.
 	cases := []struct {
 		name      string
 		user, adm string
 	}{
-		{"empty user", "", "Adm1n-SecretX"},
-		{"empty admin", "UserSecRet99", ""},
 		{"short user", "short", "Adm1n-SecretX"},
 		{"short admin", "UserSecRet99", "short"},
 		{"equal", "SameSecret", "SameSecret"},
@@ -68,11 +86,10 @@ func TestValidatePaths(t *testing.T) {
 	}
 }
 
-func TestFillAutoPathLengths(t *testing.T) {
+func TestEnsurePaths(t *testing.T) {
+	// Both empty -> fresh install: both paths generated (user 10, admin 12).
 	cfg := Default()
-	if err := cfg.FillAuto(); err != nil {
-		t.Fatal(err)
-	}
+	cfg.EnsurePaths()
 	if len(cfg.Panel.URLPath) != 10 {
 		t.Errorf("url_path len = %d, want 10", len(cfg.Panel.URLPath))
 	}
@@ -82,12 +99,24 @@ func TestFillAutoPathLengths(t *testing.T) {
 	if cfg.Panel.URLPath == cfg.Panel.AdminPath {
 		t.Fatal("generated paths must differ")
 	}
-	// Both paths use the URL-safe charset.
 	for _, s := range []string{cfg.Panel.URLPath, cfg.Panel.AdminPath} {
 		for _, r := range s {
 			if !strings.ContainsRune("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_", r) {
 				t.Fatalf("path %q contains invalid char %q", s, r)
 			}
 		}
+	}
+	// One side empty is a deliberate disable: EnsurePaths must NOT touch it.
+	userOnly := Default()
+	userOnly.Panel.URLPath = "UserSecRet99"
+	userOnly.EnsurePaths()
+	if userOnly.Panel.URLPath != "UserSecRet99" || userOnly.Panel.AdminPath != "" {
+		t.Fatalf("EnsurePaths changed a deliberate user-only config: %q / %q", userOnly.Panel.URLPath, userOnly.Panel.AdminPath)
+	}
+	adminOnly := Default()
+	adminOnly.Panel.AdminPath = "Adm1n-SecretX"
+	adminOnly.EnsurePaths()
+	if adminOnly.Panel.URLPath != "" || adminOnly.Panel.AdminPath != "Adm1n-SecretX" {
+		t.Fatalf("EnsurePaths changed a deliberate admin-only config: %q / %q", adminOnly.Panel.URLPath, adminOnly.Panel.AdminPath)
 	}
 }
