@@ -1,58 +1,278 @@
 package lx
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"net"
+	"net/http"
+	"net/url"
 	"os/exec"
 	"strconv"
 	"strings"
 	"time"
 )
 
-type Client struct{}
-
-func (c *Client) Run(args ...string) (string, error) {
-	out, err := exec.Command("lxc", args...).CombinedOutput()
-	if err != nil {
-		return "", fmt.Errorf("lxc %s: %s", strings.Join(args, " "), strings.TrimSpace(string(out)))
-	}
-	return strings.TrimSpace(string(out)), nil
+// Client talks to the local LXD daemon over its Unix socket using the REST
+// API. All mutations go through async operations that are waited on, so the
+// caller sees the same blocking semantics the `lxc` CLI used to provide, but
+// without paying for a process spawn (and a snap bootstrap) on every call.
+type Client struct {
+	base string
+	http *http.Client
 }
 
-// ExecSH runs a shell script inside a container as root.
-func (c *Client) ExecSH(name, script string) (string, error) {
-	out, err := exec.Command("lxc", "exec", name, "--", "/bin/sh", "-c", script).CombinedOutput()
-	if err != nil {
-		return "", fmt.Errorf("lxc exec %s: %s", name, strings.TrimSpace(string(out)))
+// New creates a client for the LXD Unix socket at path. The connection is
+// lazy: nothing dials the socket until the first request.
+func New(socket string) *Client {
+	t := &http.Transport{
+		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+			return (&net.Dialer{}).DialContext(ctx, "unix", socket)
+		},
 	}
-	return strings.TrimSpace(string(out)), nil
+	// Per-request cap guards against a hung daemon. The operation wait uses
+	// timeout=30 server-side, so 60s covers it with margin.
+	return &Client{base: "http://unix", http: &http.Client{Transport: t, Timeout: 60 * time.Second}}
 }
 
-type info struct {
-	Name   string `json:"name"`
+// ---- LXD REST API primitives ----
+
+type response struct {
+	Type       string          `json:"type"`
+	StatusCode int             `json:"status_code"`
+	Error      string          `json:"error"`
+	Operation  string          `json:"operation"`
+	Metadata   json.RawMessage `json:"metadata"`
+}
+
+// do sends a request and returns the LXD response envelope. The envelope's
+// "error" type is turned into a Go error.
+func (c *Client) do(method, path string, body any) (*response, error) {
+	var rd io.Reader
+	if body != nil {
+		b, err := json.Marshal(body)
+		if err != nil {
+			return nil, err
+		}
+		rd = bytes.NewReader(b)
+	}
+	req, err := http.NewRequest(method, c.base+path, rd)
+	if err != nil {
+		return nil, err
+	}
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return nil, err
+	}
+	var r response
+	if err := json.Unmarshal(raw, &r); err != nil {
+		return nil, fmt.Errorf("lxd %s %s: bad response: %w", method, path, err)
+	}
+	if r.Type == "error" {
+		return nil, fmt.Errorf("lxd %s %s: %s", method, path, r.Error)
+	}
+	return &r, nil
+}
+
+// get performs a sync GET and unmarshals the metadata into out.
+func (c *Client) get(path string, out any) error {
+	r, err := c.do(http.MethodGet, path, nil)
+	if err != nil {
+		return err
+	}
+	if out != nil {
+		if err := json.Unmarshal(r.Metadata, out); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// patch sends a sync PATCH with the given body (unmarshaled into out).
+func (c *Client) patch(path string, body, out any) error {
+	r, err := c.do(http.MethodPatch, path, body)
+	if err != nil {
+		return err
+	}
+	if out != nil {
+		if err := json.Unmarshal(r.Metadata, out); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// sendOp triggers an async operation (POST/PUT/DELETE) and waits for it.
+// path is the API path; the operation location comes back in the response.
+func (c *Client) sendOp(method, path string, body any, timeout time.Duration) error {
+	r, err := c.do(method, path, body)
+	if err != nil {
+		return err
+	}
+	return c.wait(r.Operation, timeout)
+}
+
+// wait blocks until the async operation at opPath (/1.0/operations/...) has
+// finished, returning its error.
+func (c *Client) wait(opPath string, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	for {
+		var op struct {
+			Status string `json:"status"`
+			Err    string `json:"err"`
+		}
+		if err := c.get(opPath+"/wait?timeout=30", &op); err != nil {
+			return err
+		}
+		if op.Status != "Running" {
+			if op.Err != "" {
+				return errors.New(op.Err)
+			}
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("lxd operation timed out after %v", timeout)
+		}
+	}
+}
+
+// ---- API payload shapes (subset of api.*, matching 5.21 LTS) ----
+
+type instance struct {
+	Name    string            `json:"name"`
+	Status  string            `json:"status"`
+	Config  map[string]string `json:"config"`
+	Devices map[string]device `json:"devices"`
+}
+
+type device map[string]string
+
+type instState struct {
 	Status string `json:"status"`
-	State  *struct {
-		CPU *struct {
-			Usage int64 `json:"usage"`
-		} `json:"cpu"`
-		Memory *struct {
-			Usage int64 `json:"usage"`
-			Total int64 `json:"total"`
-		} `json:"memory"`
-		Network map[string]struct {
-			Addresses []struct {
-				Family  string `json:"family"`
-				Address string `json:"address"`
-				Scope   string `json:"scope"`
-			} `json:"addresses"`
-			Counters struct {
-				BytesReceived int64 `json:"bytes_received"`
-				BytesSent     int64 `json:"bytes_sent"`
-			} `json:"counters"`
-		} `json:"network"`
-	} `json:"state"`
+	CPU    *struct {
+		Usage int64 `json:"usage"`
+	} `json:"cpu"`
+	Memory *struct {
+		Usage int64 `json:"usage"`
+		Total int64 `json:"total"`
+	} `json:"memory"`
+	Network map[string]struct {
+		Addresses []struct {
+			Family  string `json:"family"`
+			Address string `json:"address"`
+			Scope   string `json:"scope"`
+		} `json:"addresses"`
+		Counters struct {
+			BytesReceived int64 `json:"bytes_received"`
+			BytesSent     int64 `json:"bytes_sent"`
+		} `json:"counters"`
+	} `json:"network"`
 }
+
+type createReq struct {
+	Name     string            `json:"name"`
+	Source   map[string]string `json:"source"`
+	Config   map[string]string `json:"config"`
+	Devices  map[string]device `json:"devices"`
+	Profiles []string          `json:"profiles"`
+}
+
+type stateAction struct {
+	Action  string `json:"action"`
+	Force   bool   `json:"force,omitempty"`
+	Timeout int    `json:"timeout,omitempty"`
+}
+
+// ---- high-level helpers ----
+
+func (c *Client) list() ([]instance, error) {
+	var insts []instance
+	if err := c.get("/1.0/instances?recursion=1", &insts); err != nil {
+		return nil, err
+	}
+	return insts, nil
+}
+
+// stateOf returns the live state of one instance.
+func (c *Client) stateOf(name string) (*instState, error) {
+	var st instState
+	if err := c.get("/1.0/instances/"+url.PathEscape(name)+"/state", &st); err != nil {
+		return nil, err
+	}
+	return &st, nil
+}
+
+// containerInfo maps a live state into the ContainerInfo shape.
+func containerInfo(name string, st *instState) ContainerInfo {
+	ci := ContainerInfo{Status: st.Status}
+	if st.CPU != nil {
+		ci.CPUUsage = st.CPU.Usage
+	}
+	if st.Memory != nil {
+		ci.MemUsage = st.Memory.Usage
+		ci.MemTotal = st.Memory.Total
+	}
+	for _, ifs := range st.Network {
+		ci.Rx += ifs.Counters.BytesReceived
+		ci.Tx += ifs.Counters.BytesSent
+		for _, a := range ifs.Addresses {
+			if ci.IPv4 == "" && a.Family == "inet" && a.Address != "127.0.0.1" {
+				ci.IPv4 = a.Address
+			}
+		}
+	}
+	return ci
+}
+
+// snapshot returns the status plus live state of every instance using ONE list
+// call followed by concurrent per-instance state calls for the running ones.
+func (c *Client) snapshot() (map[string]ContainerInfo, error) {
+	insts, err := c.list()
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]ContainerInfo, len(insts))
+	type res struct {
+		name string
+		ci   ContainerInfo
+	}
+	ch := make(chan res, len(insts))
+	running := 0
+	for _, it := range insts {
+		out[it.Name] = ContainerInfo{Status: it.Status}
+		if it.Status != "Running" {
+			continue
+		}
+		running++
+		go func(n string) {
+			st, err := c.stateOf(n)
+			if err != nil {
+				ch <- res{} // keep the Running status we already recorded
+				return
+			}
+			ch <- res{n, containerInfo(n, st)}
+		}(it.Name)
+	}
+	for i := 0; i < running; i++ {
+		if r := <-ch; r.name != "" {
+			out[r.name] = r.ci
+		}
+	}
+	return out, nil
+}
+
+// ---- data types exposed to mgr ----
 
 // Usage describes a container's live CPU/memory accounting.
 type Usage struct {
@@ -63,28 +283,16 @@ type Usage struct {
 
 // UsageMap returns current CPU/memory accounting for every container.
 func (c *Client) UsageMap() (map[string]Usage, error) {
-	out, err := c.Run("list", "--format=json")
+	sn, err := c.snapshot()
 	if err != nil {
 		return nil, err
 	}
-	var items []info
-	if err := json.Unmarshal([]byte(out), &items); err != nil {
-		return nil, err
-	}
-	m := make(map[string]Usage)
-	for _, it := range items {
-		if it.State == nil || it.Status != "Running" {
+	m := make(map[string]Usage, len(sn))
+	for name, ci := range sn {
+		if ci.Status != "Running" {
 			continue
 		}
-		u := Usage{}
-		if it.State.CPU != nil {
-			u.CPUUsage = it.State.CPU.Usage
-		}
-		if it.State.Memory != nil {
-			u.MemUsage = it.State.Memory.Usage
-			u.MemTotal = it.State.Memory.Total
-		}
-		m[it.Name] = u
+		m[name] = Usage{CPUUsage: ci.CPUUsage, MemUsage: ci.MemUsage, MemTotal: ci.MemTotal}
 	}
 	return m, nil
 }
@@ -101,44 +309,21 @@ type Traffic struct {
 // container, keyed by container name. Stopped containers have no state and are
 // omitted.
 func (c *Client) TrafficMap() (map[string]Traffic, error) {
-	out, err := c.Run("list", "--format=json")
+	sn, err := c.snapshot()
 	if err != nil {
 		return nil, err
 	}
-	var items []info
-	if err := json.Unmarshal([]byte(out), &items); err != nil {
-		return nil, err
-	}
-	m := make(map[string]Traffic)
-	for _, it := range items {
-		if it.State == nil || it.Status != "Running" {
+	m := make(map[string]Traffic, len(sn))
+	for name, ci := range sn {
+		if ci.Status != "Running" {
 			continue
 		}
-		t := Traffic{}
-		for _, ifs := range it.State.Network {
-			t.Rx += ifs.Counters.BytesReceived
-			t.Tx += ifs.Counters.BytesSent
-		}
-		m[it.Name] = t
+		m[name] = Traffic{Rx: ci.Rx, Tx: ci.Tx}
 	}
 	return m, nil
 }
 
-func (c *Client) list() ([]info, error) {
-	out, err := c.Run("list", "--format=json")
-	if err != nil {
-		return nil, err
-	}
-	var items []info
-	if err := json.Unmarshal([]byte(out), &items); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-// State returns the status of one container.
-// ContainerInfo is one snapshot of a container taken from a single
-// `lxc list --format=json` call.
+// ContainerInfo is one snapshot of a container taken from a single state read.
 type ContainerInfo struct {
 	Status   string
 	CPUUsage int64 // nanoseconds of CPU time since start (0 if not running)
@@ -149,162 +334,153 @@ type ContainerInfo struct {
 	IPv4     string
 }
 
-// Containers returns a live snapshot of every container in ONE `lxc list`
-// call. Stopped containers have no state and yield zeroed CPU/mem/traffic
-// values with Status reflecting the real status. This is the batch query the
-// admin panel uses so a full refresh costs a single lxc invocation regardless
-// of the number of containers.
+// Containers returns a live snapshot of every container: one list call plus
+// concurrent state reads, regardless of the number of containers. Stopped
+// containers yield zeroed CPU/mem/traffic values with Status reflecting the
+// real status.
 func (c *Client) Containers() (map[string]ContainerInfo, error) {
-	items, err := c.list()
-	if err != nil {
-		return nil, err
-	}
-	m := make(map[string]ContainerInfo, len(items))
-	for _, it := range items {
-		ci := ContainerInfo{Status: it.Status}
-		if it.State == nil {
-			m[it.Name] = ci
-			continue
-		}
-		if it.State.CPU != nil {
-			ci.CPUUsage = it.State.CPU.Usage
-		}
-		if it.State.Memory != nil {
-			ci.MemUsage = it.State.Memory.Usage
-			ci.MemTotal = it.State.Memory.Total
-		}
-		for _, ifs := range it.State.Network {
-			ci.Rx += ifs.Counters.BytesReceived
-			ci.Tx += ifs.Counters.BytesSent
-			for _, a := range ifs.Addresses {
-				if ci.IPv4 == "" && a.Family == "inet" && a.Address != "127.0.0.1" {
-					ci.IPv4 = a.Address
-				}
-			}
-		}
-		m[it.Name] = ci
-	}
-	return m, nil
+	return c.snapshot()
 }
 
+// State returns the status of one container.
 func (c *Client) State(name string) (string, error) {
-	items, err := c.list()
-	if err != nil {
+	var it instance
+	if err := c.get("/1.0/instances/"+url.PathEscape(name), &it); err != nil {
 		return "", err
 	}
-	for _, it := range items {
-		if it.Name == name {
-			return it.Status, nil
-		}
-	}
-	return "", errors.New("instance not found: " + name)
+	return it.Status, nil
 }
 
-func (c *Client) IPv4(name string) (string, error) {
-	items, err := c.list()
-	if err != nil {
-		return "", err
-	}
-	for _, it := range items {
-		if it.Name == name && it.State != nil {
-			for _, ifs := range it.State.Network {
-				for _, a := range ifs.Addresses {
-					if a.Family == "inet" && a.Address != "127.0.0.1" {
-						return a.Address, nil
-					}
-				}
-			}
-		}
-	}
-	return "", errors.New("no ipv4 for " + name)
-}
-
-// IPv6 returns the first global (scope=global) IPv6 address of a container,
-// or "" if it has none yet (e.g. still starting, or IPv6 disabled).
-func (c *Client) IPv6(name string) (string, error) {
-	items, err := c.list()
-	if err != nil {
-		return "", err
-	}
-	for _, it := range items {
-		if it.Name == name && it.State != nil {
-			for _, ifs := range it.State.Network {
-				for _, a := range ifs.Addresses {
-					if a.Family == "inet6" && a.Scope == "global" {
-						return a.Address, nil
-					}
-				}
-			}
-		}
-	}
-	return "", nil
-}
+// ---- mutations ----
 
 // NetworkSet sets one key=value config option on a managed LXD network
 // (e.g. lxdbr0). Used for IPv6 pass-through bridge configuration.
 func (c *Client) NetworkSet(network, kv string) error {
-	_, err := c.Run("network", "set", network, kv)
-	return err
+	key, val, ok := strings.Cut(kv, "=")
+	if !ok {
+		return fmt.Errorf("lxd network set: invalid key=value %q", kv)
+	}
+	body := map[string]map[string]string{"config": {key: val}}
+	return c.patch("/1.0/networks/"+url.PathEscape(network), body, nil)
 }
 
-func (c *Client) Start(name string) error { _, err := c.Run("start", name); return err }
-func (c *Client) Stop(name string) error  { _, err := c.Run("stop", name); return err }
-
-func (c *Client) SetCPU(name string, n int) error {
-	_, err := c.Run("config", "set", name, "limits.cpu="+strconv.Itoa(n))
-	return err
+func (c *Client) Start(name string) error {
+	return c.sendOp(http.MethodPut, "/1.0/instances/"+url.PathEscape(name)+"/state",
+		stateAction{Action: "start"}, 2*time.Minute)
 }
 
-func (c *Client) SetMem(name string, mb int) error {
-	_, err := c.Run("config", "set", name, "limits.memory="+strconv.Itoa(mb)+"MiB")
-	return err
+func (c *Client) Stop(name string) error {
+	return c.sendOp(http.MethodPut, "/1.0/instances/"+url.PathEscape(name)+"/state",
+		stateAction{Action: "stop"}, 2*time.Minute)
 }
 
-func (c *Client) SetDisk(name string, gb int) error {
-	_, err := c.Run("config", "device", "set", name, "root", "size="+strconv.Itoa(gb)+"GiB")
-	return err
-}
 func (c *Client) Restart(name string) error {
-	if _, err := c.Run("restart", name); err != nil {
+	if err := c.sendOp(http.MethodPut, "/1.0/instances/"+url.PathEscape(name)+"/state",
+		stateAction{Action: "restart"}, 2*time.Minute); err != nil {
 		return err
 	}
 	return c.WaitReady(name, 90*time.Second)
 }
-func (c *Client) Delete(name string) error { _, err := c.Run("delete", "--force", name); return err }
 
+// SetCPU live-updates the CPU limit (number of cores).
+func (c *Client) SetCPU(name string, n int) error {
+	body := map[string]map[string]string{"config": {"limits.cpu": strconv.Itoa(n)}}
+	return c.patch("/1.0/instances/"+url.PathEscape(name), body, nil)
+}
+
+// SetMem live-updates the memory limit.
+func (c *Client) SetMem(name string, mb int) error {
+	body := map[string]map[string]string{"config": {"limits.memory": strconv.Itoa(mb) + "MiB"}}
+	return c.patch("/1.0/instances/"+url.PathEscape(name), body, nil)
+}
+
+// SetDisk grows the root device's size. The device map is fetched first and
+// patched as a whole because a PATCH replaces the entire devices map.
+func (c *Client) SetDisk(name string, gb int) error {
+	var it instance
+	if err := c.get("/1.0/instances/"+url.PathEscape(name)+"?recursion=1", &it); err != nil {
+		return err
+	}
+	devices := it.Devices
+	root, ok := devices["root"]
+	if !ok {
+		return fmt.Errorf("lxd: instance %s has no root device", name)
+	}
+	root["size"] = strconv.Itoa(gb) + "GiB"
+	devices["root"] = root
+	body := map[string]map[string]device{"devices": devices}
+	return c.patch("/1.0/instances/"+url.PathEscape(name), body, nil)
+}
+
+// Delete force-stops the container if needed and removes it.
+func (c *Client) Delete(name string) error {
+	st, err := c.stateOf(name)
+	if err == nil && st.Status != "Stopped" {
+		_ = c.sendOp(http.MethodPut, "/1.0/instances/"+url.PathEscape(name)+"/state",
+			stateAction{Action: "stop", Force: true, Timeout: -1}, 2*time.Minute)
+	}
+	return c.sendOp(http.MethodDelete, "/1.0/instances/"+url.PathEscape(name), nil, 2*time.Minute)
+}
+
+// ImageExists reports whether an image alias is present.
 func (c *Client) ImageExists(alias string) (bool, error) {
-	if _, err := c.Run("image", "show", alias); err != nil {
+	_, err := c.do(http.MethodGet, "/1.0/images/aliases/"+url.PathEscape(alias), nil)
+	if err != nil {
 		return false, nil
 	}
 	return true, nil
 }
 
-// Launch creates a container with limits, static IPv4 (and optional static
-// IPv6) and autostart enabled, then starts it and waits until it is ready.
-// security.nesting allows running Docker / nested containers inside.
-func (c *Client) Launch(name, image, ip, ipv6 string, cpu, memMB, diskGB int) error {
-	args := []string{"init", image, name,
-		"-c", "limits.cpu=" + strconv.Itoa(cpu),
-		"-c", "limits.memory=" + strconv.Itoa(memMB) + "MiB",
-		"-c", "boot.autostart=true",
-		"-c", "security.nesting=true",
+// PoolResources returns the storage pool's total/used bytes from the LXD API.
+func (c *Client) PoolResources(pool string) (total, used int64, err error) {
+	var res struct {
+		Space struct {
+			Used  int64 `json:"used"`
+			Total int64 `json:"total"`
+		} `json:"space"`
 	}
-	if _, err := c.Run(args...); err != nil {
+	if err := c.get("/1.0/storage-pools/"+url.PathEscape(pool)+"/resources", &res); err != nil {
+		return 0, 0, err
+	}
+	return res.Space.Total, res.Space.Used, nil
+}
+
+// Launch creates a container with limits, static IPv4 (and optional static
+// IPv6), root size and autostart enabled, then starts it and waits until it is
+// ready. security.nesting allows running Docker / nested containers inside.
+// pool and bridge name the storage pool and managed bridge (from config).
+// Everything is submitted in ONE create request — the config, the eth0 static
+// addresses and the root size — so no follow-up device overrides are needed.
+func (c *Client) Launch(pool, bridge, name, image, ip, ipv6 string, cpu, memMB, diskGB int) error {
+	eth0 := device{
+		"type":         "nic",
+		"nictype":      "bridged",
+		"parent":       bridge,
+		"name":         "eth0",
+		"ipv4.address": ip,
+	}
+	if ipv6 != "" {
+		eth0["ipv6.address"] = ipv6
+	}
+	req := createReq{
+		Name:   name,
+		Source: map[string]string{"type": "image", "alias": image},
+		Config: map[string]string{
+			"limits.cpu":       strconv.Itoa(cpu),
+			"limits.memory":    strconv.Itoa(memMB) + "MiB",
+			"boot.autostart":   "true",
+			"security.nesting": "true",
+		},
+		Devices: map[string]device{
+			"eth0": eth0,
+			"root": {"type": "disk", "path": "/", "pool": pool, "size": strconv.Itoa(diskGB) + "GiB"},
+		},
+		Profiles: []string{"default"},
+	}
+	if err := c.sendOp(http.MethodPost, "/1.0/instances", req, 5*time.Minute); err != nil {
 		return err
 	}
-	// Static IPv4 (and optional static IPv6) on the eth0 device inherited
-	// from the default profile. Both go in ONE override call — LXD refuses a
-	// second override of the same device ("device already exists").
-	devArgs := []string{"config", "device", "override", name, "eth0", "ipv4.address=" + ip}
-	if ipv6 != "" {
-		devArgs = append(devArgs, "ipv6.address="+ipv6)
-	}
-	if _, err := c.Run(devArgs...); err != nil {
-		return fmt.Errorf("override eth0: %w", err)
-	}
-	if _, err := c.Run("config", "device", "override", name, "root", "size="+strconv.Itoa(diskGB)+"GiB"); err != nil {
-		return fmt.Errorf("override root size: %w", err)
-	}
+	// Creating an instance leaves it Stopped; start it before waiting.
 	if err := c.Start(name); err != nil {
 		return err
 	}
@@ -323,4 +499,15 @@ func (c *Client) WaitReady(name string, timeout time.Duration) error {
 		time.Sleep(500 * time.Millisecond)
 	}
 	return fmt.Errorf("container %s not ready within %v", name, timeout)
+}
+
+// ExecSH runs a shell script inside a container as root. Kept on the `lxc`
+// CLI: exec needs a websocket transport, and the scripted calls (provisioning,
+// the readiness probe) are infrequent relative to the panel's polling loops.
+func (c *Client) ExecSH(name, script string) (string, error) {
+	out, err := exec.Command("lxc", "exec", name, "--", "/bin/sh", "-c", script).CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("lxc exec %s: %s", name, strings.TrimSpace(string(out)))
+	}
+	return strings.TrimSpace(string(out)), nil
 }

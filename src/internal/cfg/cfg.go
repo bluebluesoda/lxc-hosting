@@ -16,20 +16,23 @@ import (
 )
 
 const (
-	DefaultDataDir     = "/etc/vpsmgr"
-	DefaultNftDir      = "/etc/vpsmgr/nftables.d"
-	DefaultNftMain     = "/etc/vpsmgr/nftables.conf"
-	DefaultTraefikDir  = "/etc/traefik/dynamic"
-	DefaultDB          = "/etc/vpsmgr/vpsmgr.db"
-	DefaultListen      = ":8443"
-	DefaultSubnet      = "10.42.0.0/24"
-	DefaultGateway     = "10.42.0.1"
-	DefaultPortBase    = 10000
+	DefaultDataDir      = "/etc/vpsmgr"
+	DefaultNftDir       = "/etc/vpsmgr/nftables.d"
+	DefaultNftMain      = "/etc/vpsmgr/nftables.conf"
+	DefaultTraefikDir   = "/etc/traefik/dynamic"
+	DefaultDB           = "/etc/vpsmgr/vpsmgr.db"
+	DefaultListen       = ":8443"
+	DefaultSubnet       = "10.42.0.0/24"
+	DefaultGateway      = "10.42.0.1"
+	DefaultPortBase     = 10000
 	DefaultPortsPerUser = 50
-	DefaultBridge      = "lxdbr0"
-	DefaultPool        = "vpsmgr"
-	DefaultImage       = "vpsmgr/debian-sshd"
-	DefaultImageFB     = "images:debian/13"
+	DefaultBridge       = "lxdbr0"
+	DefaultPool         = "vpsmgr"
+	DefaultImage        = "vpsmgr/debian-sshd"
+	DefaultImageFB      = "images:debian/13"
+	// DefaultSocket is the snap LXD daemon's Unix socket; the REST client
+	// talks to it directly (no `lxc` process spawn per call).
+	DefaultSocket = "/var/snap/lxd/common/lxd/unix.socket"
 )
 
 type Config struct {
@@ -39,11 +42,11 @@ type Config struct {
 }
 
 type PanelCfg struct {
-	Listen      string `yaml:"listen"`
-	Cert        string `yaml:"cert"`
-	Key         string `yaml:"key"`
-	DB          string `yaml:"db"`
-	PublicIP    string `yaml:"public_ip"`
+	Listen   string `yaml:"listen"`
+	Cert     string `yaml:"cert"`
+	Key      string `yaml:"key"`
+	DB       string `yaml:"db"`
+	PublicIP string `yaml:"public_ip"`
 	// DisplayIP is a PURELY COSMETIC public address shown to users (panel URL,
 	// SSH hints). On NAT-ing clouds (AWS/Alibaba) public_ip is a private NIC
 	// address and this holds the publicly reachable one. Empty = fall back to
@@ -83,13 +86,16 @@ type LXDCfg struct {
 	ImageFallback string `yaml:"image_fallback"`
 	Pool          string `yaml:"pool"`
 	Bridge        string `yaml:"bridge"`
+	// Socket is the path to the LXD daemon's Unix socket. Auto-detected
+	// default matches the snap install (`/var/snap/lxd/common/lxd/...`).
+	Socket string `yaml:"socket,omitempty"`
 }
 
 func Default() *Config {
 	c := &Config{}
 	c.Panel = PanelCfg{Listen: DefaultListen, Cert: DefaultDataDir + "/panel.crt", Key: DefaultDataDir + "/panel.key", DB: DefaultDB, SessionDays: 3}
 	c.Net = NetCfg{Subnet: DefaultSubnet, Gateway: DefaultGateway, PortBase: DefaultPortBase, PortsPerUser: DefaultPortsPerUser}
-	c.LXD = LXDCfg{Image: DefaultImage, ImageFallback: DefaultImageFB, Pool: DefaultPool, Bridge: DefaultBridge}
+	c.LXD = LXDCfg{Image: DefaultImage, ImageFallback: DefaultImageFB, Pool: DefaultPool, Bridge: DefaultBridge, Socket: DefaultSocket}
 	return c
 }
 
@@ -100,9 +106,9 @@ func Path() string {
 	return DefaultDataDir + "/config.yaml"
 }
 
-func (c *Config) DataDir() string { return DefaultDataDir }
-func (c *Config) NftDir() string  { return DefaultNftDir }
-func (c *Config) NftMain() string { return DefaultNftMain }
+func (c *Config) DataDir() string    { return DefaultDataDir }
+func (c *Config) NftDir() string     { return DefaultNftDir }
+func (c *Config) NftMain() string    { return DefaultNftMain }
 func (c *Config) TraefikDir() string { return DefaultTraefikDir }
 
 // SubnetIP returns the IP portion of the subnet CIDR.

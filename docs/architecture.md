@@ -17,7 +17,10 @@ src/      Go source (single binary: CLI + panel)
 - **Go binary** — CLI commands (`vpsmgr add/show/del/...`) and the HTTPS panel
   (`vpsmgr-panel.service`). The web templates are embedded (`//go:embed`).
 - **LXD** (snap) — runs the containers. Storage pool `vpsmgr` (ZFS), bridge
-  `lxdbr0` (10.42.0.0/24).
+  `lxdbr0` (10.42.0.0/24). The panel talks to the daemon over its **Unix-socket
+  REST API** (`internal/lx`, one reusable HTTP connection, no `lxc` process
+  spawn per call); only `lxc exec` (provisioning scripts, the readiness probe,
+  the per-container `df` probe) still shells out to the CLI.
 - **nftables** — one table `inet vpsmgr`: DNAT (prerouting+output) for port
   ranges, MASQUERADE for NAT4. Reload is idempotent (delete+apply). Restored
   on boot by `vpsmgr-nft.service`.

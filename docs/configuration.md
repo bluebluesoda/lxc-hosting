@@ -38,6 +38,7 @@ lxd:
   image_fallback: "images:debian/13"
   pool: vpsmgr
   bridge: lxdbr0
+  socket: "/var/snap/lxd/common/lxd/unix.socket"   # LXD daemon Unix socket (REST API)
 ```
 
 ## Field notes

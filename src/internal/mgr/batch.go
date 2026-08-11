@@ -15,10 +15,10 @@ import (
 
 // HostMem describes the host's physical memory and swap usage.
 type HostMem struct {
-	MemTotal uint64 // bytes
-	MemUsed  uint64 // bytes
+	MemTotal  uint64 // bytes
+	MemUsed   uint64 // bytes
 	SwapTotal uint64 // bytes
-	SwapUsed uint64 // bytes
+	SwapUsed  uint64 // bytes
 }
 
 // HostStats is the admin panel's host overview: memory, swap, pool space and
@@ -26,27 +26,19 @@ type HostMem struct {
 // staged a kernel update).
 type HostStats struct {
 	Mem          HostMem
-	PoolTotal    int64  // bytes
-	PoolUsed     int64  // bytes
-	PoolAvail    int64  // bytes
+	PoolTotal    int64 // bytes
+	PoolUsed     int64 // bytes
+	PoolAvail    int64 // bytes
 	RebootNeeded bool
 }
 
-// PoolRemainingBytes returns the pool's total/used/available bytes via
-// `lxc storage info <pool>`. The human format (e.g. "182.40MiB") is parsed by
-// the same helper PoolUsage uses — NOT the --bytes variant, whose values are
-// quoted and unit-less and would break parseHumanBytes.
+// PoolRemainingBytes returns the pool's total/used/available bytes via the LXD
+// storage-pool resources API (one REST call, exact byte counts).
 func (m *Manager) PoolRemainingBytes() (total, used, avail int64, err error) {
-	out, err := exec.Command("lxc", "storage", "info", m.cfg.LXD.Pool).CombinedOutput()
+	total, used, err = m.lx.PoolResources(m.cfg.LXD.Pool)
 	if err != nil {
-		return 0, 0, 0, fmt.Errorf("lxc storage info %s: %s", m.cfg.LXD.Pool, strings.TrimSpace(string(out)))
+		return 0, 0, 0, fmt.Errorf("lxd storage resources %s: %w", m.cfg.LXD.Pool, err)
 	}
-	totalF, ok1 := storageSpace(string(out), "total space:")
-	usedF, ok2 := storageSpace(string(out), "space used:")
-	if !ok1 || !ok2 || totalF <= 0 {
-		return 0, 0, 0, fmt.Errorf("could not parse storage info for pool %s", m.cfg.LXD.Pool)
-	}
-	total, used = int64(totalF), int64(usedF)
 	avail = total - used
 	if avail < 0 {
 		avail = 0

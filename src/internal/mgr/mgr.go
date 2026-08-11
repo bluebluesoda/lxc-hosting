@@ -4,9 +4,7 @@ import (
 	"crypto/rand"
 	"errors"
 	"fmt"
-	"os/exec"
 	"regexp"
-	"strconv"
 	"strings"
 	"time"
 
@@ -29,7 +27,7 @@ type Manager struct {
 }
 
 func New(c *cfg.Config, d *db.DB) *Manager {
-	return &Manager{cfg: c, db: d, lx: &lx.Client{}, fw: fw.New(c), tfx: tfx.New(c)}
+	return &Manager{cfg: c, db: d, lx: lx.New(c.LXD.Socket), fw: fw.New(c), tfx: tfx.New(c)}
 }
 
 func ValidateName(name string) error {
@@ -42,51 +40,17 @@ func ValidateName(name string) error {
 // PoolUsage returns the used ratio (0..1) of the storage pool as reported by
 // LXD, or -1 if it cannot be determined.
 func (m *Manager) PoolUsage() (float64, error) {
-	out, err := exec.Command("lxc", "storage", "info", m.cfg.LXD.Pool).CombinedOutput()
+	total, used, err := m.lx.PoolResources(m.cfg.LXD.Pool)
 	if err != nil {
 		return -1, nil
 	}
-	used, ok1 := storageSpace(string(out), "space used:")
-	total, ok2 := storageSpace(string(out), "total space:")
-	if !ok1 || !ok2 || total <= 0 {
+	if total <= 0 {
 		return -1, nil
 	}
 	if used > total {
 		used = total
 	}
-	return used / total, nil
-}
-
-func storageSpace(out, key string) (float64, bool) {
-	for _, line := range strings.Split(out, "\n") {
-		line = strings.TrimSpace(line)
-		if strings.HasPrefix(line, key) {
-			return parseHumanBytes(strings.TrimSpace(strings.TrimPrefix(line, key)))
-		}
-	}
-	return 0, false
-}
-
-var humanBytesRe = regexp.MustCompile(`^([0-9.]+)\s*([A-Za-z]?i?B|B)?$`)
-
-func parseHumanBytes(s string) (float64, bool) {
-	m := humanBytesRe.FindStringSubmatch(strings.TrimSpace(s))
-	if m == nil {
-		return 0, false
-	}
-	n, err := strconv.ParseFloat(m[1], 64)
-	if err != nil {
-		return 0, false
-	}
-	units := map[string]float64{
-		"B": 1, "KiB": 1 << 10, "MiB": 1 << 20, "GiB": 1 << 30, "TiB": 1 << 40,
-		"KB": 1e3, "MB": 1e6, "GB": 1e9, "TB": 1e12,
-	}
-	mult, ok := units[m[2]]
-	if !ok {
-		mult = 1
-	}
-	return n * mult, true
+	return float64(used) / float64(total), nil
 }
 
 // imageName returns the prebuilt image alias if it exists, else the fallback.
@@ -206,7 +170,7 @@ func (m *Manager) Add(name string, opt AddOptions) (*Result, error) {
 	if err := m.checkIPv6Collision(name, ipv6); err != nil {
 		return nil, err
 	}
-	if err := m.lx.Launch(name, image, ip, ipv6, opt.CPU, opt.MemMB, opt.DiskGB); err != nil {
+	if err := m.lx.Launch(m.cfg.LXD.Pool, m.cfg.LXD.Bridge, name, image, ip, ipv6, opt.CPU, opt.MemMB, opt.DiskGB); err != nil {
 		return nil, fmt.Errorf("launch container: %w", err)
 	}
 	if err := m.Provision(name, image, opt.Password); err != nil {
@@ -411,7 +375,8 @@ func (m *Manager) UpdateQuotas(name string, cpu, memMB, diskGB int) (*Result, er
 	return m.ResultFor(u, ""), nil
 }
 
-func (m *Manager) Power(name, action string) error {	u, err := m.db.GetUserByName(name)
+func (m *Manager) Power(name, action string) error {
+	u, err := m.db.GetUserByName(name)
 	if err != nil {
 		return err
 	}
@@ -494,7 +459,7 @@ func (m *Manager) Reinstall(name string) (string, error) {
 		return "", err
 	}
 	ipv6, _ := m.IPv6Addr(u.Name)
-	if err := m.lx.Launch(u.Name, image, u.IP, ipv6, u.CPU, u.MemMB, u.DiskGB); err != nil {
+	if err := m.lx.Launch(m.cfg.LXD.Pool, m.cfg.LXD.Bridge, u.Name, image, u.IP, ipv6, u.CPU, u.MemMB, u.DiskGB); err != nil {
 		return "", fmt.Errorf("recreate container: %w", err)
 	}
 	pass := pw.Generate(20)
