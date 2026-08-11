@@ -39,9 +39,19 @@ if [[ ! -f /etc/traefik/traefik.yaml ]]; then
 fi
 
 if [[ ! -f /etc/systemd/system/traefik.service ]]; then
+  # Fresh install: run Traefik as a dedicated unprivileged user that can only
+  # read /etc/traefik (config + dynamic rules) and bind ports 80/443. The panel
+  # keeps writing the dynamic files as root; existing installs are untouched.
+  if ! id -u traefik >/dev/null 2>&1; then
+    useradd --system --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin traefik
+    log "created unprivileged user 'traefik'"
+  fi
+  chown -R root:traefik /etc/traefik
+  chmod 750 /etc/traefik /etc/traefik/dynamic
+  chmod 640 /etc/traefik/traefik.yaml
   cp "$ROOT/configs/systemd/traefik.service" /etc/systemd/system/traefik.service
   systemctl daemon-reload
-  log "installed traefik.service"
+  log "installed traefik.service (unprivileged)"
 fi
 
 systemctl enable --now traefik >/dev/null 2>&1 || die "cannot start traefik"
