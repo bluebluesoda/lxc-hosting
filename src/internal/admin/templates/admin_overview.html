@@ -115,6 +115,11 @@ a.copy.copied { border-color: #86efac; background: #dcfce7; color: #15803d; }
         <div class="value">{{.Host.PoolUsed}} / {{.Host.PoolTotal}}</div>
         <div class="detail">{{if eq .Lang "zh"}}可用 {{.Host.PoolAvail}} (已用 {{.Host.PoolPct}}){{else}}{{.Host.PoolAvail}} free ({{.Host.PoolPct}} used){{end}}</div>
       </div>
+      <div class="stat">
+        <div class="label">{{if eq .Lang "zh"}}启动至今{{else}}Uptime{{end}}</div>
+        <div class="value">{{.Host.Uptime}}</div>
+        <div class="detail"></div>
+      </div>
     </div>
   </div>
 
@@ -216,6 +221,8 @@ a.copy.copied { border-color: #86efac; background: #dcfce7; color: #15803d; }
     </form>
   </div>
 </div>
+
+
 
 <script>
 var P = "{{.Prefix}}";

@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"vpsmgr/internal/cfg"
 	"vpsmgr/internal/mgr"
@@ -31,7 +32,7 @@ type pageData struct {
 	Lang   string
 }
 
-// hostView carries host memory/swap/pool numbers for the overview cards.
+// hostView carries host memory/swap/pool/uptime numbers for the overview cards.
 type hostView struct {
 	MemTotal  string
 	MemUsed   string
@@ -43,6 +44,7 @@ type hostView struct {
 	PoolUsed  string
 	PoolAvail string
 	PoolPct   string
+	Uptime    string
 }
 
 // userView is one row of the admin user table.
@@ -79,6 +81,7 @@ func (s *Server) buildPageData(msg, errMsg string) pageData {
 		PoolTotal: humanBytes(hs.PoolTotal),
 		PoolUsed:  humanBytes(hs.PoolUsed),
 		PoolAvail: humanBytes(hs.PoolAvail),
+		Uptime:    formatUptime(hs.Uptime),
 	}
 	if hs.Mem.MemTotal > 0 {
 		d.Host.MemPct = strconv.Itoa(int(hs.Mem.MemUsed * 100 / hs.Mem.MemTotal)) + "%"
@@ -118,6 +121,24 @@ func (s *Server) loadUsers(d *pageData) {
 		})
 	}
 	d.Users = vs
+}
+
+// formatUptime renders a duration as a static non-ticking string like
+// "5d 3h 12m" so the admin panel shows the uptime captured at page load.
+func formatUptime(d time.Duration) string {
+	if d <= 0 {
+		return "-"
+	}
+	d = d.Round(time.Minute)
+	days := d / (24 * time.Hour)
+	d -= days * 24 * time.Hour
+	hours := d / time.Hour
+	d -= hours * time.Hour
+	mins := d / time.Minute
+	if days > 0 {
+		return strconv.FormatInt(int64(days), 10) + "d " + strconv.FormatInt(int64(hours), 10) + "h " + strconv.FormatInt(int64(mins), 10) + "m"
+	}
+	return strconv.FormatInt(int64(hours), 10) + "h " + strconv.FormatInt(int64(mins), 10) + "m"
 }
 
 // humanBytes renders a byte count as a short human string (e.g. "184 MiB").

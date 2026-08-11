@@ -21,14 +21,15 @@ type HostMem struct {
 	SwapUsed  uint64 // bytes
 }
 
-// HostStats is the admin panel's host overview: memory, swap, pool space and
-// whether a reboot is pending (e.g. Ubuntu unattended-upgrades or livepatch
-// staged a kernel update).
+// HostStats is the admin panel's host overview: memory, swap, pool space,
+// system uptime and whether a reboot is pending (e.g. Ubuntu
+// unattended-upgrades or livepatch staged a kernel update).
 type HostStats struct {
 	Mem          HostMem
-	PoolTotal    int64 // bytes
-	PoolUsed     int64 // bytes
-	PoolAvail    int64 // bytes
+	PoolTotal    int64         // bytes
+	PoolUsed     int64         // bytes
+	PoolAvail    int64         // bytes
+	Uptime       time.Duration // host uptime since boot
 	RebootNeeded bool
 }
 
@@ -46,9 +47,9 @@ func (m *Manager) PoolRemainingBytes() (total, used, avail int64, err error) {
 	return total, used, avail, nil
 }
 
-// HostStats gathers host memory/swap from /proc/meminfo and pool space from
-// LXD. Pool failures are non-fatal (zeroed) so the panel still renders the
-// memory + reboot sections.
+// HostStats gathers host memory/swap from /proc/meminfo, pool space from
+// LXD and uptime from /proc/uptime. Pool / uptime failures are non-fatal
+// (zeroed) so the panel still renders the available sections.
 func (m *Manager) HostStats() HostStats {
 	hs := HostStats{}
 	hs.Mem = readMemInfo()
@@ -56,6 +57,7 @@ func (m *Manager) HostStats() HostStats {
 	if err == nil {
 		hs.PoolTotal, hs.PoolUsed, hs.PoolAvail = total, used, avail
 	}
+	hs.Uptime = readUptime()
 	hs.RebootNeeded = rebootRequired()
 	return hs
 }
@@ -95,6 +97,24 @@ func readMemInfo() HostMem {
 func rebootRequired() bool {
 	_, err := os.Stat("/var/run/reboot-required")
 	return err == nil
+}
+
+// readUptime parses /proc/uptime and returns the host uptime as a duration.
+// A missing or malformed file is treated as 0 so the panel still renders.
+func readUptime() time.Duration {
+	data, err := os.ReadFile("/proc/uptime")
+	if err != nil {
+		return 0
+	}
+	fields := strings.Fields(string(data))
+	if len(fields) == 0 {
+		return 0
+	}
+	secs, err := strconv.ParseFloat(fields[0], 64)
+	if err != nil || secs < 0 {
+		return 0
+	}
+	return time.Duration(secs * float64(time.Second))
 }
 
 // UserStatus is one row of the admin user table: the DB user record plus live

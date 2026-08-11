@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	"vpsmgr/internal/cfg"
 	"vpsmgr/internal/db"
@@ -232,6 +233,25 @@ func mustHash(t *testing.T, pass string) string {
 // TestLanguageSwitch verifies the admin language is resolved from ?lang=, the
 // cookie and the browser header (mirroring the user panel), and that an
 // explicit ?lang= choice persists in a scoped cookie.
+func TestFormatUptime(t *testing.T) {
+	cases := []struct {
+		d    time.Duration
+		want string
+	}{
+		{0, "-"},
+		{-1 * time.Second, "-"},
+		{5 * time.Minute, "0h 5m"},
+		{90 * time.Minute, "1h 30m"},
+		{48*time.Hour + 73*time.Minute, "2d 1h 13m"},
+		{10*24*time.Hour + 3*time.Hour + 29*time.Minute, "10d 3h 29m"},
+	}
+	for _, c := range cases {
+		if got := formatUptime(c.d); got != c.want {
+			t.Errorf("formatUptime(%v) = %q, want %q", c.d, got, c.want)
+		}
+	}
+}
+
 func TestLanguageSwitch(t *testing.T) {
 	srv, _ := newTestServer(t)
 	h := srv.Handler()
