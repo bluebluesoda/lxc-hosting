@@ -101,13 +101,11 @@ func (s *Server) loadUsers(d *pageData) {
 	vs := make([]userView, 0, len(statuses))
 	for _, st := range statuses {
 		u := st.User
-		base := u.PortBase
-		end := base + s.cfg.Net.PortsPerUser - 1
 		vs = append(vs, userView{
 			Name:      u.Name,
 			State:     st.State,
-			Ports:     strconv.Itoa(base) + "-" + strconv.Itoa(end),
-			SSHPort:   strconv.Itoa(base),
+			Ports:     mgr.ServicePorts(u.PortBase, s.cfg.Net.PortsPerUser),
+			SSHPort:   strconv.Itoa(u.PortBase),
 			QuotaCPU:  strconv.Itoa(u.CPU),
 			QuotaMem:  strconv.Itoa(u.MemMB) + " MiB",
 			QuotaDisk: strconv.Itoa(u.DiskGB) + " GiB",

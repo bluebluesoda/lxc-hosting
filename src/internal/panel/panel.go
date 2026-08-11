@@ -239,8 +239,8 @@ func (s *Server) buildData(u *db.User, msg, errMsg string) pageData {
 		PublicIP:    s.cfg.DisplayIP(),
 		Prefix:      s.prefix(),
 		PortBase:    u.PortBase,
-		Ports:       portRange(u.PortBase, s.cfg.Net.PortsPerUser),
-		PublicPorts: s.cfg.DisplayIP() + ":" + portRange(u.PortBase, s.cfg.Net.PortsPerUser),
+		Ports:       mgr.ServicePorts(u.PortBase, s.cfg.Net.PortsPerUser),
+		PublicPorts: s.cfg.DisplayIP() + ":" + mgr.ServicePorts(u.PortBase, s.cfg.Net.PortsPerUser),
 		SSH:         "ssh -p " + itoa(u.PortBase) + " root@" + s.cfg.DisplayIP(),
 		QuotaCPU:    itoa(u.CPU),
 		QuotaMem:    itoa(u.MemMB) + " MiB",
@@ -269,11 +269,4 @@ func (s *Server) buildData(u *db.User, msg, errMsg string) pageData {
 		d.Domains = append(d.Domains, x.Domain)
 	}
 	return d
-}
-
-func portRange(base, n int) string {
-	if n <= 1 {
-		return itoa(base)
-	}
-	return itoa(base) + "-" + itoa(base+n-1)
 }

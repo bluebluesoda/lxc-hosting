@@ -105,7 +105,7 @@ footer a{color:var(--muted);text-decoration:underline}
 <div class="card">
 <h2>{{if eq .Lang "zh"}}概览{{else}}Overview{{end}}<span> · {{.User.Name}}</span></h2>
 <table>
-<tr><th>{{if eq .Lang "zh"}}可用端口{{else}}Ports{{end}}</th><td colspan="3"><code>{{.PublicPorts}}</code><span class="muted">&nbsp;SSH: {{.PortBase}}</span></td></tr>
+<tr><th>{{if eq .Lang "zh"}}可用端口{{else}}Ports{{end}}</th><td colspan="3">{{if .PublicPorts}}<code>{{.PublicPorts}}</code>{{end}}<span class="muted">{{if .PublicPorts}}&nbsp;{{end}}SSH: {{.PortBase}}</span></td></tr>
 {{if .IPv6}}<tr><th>IPv6</th><td colspan="3"><code>{{.IPv6}}</code></td></tr>{{end}}
 <tr><th>{{if eq .Lang "zh"}}SSH 登录{{else}}SSH access{{end}}</th><td colspan="3"><code>{{.SSH}}</code></td></tr>
 <tr><th>{{if eq .Lang "zh"}}本月流量{{else}}Traffic (this month){{end}}</th><td colspan="3">↑ {{.UpGB}} GB / ↓ {{.DownGB}} GB</td></tr>

@@ -16,7 +16,10 @@ import (
 	"vpsmgr/internal/tfx"
 )
 
-var nameRe = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
+// nameRe follows LXD instance-name rules (lowercase letters/digits/hyphens,
+// max 63, no trailing hyphen — LXD rejects "abc-") plus a leading-letter
+// requirement so a username can never start with a digit.
+var nameRe = regexp.MustCompile(`^[a-z]([a-z0-9-]*[a-z0-9])?$`)
 
 type Manager struct {
 	cfg *cfg.Config
@@ -32,9 +35,25 @@ func New(c *cfg.Config, d *db.DB) *Manager {
 
 func ValidateName(name string) error {
 	if len(name) > 63 || !nameRe.MatchString(name) {
-		return errors.New("invalid name: lowercase letters, digits and hyphens only (max 63)")
+		return errors.New("invalid name: must start with a letter, then lowercase letters/digits/hyphens, max 63, no trailing hyphen")
 	}
 	return nil
+}
+
+// ServicePorts returns the range of ports a user can bind for their own
+// services: base+1 .. base+perUser-1. The first port (base) is DNAT-ed to the
+// container's SSH (port 22), so it is NOT available for user services even
+// though it is part of the user's port block. Returns "" when there are no
+// service ports (perUser < 2).
+func ServicePorts(base, perUser int) string {
+	start, end := base+1, base+perUser-1
+	if start > end {
+		return ""
+	}
+	if start == end {
+		return fmt.Sprintf("%d", start)
+	}
+	return fmt.Sprintf("%d-%d", start, end)
 }
 
 // PoolUsage returns the used ratio (0..1) of the storage pool as reported by

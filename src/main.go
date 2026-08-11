@@ -670,7 +670,7 @@ func userList() error {
 	fmt.Printf("%-16s %-14s %-14s %-10s %-6s %-8s %-7s %-8s %-8s %-6s %-10s\n", "NAME", "IP", "PORTS", "STATE", "CPU", "MEM", "DISK", "UP_GB", "DOWN_GB", "CPU%", "MEMUSE")
 	for _, r := range results {
 		fmt.Printf("%-16s %-14s %-14s %-10s %-6d %-8d %-7d %-8s %-8s %-6s %-10s\n",
-			r.User.Name, r.User.IP, fmt.Sprintf("%d-%d", r.User.PortBase, r.User.PortBase+r.PortsPerUser-1),
+			r.User.Name, r.User.IP, mgr.ServicePorts(r.User.PortBase, r.PortsPerUser),
 			r.State, r.User.CPU, r.User.MemMB, r.User.DiskGB, r.UpGB, r.DownGB, r.CPUUse, r.MemUse)
 	}
 	return nil
@@ -702,7 +702,11 @@ func printAdded(r *mgr.Result) {
 	u := r.User
 	fmt.Printf("name:     %s\n", u.Name)
 	fmt.Printf("state:    %s\n", r.State)
-	fmt.Printf("ports:    %d-%d (ssh: %d)\n", u.PortBase, u.PortBase+r.PortsPerUser-1, u.PortBase)
+	if sr := mgr.ServicePorts(u.PortBase, r.PortsPerUser); sr != "" {
+		fmt.Printf("ports:    %s (ssh: %d)\n", sr, u.PortBase)
+	} else {
+		fmt.Printf("ssh:      %d\n", u.PortBase)
+	}
 	fmt.Printf("quotas:   %d cpu / %d MiB / %d GiB\n", u.CPU, u.MemMB, u.DiskGB)
 	if r.IPv6 != "" {
 		fmt.Printf("ipv6:     %s\n", r.IPv6)
@@ -723,7 +727,11 @@ func printResult(r *mgr.Result) {
 	if r.IPv6 != "" {
 		fmt.Printf("ipv6:     %s\n", r.IPv6)
 	}
-	fmt.Printf("ports:    %d-%d (ssh: %d)\n", u.PortBase, u.PortBase+r.PortsPerUser-1, u.PortBase)
+	if sr := mgr.ServicePorts(u.PortBase, r.PortsPerUser); sr != "" {
+		fmt.Printf("ports:    %s (ssh: %d)\n", sr, u.PortBase)
+	} else {
+		fmt.Printf("ssh:      %d\n", u.PortBase)
+	}
 	fmt.Printf("quotas:   %d cpu / %d MiB / %d GiB\n", u.CPU, u.MemMB, u.DiskGB)
 	fmt.Printf("cpu use:  %s\n", r.CPUUse)
 	fmt.Printf("mem use:  %s\n", r.MemUse)

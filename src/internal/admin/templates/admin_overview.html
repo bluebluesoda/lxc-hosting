@@ -121,7 +121,7 @@ a.copy.copied { border-color: #86efac; background: #dcfce7; color: #15803d; }
   <div class="card">
     <h2>{{if eq .Lang "zh"}}创建用户{{else}}Create user{{end}}</h2>
     <form action="{{.Prefix}}/user-add" method="post" class="form-grid" id="createForm">
-      <div class="field"><label>{{if eq .Lang "zh"}}用户名{{else}}Username{{end}}</label><input name="name" pattern="[a-z0-9][a-z0-9-]*" maxlength="63" required></div>
+      <div class="field"><label>{{if eq .Lang "zh"}}用户名{{else}}Username{{end}}</label><input name="name" pattern="[a-z]([a-z0-9-]*[a-z0-9])?" maxlength="63" required title="{{if eq .Lang "zh"}}以小写字母开头，只能含小写字母、数字、连字符（63 位内）{{else}}starts with a lowercase letter; letters, digits and hyphens only (max 63){{end}}"></div>
       <div class="field"><label>{{if eq .Lang "zh"}}密码（留空自动生成）{{else}}Password (blank = auto){{end}}</label><input name="password" type="text"></div>
       <div class="field"><label>CPU</label><input name="cpu" id="cfCpu" type="number" min="1" value="1" required></div>
       <div class="field"><label>{{if eq .Lang "zh"}}内存 MiB{{else}}Memory MiB{{end}}</label><input name="mem" id="cfMem" value="1024" required></div>
@@ -206,12 +206,12 @@ a.copy.copied { border-color: #86efac; background: #dcfce7; color: #15803d; }
 <div class="overlay" id="quotaModal">
   <div class="modal">
     <h3>{{if eq .Lang "zh"}}调整配额{{else}}Update quotas{{end}}: <span id="quotaName"></span></h3>
-    <form action="{{.Prefix}}/user-quota" method="post" class="form-grid">
+    <form action="{{.Prefix}}/user-quota" method="post" class="form-grid" id="quotaForm">
       <input type="hidden" name="name" id="quotaNameHidden">
       <div class="field"><label>CPU</label><input name="cpu" id="quotaCpu" type="number" min="1" required></div>
       <div class="field"><label>{{if eq .Lang "zh"}}内存 MiB{{else}}Memory MiB{{end}}</label><input name="mem" id="quotaMem" required></div>
       <div class="field"><label>{{if eq .Lang "zh"}}磁盘 GiB{{else}}Disk GiB{{end}}</label><input name="disk" id="quotaDisk" type="number" min="1" required></div>
-      <button type="submit" class="primary">{{if eq .Lang "zh"}}保存{{else}}Save{{end}}</button>
+      <button type="submit" class="primary" id="quotaSaveBtn">{{if eq .Lang "zh"}}保存{{else}}Save{{end}}</button>
       <button type="button" onclick="closeQuota()">{{if eq .Lang "zh"}}取消{{else}}Cancel{{end}}</button>
     </form>
   </div>
@@ -272,6 +272,18 @@ function del(name){
   f.addEventListener('submit', function(){
     if (!f.checkValidity()) return;
     btn.disabled = true; btn.classList.add('busy');
+  });
+})();
+// Quota update can take 10s+ (live LXD config changes); show a spinner on the
+// Save button while the request is in flight so the modal does not look dead.
+(function(){
+  var f = document.getElementById('quotaForm');
+  if (!f) return;
+  var btn = document.getElementById('quotaSaveBtn');
+  f.addEventListener('submit', function(){
+    if (!f.checkValidity()) return;
+    btn.disabled = true; btn.classList.add('busy');
+    btn.textContent = {{if eq .Lang "zh"}}"保存中…"{{else}}"Saving…"{{end}};
   });
 })();
 // consume flash banner once
