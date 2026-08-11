@@ -86,6 +86,22 @@ Built by `50-image.sh` from `images:debian/13` (fallback `images:debian/trixie`)
 2. Disables cloud-init hostname resets (`preserve_hostname: true`).
 3. Sets the root password and ensures sshd is enabled/running.
 
+## Container isolation on the bridge
+
+All containers share the single `lxdbr0` L2 segment (10.42.0.0/24), so any
+tenant can `nmap` the subnet and see every live container IP. To make sure a
+scan does **not** reveal usernames:
+
+- LXD's dnsmasq must NOT serve instance-name DNS: by default it publishes
+  `<instance>.lxd` records (instance name = username) that turn into
+  `username.lxd` PTR answers — this is independent of the randomized in-guest
+  hostname, so it would leak usernames anyway. `10-lxd.sh` therefore sets
+  `dns.mode=none` on `lxdbr0` (DHCP and upstream forwarding still work; the
+  `search lxd` suffix is dropped and reverse lookups fall back to the random
+  guest hostname or the upstream resolver).
+- The in-guest hostname is already randomized (see above), so nothing
+  username-derived is ever advertised on the wire.
+
 ## Security model
 
 - Panel lives behind a random secret `url_path`; everything off-path returns a

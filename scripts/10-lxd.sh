@@ -99,6 +99,11 @@ networks:
     ipv6.nat: "$V6_NAT"
     ipv6.dhcp.stateful: "true"
     ipv6.routing: "true"
+    # Do not serve instance-name DNS: LXD's dnsmasq would publish
+    # <username>.lxd records for every container, so any tenant could nmap the
+    # subnet and read everyone's username. dns.mode=none keeps DHCP + upstream
+    # forwarding but drops the instance-name records.
+    dns.mode: none
   description: ""
   name: lxdbr0
   type: bridge
@@ -129,9 +134,9 @@ EOF
   if ! lxd init --preseed < "$PRESEED"; then
     log "preseed failed — creating missing pieces"
     if [[ "$V6_IP" == "none" ]]; then
-      lxc network show lxdbr0 >/dev/null 2>&1 || lxc network create lxdbr0 ipv4.address=10.42.0.1/24 ipv4.nat=true ipv6.address=none
+      lxc network show lxdbr0 >/dev/null 2>&1 || lxc network create lxdbr0 ipv4.address=10.42.0.1/24 ipv4.nat=true ipv6.address=none dns.mode=none
     else
-      lxc network show lxdbr0 >/dev/null 2>&1 || lxc network create lxdbr0 ipv4.address=10.42.0.1/24 ipv4.nat=true ipv6.address="$V6_IP" ipv6.nat=false ipv6.dhcp.stateful=true ipv6.routing=true
+      lxc network show lxdbr0 >/dev/null 2>&1 || lxc network create lxdbr0 ipv4.address=10.42.0.1/24 ipv4.nat=true ipv6.address="$V6_IP" ipv6.nat=false ipv6.dhcp.stateful=true ipv6.routing=true dns.mode=none
     fi
     if ! lxc storage show "$POOL" >/dev/null 2>&1; then
       if [[ -n "$SPARE" ]]; then
@@ -153,6 +158,11 @@ EOF
 else
   log "LXD already initialized (pool+network present)"
 fi
+
+# Always re-assert dns.mode=none (fresh install and upgrade alike): this is the
+# only thing that stops LXD from publishing <username>.lxd DNS/PTR records that
+# let any tenant enumerate every other user's username with a subnet scan.
+lxc network set lxdbr0 dns.mode=none 2>/dev/null || true
 
 DRIVER_NOW=$(lxc storage show "$POOL" | awk -F': ' '/driver:/{print $2}')
 log "storage backend: $DRIVER_NOW"
