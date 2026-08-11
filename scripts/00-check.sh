@@ -67,6 +67,37 @@ if ! snap list lxd >/dev/null 2>&1; then
   log "lxd snap not installed yet (installed by 10-lxd.sh)"
 fi
 
+# --- UFW conflict ---
+# LXD manages its own `table inet lxd` nftables rules (DHCP/DNS/forwarding) on
+# lxdbr0, but UFW's `table ip filter` runs at the same priority with a DROP
+# policy, so it drops container DHCP/forwarding traffic before LXD's rules
+# ever see it. Result: containers get no IPv4 (no DHCP, no DNS, no NAT) and
+# the image build fails. See:
+#   https://canonical.com/lxd/docs/latest/howto/network_bridge_firewalld/
+# vpsmgr manages its own firewall via `table inet vpsmgr` nftables, so the
+# cleanest fix is to disable UFW during install (idempotent: skipped when it
+# is already inactive).
+if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q "Status: active"; then
+  # Already handled from a previous install? Never disable again silently —
+  # the user may have re-enabled it on purpose.
+  if ufw status verbose 2>/dev/null | grep -qE "lxdbr0|10\.42\.0\.0"; then
+    log "ufw active but already has LXD/lxdbr0 allow rules — leaving it as-is"
+  else
+    log "ufw is ACTIVE with default-DROP policy — this breaks LXD container IPv4"
+    log "  (LXD's own nftables rules are shadowed by ufw's DROP; known issue:"
+    log "  https://canonical.com/lxd/docs/latest/howto/network_bridge_firewalld/)"
+    log "  vpsmgr manages its firewall via nftables; disabling ufw."
+    ufw disable >/dev/null 2>&1 && log "  ufw disabled" || die "failed to disable ufw"
+    # Keep it off across reboots. Snap/systemd enable it on boot otherwise.
+    if command -v systemctl >/dev/null 2>&1; then
+      systemctl disable ufw.service >/dev/null 2>&1 || true
+      systemctl stop ufw.service >/dev/null 2>&1 || true
+    fi
+  fi
+else
+  log "ufw: not active (or not installed) — no conflict"
+fi
+
 # --- detect public ip / ext iface ---
 EXT_IF=$(ip route show default | awk '{print $5; exit}')
 PUB_IP=""
