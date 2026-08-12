@@ -5,11 +5,17 @@ export PATH="$PATH:/snap/bin"
 
 log(){ echo "[20] $*"; }
 
-# ip_forward + BBR/fq TCP tuning. Written every run (idempotent).
+# ip_forward + BBR/fq TCP tuning + io_uring attack-surface clamp. Written every
+# run (idempotent). io_uring_disabled=1 lets only init-userns CAP_SYS_ADMIN (the
+# host's own root services) create io_uring; container tenants — even container
+# root, which only has userns-scoped caps — get EPERM, closing the biggest
+# kernel LPE attack surface for tenants. Value 1, not 2: the host stack (LXD,
+# ZFS, Go panel/traefik) is untouched. Matches RHEL 9.3+'s shipped default.
 cat > /etc/sysctl.d/99-vpsmgr.conf <<EOF
 net.ipv4.ip_forward=1
 net.core.default_qdisc=fq
 net.ipv4.tcp_congestion_control=bbr
+kernel.io_uring_disabled=1
 EOF
 # IPv6 pass-through: forwarding must be on so the host relays container v6.
 if [[ -n "${VPSMGR_IPV6_SUBNET:-}" ]]; then
@@ -18,11 +24,11 @@ net.ipv6.conf.all.forwarding=1
 net.ipv6.conf.default.forwarding=1
 EOF
 fi
-log "wrote /etc/sysctl.d/99-vpsmgr.conf (ip_forward + bbr/fq${VPSMGR_IPV6_SUBNET:+ + ipv6 forwarding})"
-SYSCTL_ARGS=(net.ipv4.ip_forward=1 net.core.default_qdisc=fq net.ipv4.tcp_congestion_control=bbr)
+log "wrote /etc/sysctl.d/99-vpsmgr.conf (ip_forward + bbr/fq + io_uring_disabled${VPSMGR_IPV6_SUBNET:+ + ipv6 forwarding})"
+SYSCTL_ARGS=(net.ipv4.ip_forward=1 net.core.default_qdisc=fq net.ipv4.tcp_congestion_control=bbr kernel.io_uring_disabled=1)
 [[ -n "${VPSMGR_IPV6_SUBNET:-}" ]] && SYSCTL_ARGS+=(net.ipv6.conf.all.forwarding=1)
 if ! sysctl -q -w "${SYSCTL_ARGS[@]}" 2>/dev/null; then
-  log "warn: live apply of bbr/fq failed (kernel may not support bbr); config persisted and will apply on reboot"
+  log "warn: live sysctl apply failed (e.g. kernel too old for bbr/io_uring_disabled); config persisted and will apply on reboot"
 fi
 log "tcp congestion: $(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null || echo 'n/a')"
 

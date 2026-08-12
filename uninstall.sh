@@ -71,6 +71,9 @@ log "removing files..."
 # a pre-0.3 install.
 rm -f /usr/local/bin/vps /usr/local/bin/vpsmgr /usr/local/bin/traefik
 rm -f /etc/systemd/system/vpsmgr-panel.service /etc/systemd/system/vpsmgr-nft.service /etc/systemd/system/vpsmgr-ipv6.service /etc/systemd/system/traefik.service
+# Restore the host-wide io_uring clamp to the kernel default before dropping
+# 99-vpsmgr.conf (which sets it to 1 at install time).
+sysctl -w kernel.io_uring_disabled=0 >/dev/null 2>&1 || true
 rm -f /etc/sysctl.d/99-vpsmgr.conf
 nft delete table inet vpsmgr 2>/dev/null || true
 # /etc/vpsmgr (config/db/certs) and /etc/traefik are deliberately KEPT here:
