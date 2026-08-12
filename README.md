@@ -2,6 +2,12 @@
 
 **Warning ⚠️ Under active development — breaking changes may occur.**
 
+**Warning ⚠️ The "VMs" this project creates are LXC containers, not real
+virtual machines. Their isolation and security are far weaker than other
+virtualization approaches (KVM/QEMU, etc.). A kernel-level or container escape
+would affect the host and every tenant. Security risk is yours to accept — do
+not run untrusted or high-security workloads on a shared host.**
+
 [简体中文](README.zh-CN.md) · [Docs](docs/README.md)
 
 A toy LXC hosting panel for small machines (≤ 4 GB RAM, small VPS): one Debian
