@@ -261,6 +261,22 @@ func (s *Server) handleDomainDel(w http.ResponseWriter, r *http.Request) {
 	s.redirect(w, r, s.p(""), "ok: domain removed")
 }
 
+// handleInitScript saves the current user's custom init script (run inside
+// their container after a reinstall). It always operates on the session's own
+// user — the form carries no name, so no one can edit another user's script.
+func (s *Server) handleInitScript(w http.ResponseWriter, r *http.Request) {
+	u := s.currentUser(r)
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, err.Error(), 400)
+		return
+	}
+	if err := s.mgr.SetInitScript(u.Name, r.FormValue("script")); err != nil {
+		s.redirect(w, r, s.p(""), "error: "+err.Error())
+		return
+	}
+	s.redirect(w, r, s.p(""), "ok: init script saved")
+}
+
 // handleImages returns the OS images available for reinstall. It is fetched
 // lazily when the user opens the reinstall dialog, not on every page load, so
 // an LXD image listing only happens when actually needed.

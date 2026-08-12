@@ -511,3 +511,70 @@ func TestWrongMethodOnPostOnlyRouteIsBare404(t *testing.T) {
 		t.Fatalf("GET /power sets Allow header = %q, want none", hdr)
 	}
 }
+
+func TestInitScriptSave(t *testing.T) {
+	srv, d := newTestServer(t)
+	h := srv.Handler()
+	prefix := "/" + testSecret
+
+	hash, err := pw.Hash("pw")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.CreateUser("alice", hash, "10.42.0.2", 1, 30001, 10000, 1, 1024, 10); err != nil {
+		t.Fatal(err)
+	}
+
+	// Save without a session: redirected to login, nothing stored.
+	rr := doReq(t, h, http.MethodPost, prefix+"/init-script", url.Values{"script": {"x"}}, nil)
+	if rr.Code != http.StatusFound {
+		t.Fatalf("unauthenticated save = %d, want 302", rr.Code)
+	}
+
+	// Login and grab the session cookie.
+	rr = doReq(t, h, http.MethodPost, prefix+"/login", url.Values{"username": {"alice"}, "password": {"pw"}}, nil)
+	var cookie *http.Cookie
+	for _, c := range rr.Result().Cookies() {
+		if c.Name == "vpsmgr_session" {
+			cookie = c
+		}
+	}
+	if cookie == nil {
+		t.Fatal("no session cookie")
+	}
+
+	// Save a normal script.
+	script := "#!/bin/bash\napt-get update && apt-get install -y nginx"
+	rr = doReq(t, h, http.MethodPost, prefix+"/init-script", url.Values{"script": {script}}, cookie)
+	if rr.Code != http.StatusFound {
+		t.Fatalf("save = %d, want 302", rr.Code)
+	}
+	got, err := d.GetUserByName("alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.InitScript != script {
+		t.Errorf("init_script = %q, want %q", got.InitScript, script)
+	}
+
+	// Oversize script is rejected and must not overwrite the stored value.
+	big := strings.Repeat("x", cfg.MaxInitScriptBytes+1)
+	rr = doReq(t, h, http.MethodPost, prefix+"/init-script", url.Values{"script": {big}}, cookie)
+	if rr.Code != http.StatusFound {
+		t.Fatalf("oversize save = %d, want 302 (flash error)", rr.Code)
+	}
+	got, err = d.GetUserByName("alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.InitScript != script {
+		t.Errorf("oversize save overwrote init_script: %q", got.InitScript)
+	}
+
+	// Clearing works.
+	rr = doReq(t, h, http.MethodPost, prefix+"/init-script", url.Values{"script": {""}}, cookie)
+	got, _ = d.GetUserByName("alice")
+	if got.InitScript != "" {
+		t.Errorf("clearing init_script failed: %q", got.InitScript)
+	}
+}

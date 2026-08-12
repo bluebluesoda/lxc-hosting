@@ -698,6 +698,20 @@ func (m *Manager) ResetRootPassword(name string) (string, error) {
 	return pass, nil
 }
 
+// SetInitScript stores a user's custom init script, which is run inside the
+// container after a reinstall. Bounded to cfg.MaxInitScriptBytes; an empty
+// string clears it.
+func (m *Manager) SetInitScript(name, script string) error {
+	if len(script) > cfg.MaxInitScriptBytes {
+		return fmt.Errorf("init script too large (%d bytes, max %d)", len(script), cfg.MaxInitScriptBytes)
+	}
+	u, err := m.db.GetUserByName(name)
+	if err != nil {
+		return err
+	}
+	return m.db.UpdateInitScript(u.ID, script)
+}
+
 // Reinstall destroys and recreates the container keeping IP/ports/domains,
 // using the selected OS image. image may be a managed alias ("vpsmgr/...");
 // empty or the default alias resolves to Debian 13 (prebuilt, else the remote
@@ -741,6 +755,15 @@ func (m *Manager) Reinstall(name, image string) (string, error) {
 	}
 	if err := m.ConfigureContainerIPv6(u.Name); err != nil {
 		return "", fmt.Errorf("config container ipv6: %w", err)
+	}
+	// User-defined init script (if any): run it detached inside the container,
+	// last of all, so it sees the full network. Best-effort — the container is
+	// already provisioned and usable, so a delivery failure must not fail the
+	// reinstall (the script is logged inside the container).
+	if u.InitScript != "" {
+		if err := m.lx.RunInitScript(u.Name, u.InitScript); err != nil {
+			fmt.Printf("  ! warn: init script: %v (container still recreated)\n", err)
+		}
 	}
 	return pass, nil
 }

@@ -53,6 +53,10 @@ const (
 	UserPortBase = 10000
 	PortsPerUser = 100
 	MaxUsers     = 200
+
+	// MaxInitScriptBytes caps a user's custom init script (run inside the
+	// container after a reinstall). Bounds the DB row and the panel payload.
+	MaxInitScriptBytes = 64 * 1024
 )
 
 type Config struct {

@@ -8,17 +8,18 @@ import (
 )
 
 type User struct {
-	ID        int64
-	Name      string
-	PassHash  string
-	Idx       int
-	IP        string
-	SSHPort   int
-	StartPort int
-	CPU       int
-	MemMB     int
-	DiskGB    int
-	CreatedAt string
+	ID         int64
+	Name       string
+	PassHash   string
+	Idx        int
+	IP         string
+	SSHPort    int
+	StartPort  int
+	InitScript string
+	CPU        int
+	MemMB      int
+	DiskGB     int
+	CreatedAt  string
 }
 
 func (d *DB) CreateUser(name, passHash, ip string, idx, sshPort, startPort, cpu, memMB, diskGB int) (*User, error) {
@@ -80,7 +81,7 @@ func (d *DB) UsedSSHPorts() (map[int]bool, error) {
 func scanUser(row *sql.Row) (*User, error) {
 	u := &User{}
 	err := row.Scan(&u.ID, &u.Name, &u.PassHash, &u.Idx, &u.IP, &u.SSHPort, &u.StartPort,
-		&u.CPU, &u.MemMB, &u.DiskGB, &u.CreatedAt)
+		&u.InitScript, &u.CPU, &u.MemMB, &u.DiskGB, &u.CreatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -89,19 +90,19 @@ func scanUser(row *sql.Row) (*User, error) {
 
 func (d *DB) GetUserByName(name string) (*User, error) {
 	return scanUser(d.sql.QueryRow(
-		`SELECT id, name, pass_hash, idx, ip, ssh_port, start_port, cpu, mem_mb, disk_gb, created_at
+		`SELECT id, name, pass_hash, idx, ip, ssh_port, start_port, init_script, cpu, mem_mb, disk_gb, created_at
 		 FROM users WHERE name=?`, name))
 }
 
 func (d *DB) GetUserByID(id int64) (*User, error) {
 	return scanUser(d.sql.QueryRow(
-		`SELECT id, name, pass_hash, idx, ip, ssh_port, start_port, cpu, mem_mb, disk_gb, created_at
+		`SELECT id, name, pass_hash, idx, ip, ssh_port, start_port, init_script, cpu, mem_mb, disk_gb, created_at
 		 FROM users WHERE id=?`, id))
 }
 
 func (d *DB) ListUsers() ([]*User, error) {
 	rows, err := d.sql.Query(
-		`SELECT id, name, pass_hash, idx, ip, ssh_port, start_port, cpu, mem_mb, disk_gb, created_at
+		`SELECT id, name, pass_hash, idx, ip, ssh_port, start_port, init_script, cpu, mem_mb, disk_gb, created_at
 		 FROM users ORDER BY idx`)
 	if err != nil {
 		return nil, err
@@ -111,7 +112,7 @@ func (d *DB) ListUsers() ([]*User, error) {
 	for rows.Next() {
 		u := &User{}
 		if err := rows.Scan(&u.ID, &u.Name, &u.PassHash, &u.Idx, &u.IP, &u.SSHPort, &u.StartPort,
-			&u.CPU, &u.MemMB, &u.DiskGB, &u.CreatedAt); err != nil {
+			&u.InitScript, &u.CPU, &u.MemMB, &u.DiskGB, &u.CreatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, u)
@@ -131,5 +132,12 @@ func (d *DB) UpdatePassword(id int64, passHash string) error {
 
 func (d *DB) UpdateQuotas(id int64, cpu, memMB, diskGB int) error {
 	_, err := d.sql.Exec(`UPDATE users SET cpu=?, mem_mb=?, disk_gb=? WHERE id=?`, cpu, memMB, diskGB, id)
+	return err
+}
+
+// UpdateInitScript sets a user's custom init script (run inside the container
+// after a reinstall). An empty string clears it.
+func (d *DB) UpdateInitScript(id int64, script string) error {
+	_, err := d.sql.Exec(`UPDATE users SET init_script=? WHERE id=?`, script, id)
 	return err
 }

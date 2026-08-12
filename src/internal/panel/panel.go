@@ -112,7 +112,8 @@ type pageData struct {
 	Ports      string // full user-port block, e.g. 10700-10799 (tooltip)
 	PortsShort string // compact form, e.g. 107xx
 	SSH        string
-	V4Forward  bool // false = IPv6-only box: v4 ssh/ports not offered
+	V4Forward  bool   // false = IPv6-only box: v4 ssh/ports not offered
+	InitScript string // custom init script, run after a reinstall
 	QuotaCPU   string
 	QuotaMem   string
 	QuotaDisk  string
@@ -139,6 +140,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/root-reset", s.requireAuth(s.requirePost(s.handleRootReset)))
 	mux.HandleFunc("/domain-add", s.requireAuth(s.requirePost(s.handleDomainAdd)))
 	mux.HandleFunc("/domain-del", s.requireAuth(s.requirePost(s.handleDomainDel)))
+	mux.HandleFunc("/init-script", s.requireAuth(s.requirePost(s.handleInitScript)))
 	mux.HandleFunc("/images", s.requireAuth(s.requirePost(s.handleImages)))
 	mux.HandleFunc("/flash", s.requireAuth(s.requirePost(s.handleFlash)))
 	prefix := s.prefix()
@@ -248,6 +250,7 @@ func (s *Server) buildData(u *db.User, msg, errMsg string) pageData {
 		PortsShort: mgr.UserPortsShort(u.StartPort),
 		SSH:        "ssh -p " + itoa(u.SSHPort) + " root@" + s.cfg.DisplayIP(),
 		V4Forward:  s.cfg.Net.V4Forward,
+		InitScript: u.InitScript,
 		QuotaCPU:   mgr.FormatCPU(u.CPU),
 		QuotaMem:   itoa(u.MemMB) + " MiB",
 		QuotaDisk:  itoa(u.DiskGB) + " GiB",

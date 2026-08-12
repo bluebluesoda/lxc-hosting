@@ -91,6 +91,13 @@ src/      Go source (single binary: CLI + panel)
 - Quotas: CPU (whole cores ≥ 1, or a fraction 0.1..0.9 of one core), memory
   (MiB), disk (GiB). Disk maps onto the ZFS quota and can only grow, never
   shrink.
+- **Init script**: each user can store a custom shell script (≤ 64 KiB) in
+  their panel. On a successful `reinstall` it is written to the container over
+  exec stdin (never the host command line — no injection surface) and run
+  **detached** as root inside the container, logging to
+  `/var/log/vpsmgr-init.log` there. Shebangs are honored; a hanging script
+  cannot block the reinstall because it is backgrounded. Delivery failure only
+  warns — the reinstall still succeeds.
 
 ## Storage
 

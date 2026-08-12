@@ -660,3 +660,45 @@ func (c *Client) ExecSH(name, script string) (string, error) {
 	}
 	return strings.TrimSpace(string(out)), nil
 }
+
+// RunInitScript writes a user's custom init script into the container and runs
+// it DETACHED, logging to /var/log/vpsmgr-init.log inside the container.
+//
+// Safety (the script is fully user-controlled and may be hostile):
+//   - the script is delivered over stdin to `cat >/root/vpsmgr-init.sh`, never
+//     interpolated into the host command line or argv, so it cannot escape the
+//     exec; it only ever runs INSIDE the container
+//   - a script starting with a shebang is executed directly (the kernel honors
+//     #!/bin/bash etc.); otherwise it runs under /bin/sh
+//   - the job is backgrounded with nohup and its stdin/stdout/stderr redirected
+//     to a file / /dev/null, so a runaway script cannot block the caller (the
+//     panel reinstall) — the host exec returns right after spawning it
+//   - the exec itself is bounded by a timeout, so even a wedged container
+//     cannot hang the call
+func (c *Client) RunInitScript(name, script string) error {
+	cmdStr := "cat >/root/vpsmgr-init.sh && chmod 700 /root/vpsmgr-init.sh && nohup "
+	if hasShebang(script) {
+		cmdStr += "/root/vpsmgr-init.sh"
+	} else {
+		cmdStr += "sh /root/vpsmgr-init.sh"
+	}
+	cmdStr += " >/var/log/vpsmgr-init.log 2>&1 </dev/null &"
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "lxc", "exec", name, "--", "/bin/sh", "-c", cmdStr)
+	cmd.Stdin = strings.NewReader(script)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("lxc exec %s: %s", name, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+// hasShebang reports whether a script starts with a #! interpreter line.
+func hasShebang(script string) bool {
+	line := script
+	if i := strings.IndexByte(line, '\n'); i >= 0 {
+		line = line[:i]
+	}
+	return strings.HasPrefix(strings.TrimSpace(line), "#!")
+}

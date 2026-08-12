@@ -69,6 +69,10 @@ vps panel-url
 vps v4-forward on|off   # shared IPv4 inbound: off = IPv6-only containers
 ```
 
+Users can set a custom **init script** in their panel — it runs as root inside
+their container after a reinstall (output at `/var/log/vpsmgr-init.log`), for
+cloud-provider-style first-boot automation.
+
 ## Config
 
 `/etc/vpsmgr/config.yaml` (auto-generated at install) — **the defaults are not
