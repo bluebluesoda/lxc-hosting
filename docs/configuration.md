@@ -57,3 +57,10 @@ lxd:
   `uninstalled_version` before deleting the binary. Both survive reinstall
   (`/etc/vpsmgr` is kept), so a future release that makes breaking changes can
   detect which version a config/db came from and migrate or warn.
+- **v0.3 upgrade gate:** v0.3 makes breaking changes, so it refuses to adopt a
+  config/db recorded as originating from an older release. `vpsmgr install`
+  and `vpsmgr serve` both abort (and `install.sh` aborts early) when
+  `installed_version` / `uninstalled_version` is missing or older than 0.3.0.
+  A config with no recorded version is treated as too old — it predates the
+  metadata fields. Existing 0.2.x installs must stay on v0.2.x until a
+  migration path exists.

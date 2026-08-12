@@ -20,6 +20,22 @@ if [[ $EUID -ne 0 ]]; then
   exit 1
 fi
 
+# v0.3 makes breaking changes; a 0.1.x/0.2.x install must NOT be upgraded yet.
+# Abort before any script runs so the box cannot end up half-upgraded (v0.3
+# scripts over a v0.2.x binary). A box that already uninstalled is still caught
+# later by `vpsmgr install`, which refuses to adopt an old config.
+if [[ -x /usr/local/bin/vpsmgr ]]; then
+  OLD_VER="$(/usr/local/bin/vpsmgr version 2>/dev/null || true)"
+  case "$OLD_VER" in
+    0.1.*|0.2.*)
+      echo "error: this is the vpsmgr v0.3 installer, which makes breaking changes." >&2
+      echo "       this box still runs vpsmgr $OLD_VER, which cannot be upgraded yet." >&2
+      echo "       stay on v0.2.x for now; a migration path will be released later." >&2
+      exit 1
+      ;;
+  esac
+fi
+
 # Local build: make it obvious WHICH branch will be compiled, and give the user
 # a chance to abort — some people want a dev build but end up building stable.
 if [[ "$BUILD_MODE" == "local" ]]; then

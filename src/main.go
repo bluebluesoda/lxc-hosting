@@ -170,13 +170,48 @@ func panelPath(c *cfg.Config) string {
 	return "/" + c.Panel.URLPath
 }
 
+// blockUnadoptable refuses to run against a config/db that records an origin
+// older than this binary can adopt. v0.3 makes breaking changes, so a config
+// whose origin is 0.2.x (or older, or not recorded) must not be adopted:
+// `vpsmgr install` would migrate it, and `vpsmgr serve` runs the db migration
+// on open — either would corrupt 0.2.x data. Guard both entry points.
+//
+// The origin is installed_version when set (the last binary to adopt the
+// config), falling back to uninstalled_version (a kept config from a
+// non-purging uninstall). Only when NEITHER is set is the origin unknown and
+// treated as too old. A config that already records 0.3.x must not be blocked
+// on an empty counterpart field — that is a normal 0.3.x re-upgrade.
+func blockUnadoptable(c *cfg.Config) error {
+	origin := c.InstalledVersion
+	if origin == "" {
+		origin = c.UninstalledVersion
+	}
+	if ver.Blocked(origin) {
+		return fmt.Errorf("vpsmgr %s cannot adopt a setup from an older release "+
+			"(config origin %s): v0.3 makes breaking changes and the migration "+
+			"from 0.2.x is not ready yet. Do not upgrade — stay on v0.2.x until "+
+			"a migration path exists.",
+			ver.Version, orUnknown(origin))
+	}
+	return nil
+}
+
+func orUnknown(v string) string {
+	if v == "" {
+		return "(unknown)"
+	}
+	return v
+}
+
 func cmdInstall() error {
 	c := cfg.Default()
+	adopting := false
 	if _, err := os.Stat(cfg.Path()); err == nil {
 		c, err = cfg.Load()
 		if err != nil {
 			return err
 		}
+		adopting = true
 	} else {
 		if err := c.FillAuto(); err != nil {
 			return err
@@ -184,6 +219,13 @@ func cmdInstall() error {
 		// Fresh install: generate both secret paths (user 10 / admin 12).
 		// After this, an empty path is a deliberate "panel disabled" choice.
 		c.EnsurePaths()
+	}
+	// Adopting an existing config: refuse to touch one that came from a release
+	// too old to migrate. Check BEFORE overwriting installed_version below.
+	if adopting {
+		if err := blockUnadoptable(c); err != nil {
+			return err
+		}
 	}
 	// Record which binary version installed (or adopted/upgraded) this config so
 	// a future release that makes breaking changes can detect the version the
@@ -351,6 +393,9 @@ func writeUnit(name, content string) error {
 func cmdServe() error {
 	c, err := cfg.Load()
 	if err != nil {
+		return err
+	}
+	if err := blockUnadoptable(c); err != nil {
 		return err
 	}
 	if err := c.ValidatePaths(); err != nil {
