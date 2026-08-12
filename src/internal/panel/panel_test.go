@@ -428,3 +428,42 @@ func TestStripPrefix(t *testing.T) {
 		}
 	}
 }
+
+// TestWrongMethodOnPostOnlyRouteIsBare404 verifies that a non-POST request to a
+// POST-only route (with a valid session) answers with the same bare 404 as any
+// other wrong path — never a 405, which would advertise the POST-only endpoint.
+func TestWrongMethodOnPostOnlyRouteIsBare404(t *testing.T) {
+	srv, d := newTestServer(t)
+	h := srv.Handler()
+	prefix := "/" + testSecret
+
+	hash, err := pw.Hash("correct-horse-battery")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.CreateUser("alice", hash, "10.42.0.2", 1, 10000, 10, 1024, 10); err != nil {
+		t.Fatal(err)
+	}
+	rr := doReq(t, h, http.MethodPost, prefix+"/login", url.Values{"username": {"alice"}, "password": {"correct-horse-battery"}}, nil)
+	var sess *http.Cookie
+	for _, c := range rr.Result().Cookies() {
+		if c.Name == "vpsmgr_session" {
+			v := *c
+			sess = &v
+		}
+	}
+	if sess == nil {
+		t.Fatal("no session cookie")
+	}
+
+	rr = doReq(t, h, http.MethodGet, prefix+"/power", nil, sess)
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("GET /power with session = %d, want 404", rr.Code)
+	}
+	if body := rr.Body.String(); body != "" {
+		t.Fatalf("GET /power body = %q, want empty", body)
+	}
+	if hdr := rr.Header().Get("Allow"); hdr != "" {
+		t.Fatalf("GET /power sets Allow header = %q, want none", hdr)
+	}
+}

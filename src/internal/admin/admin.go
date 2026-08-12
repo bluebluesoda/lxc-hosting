@@ -188,12 +188,13 @@ func (s *Server) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 }
 
 // requirePost rejects everything but POST so no state-changing action can be
-// triggered by a top-level GET navigation.
+// triggered by a top-level GET navigation. A wrong method gets the same bare
+// 404 as any other wrong path — never a 405, which would advertise that a
+// POST-only endpoint exists here.
 func (s *Server) requirePost(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
-			w.Header().Set("Allow", "POST")
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			w.WriteHeader(http.StatusNotFound)
 			return
 		}
 		next(w, r)

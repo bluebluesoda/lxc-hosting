@@ -301,3 +301,26 @@ func TestLanguageSwitch(t *testing.T) {
 		t.Fatalf("cookie did not override browser language")
 	}
 }
+
+// TestWrongMethodOnPostOnlyRouteIsBare404 verifies that a non-POST request to a
+// POST-only admin route (with a valid session) answers with the same bare 404
+// as any other wrong path — never a 405, which would advertise the POST-only
+// endpoint.
+func TestWrongMethodOnPostOnlyRouteIsBare404(t *testing.T) {
+	srv, _ := newTestServer(t)
+	setAdminPass(t, srv, "correct-horse-battery")
+	h := srv.Handler()
+	prefix := "/" + testAdminSecret
+	sess := adminLogin(t, h, prefix, "correct-horse-battery")
+
+	rr := doReq(t, h, http.MethodGet, prefix+"/user-add", nil, sess)
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("GET /user-add with session = %d, want 404", rr.Code)
+	}
+	if body := rr.Body.String(); body != "" {
+		t.Fatalf("GET /user-add body = %q, want empty", body)
+	}
+	if hdr := rr.Header().Get("Allow"); hdr != "" {
+		t.Fatalf("GET /user-add sets Allow header = %q, want none", hdr)
+	}
+}
