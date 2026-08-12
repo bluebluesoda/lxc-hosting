@@ -98,6 +98,21 @@ src/      Go source (single binary: CLI + panel)
   rollover) is unthrottled. The NIC limits are applied LIVE by LXD via tc
   (htb qdisc on the host veth) — no container restart — and the manager keeps
   an in-memory throttle state so LXD is only touched on state changes.
+- **Domains**: the `domains` table (owner via `user_id`, PROXY flag, UTC
+  created/updated timestamps) is the single source of truth; the traefik
+  dynamic directory holds **one self-contained YAML per domain**
+  (`/etc/traefik/dynamic/<domain>.yaml`), so toggling PROXY protocol or
+  deleting a domain only rewrites/removes that one file. PROXY protocol v2 is a
+  **TCP-service** feature: a flagged domain's TLS-passthrough service carries
+  `proxyProtocol.version: 2` (HTTP/80 cannot — traefik injects
+  `X-Forwarded-For` there). Router/service names are `sanitizeDomain(domain)`
+  (dots → underscores), which is collision-free across the `[a-z0-9.-]` domain
+  charset and globally unique. **DB and YAML are kept in sync atomically**:
+  every domain mutation updates the DB first, then the file, and rolls the DB
+  back on a file failure; `SyncAllDomains` (run on `vps install` and
+  `vps v4-forward on`) regenerates everything from the DB and deletes orphan
+  files, fixing any crash drift. All timestamps are stored as UTC; the admin
+  domain page renders them in the browser's timezone.
 - **Init script**: each user can store a custom shell script (≤ 64 KiB) in
   their panel. On a successful `reinstall` it is written to the container over
   exec stdin (never the host command line — no injection surface) and run

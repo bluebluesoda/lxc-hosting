@@ -22,6 +22,8 @@ func newTestServer(t *testing.T) (*Server, *db.DB) {
 	c.Panel.URLPath = testSecret
 	c.Panel.PublicIP = "127.0.0.1"
 	c.Panel.SessionDays = 3
+	// Keep per-domain traefik writes out of /etc/traefik.
+	t.Setenv("VPSMGR_TRAEFIK_DIR", t.TempDir())
 	d, err := db.Open(t.TempDir() + "/test.db")
 	if err != nil {
 		t.Fatal(err)
@@ -433,7 +435,7 @@ func TestTemplateEscapesUserInput(t *testing.T) {
 	srv, _ := newTestServer(t)
 	html := srv.renderToString(t, "overview.html", pageData{
 		User:    &db.User{Name: `alice"><img src=x onerror=alert(1)>`},
-		Domains: []string{`evil.example"><script>alert(1)</script>`},
+		Domains: []domainRow{{Domain: `evil.example"><script>alert(1)</script>`}},
 		UpGB:    "1",
 		DownGB:  "1",
 		Prefix:  "/" + testSecret,
@@ -616,5 +618,93 @@ func TestInitScriptSave(t *testing.T) {
 	got, _ = d.GetUserByName("alice")
 	if got.InitScript != "" {
 		t.Errorf("clearing init_script failed: %q", got.InitScript)
+	}
+}
+
+// loginAndCookie logs in as the user and returns the session cookie.
+func loginAndCookie(t *testing.T, h http.Handler, prefix, name, pass string) *http.Cookie {
+	t.Helper()
+	rr := doReq(t, h, http.MethodPost, prefix+"/login", url.Values{"username": {name}, "password": {pass}}, nil)
+	for _, c := range rr.Result().Cookies() {
+		if c.Name == "vpsmgr_session" {
+			return c
+		}
+	}
+	t.Fatal("no session cookie on login")
+	return nil
+}
+
+func TestDomainAddWithProxyProtocol(t *testing.T) {
+	srv, d := newTestServer(t)
+	h := srv.Handler()
+	prefix := "/" + testSecret
+	hash, _ := pw.Hash("pw")
+	if _, err := d.CreateUser("alice", hash, "10.42.0.2", 1, 30001, 10000, 1, 1024, 10); err != nil {
+		t.Fatal(err)
+	}
+	cookie := loginAndCookie(t, h, prefix, "alice", "pw")
+
+	// With the proxy_protocol checkbox on.
+	rr := doReq(t, h, http.MethodPost, prefix+"/domain-add",
+		url.Values{"domain": {"api.example.com"}, "proxy_protocol": {"1"}}, cookie)
+	if rr.Code != http.StatusFound {
+		t.Fatalf("add = %d, want 302", rr.Code)
+	}
+	dmn, err := d.GetDomainByDomain("api.example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !dmn.ProxyProtocol {
+		t.Error("proxy_protocol flag not stored")
+	}
+
+	// Without the checkbox: default off.
+	rr = doReq(t, h, http.MethodPost, prefix+"/domain-add",
+		url.Values{"domain": {"plain.example.com"}}, cookie)
+	if rr.Code != http.StatusFound {
+		t.Fatalf("add = %d, want 302", rr.Code)
+	}
+	plain, _ := d.GetDomainByDomain("plain.example.com")
+	if plain.ProxyProtocol {
+		t.Error("proxy_protocol should default off")
+	}
+}
+
+func TestDomainUpdateBatch(t *testing.T) {
+	srv, d := newTestServer(t)
+	h := srv.Handler()
+	prefix := "/" + testSecret
+	hash, _ := pw.Hash("pw")
+	u, err := d.CreateUser("alice", hash, "10.42.0.2", 1, 30001, 10000, 1, 1024, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.AddDomain(u.ID, "example.com", false); err != nil {
+		t.Fatal(err)
+	}
+	cookie := loginAndCookie(t, h, prefix, "alice", "pw")
+
+	// Post the checkbox for example.com (proto[] present = on).
+	rr := doReq(t, h, http.MethodPost, prefix+"/domain-update",
+		url.Values{"proto": {"example.com"}}, cookie)
+	if rr.Code != http.StatusFound {
+		t.Fatalf("update = %d, want 302", rr.Code)
+	}
+	dmn, err := d.GetDomainByDomain("example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !dmn.ProxyProtocol {
+		t.Error("batch update did not enable proxy protocol")
+	}
+
+	// Post with no proto[] = toggle back off.
+	rr = doReq(t, h, http.MethodPost, prefix+"/domain-update", url.Values{}, cookie)
+	if rr.Code != http.StatusFound {
+		t.Fatalf("update = %d, want 302", rr.Code)
+	}
+	dmn, _ = d.GetDomainByDomain("example.com")
+	if dmn.ProxyProtocol {
+		t.Error("batch update did not disable proxy protocol")
 	}
 }

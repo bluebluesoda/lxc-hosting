@@ -241,11 +241,48 @@ func (s *Server) handleDomainAdd(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), 400)
 		return
 	}
-	if err := s.mgr.AddDomain(u.Name, r.FormValue("domain")); err != nil {
+	proxyProtocol := r.FormValue("proxy_protocol") == "1"
+	if err := s.mgr.AddDomain(u.Name, r.FormValue("domain"), proxyProtocol); err != nil {
 		s.redirect(w, r, s.p(""), "error: "+err.Error())
 		return
 	}
 	s.redirect(w, r, s.p(""), "ok: domain added")
+}
+
+// handleDomainUpdate applies the batch PROXY protocol toggle: the form posts
+// one `proto` checkbox per domain (only the checked ones), the handler diffs
+// them against the DB and applies the changed ones, each atomically.
+func (s *Server) handleDomainUpdate(w http.ResponseWriter, r *http.Request) {
+	u := s.currentUser(r)
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, err.Error(), 400)
+		return
+	}
+	checked := map[string]bool{}
+	for _, d := range r.Form["proto"] {
+		checked[d] = true
+	}
+	domains, err := s.db.ListDomains(u.ID)
+	if err != nil {
+		s.redirect(w, r, s.p(""), "error: "+err.Error())
+		return
+	}
+	changed := 0
+	for _, dmn := range domains {
+		on := checked[dmn.Domain]
+		if on != dmn.ProxyProtocol {
+			if err := s.mgr.SetDomainProtocol(u.Name, dmn.Domain, on); err != nil {
+				s.redirect(w, r, s.p(""), "error: "+err.Error())
+				return
+			}
+			changed++
+		}
+	}
+	if changed == 0 {
+		s.redirect(w, r, s.p(""), "ok: no changes")
+		return
+	}
+	s.redirect(w, r, s.p(""), "ok: domain settings saved")
 }
 
 func (s *Server) handleDomainDel(w http.ResponseWriter, r *http.Request) {

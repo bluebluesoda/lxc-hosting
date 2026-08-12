@@ -77,6 +77,12 @@ Admins can set a per-user monthly **traffic quota** (GiB, upload + download);
 a container that exceeds it is rate-limited to **1Mbps** both directions. The
 limit is applied live via LXD (tc qdiscs) — no container restart.
 
+Domains can opt into **PROXY protocol v2** (the 443 TLS passthrough reports the
+visitor IP to the backend, which must support it; HTTP/80 keeps normal
+`X-Forwarded-For` headers). An admin **domain management** page lists every
+domain with its owner and last-modified time (UTC, shown in the browser's
+timezone) and can toggle the setting or delete domains.
+
 ## Config
 
 `/etc/vpsmgr/config.yaml` (auto-generated at install) — **the defaults are not

@@ -62,10 +62,13 @@ input.bad{border-color:var(--danger);outline:1px solid var(--danger)}
 label{font-size:.84rem;color:var(--muted)}
 .err{background:var(--err-bg);color:var(--err-fg);border:1px solid var(--danger);padding:.5rem .7rem;border-radius:8px;margin-bottom:.8rem;font-size:.87rem;word-break:break-all}
 a{color:var(--accent);text-decoration:none}
-.domlist{margin:.2rem 0 .55rem;padding:0;list-style:none;font-size:.87rem}
-.domlist li{display:flex;align-items:center;justify-content:space-between;gap:.5rem;padding:.22rem 0;border-bottom:1px solid var(--border)}
-.domlist li:last-child{border-bottom:0}
-.domlist code{background:none;padding:0}
+.domtable{width:100%;border-collapse:collapse;font-size:.85rem;margin:.2rem 0 .6rem}
+.domtable th,.domtable td{text-align:left;padding:.3rem .4rem;border-bottom:1px solid var(--border);vertical-align:middle}
+.domtable th{color:var(--muted);font-weight:600}
+.domtable code{background:none;padding:0}
+.domtable input[type=checkbox]{width:1rem;height:1rem;cursor:pointer}
+.chk{display:inline-flex;align-items:center;gap:.35rem;cursor:pointer;font-size:.82rem}
+.chk input{width:auto}
 .qgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:.55rem;margin:.15rem 0 .7rem}
 .qitem{background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:.45rem .55rem;text-align:center;min-width:0}
 .qlabel{display:block;color:var(--muted);font-size:.72rem;letter-spacing:.02em;margin-bottom:.2rem}
@@ -150,11 +153,28 @@ footer a{color:var(--muted);text-decoration:underline}
 <div class="card">
 <h2>{{if eq .Lang "zh"}}域名{{else}}Domains{{end}}</h2>
 <p class="muted">{{if eq .Lang "zh"}}绑定后，域名的 80 / 443 端口转发到容器对应端口；HTTPS 证书请在容器内自行申请，面板只负责转发。{{else}}Once bound, the domain's 80 / 443 traffic is forwarded to the matching container ports; request the HTTPS certificate inside the container yourself — the panel only proxies.{{end}}</p>
-<ul class="domlist">
-{{$prefix := .Prefix}}{{if eq .Lang "zh"}}{{range .Domains}}<li><code>{{.}}</code> <form action="{{$prefix}}/domain-del" method="post" class="inline"><input type="hidden" name="domain" value="{{.}}"><button class="btn danger">删除</button></form></li>{{else}}<li class="muted">未绑定域名</li>{{end}}{{else}}{{range .Domains}}<li><code>{{.}}</code> <form action="{{$prefix}}/domain-del" method="post" class="inline"><input type="hidden" name="domain" value="{{.}}"><button class="btn danger">Remove</button></form></li>{{else}}<li class="muted">No domains bound</li>{{end}}{{end}}
-</ul>
+{{if .Domains}}
+<form action="{{.Prefix}}/domain-update" method="post" id="domForm">
+<table class="domtable">
+<thead><tr><th>{{if eq .Lang "zh"}}域名{{else}}Domain{{end}}</th><th>PROXY v2</th><th></th></tr></thead>
+<tbody>
+{{range .Domains}}
+<tr>
+<td><code>{{.Domain}}</code></td>
+<td><input type="checkbox" name="proto" value="{{.Domain}}"{{if .ProxyProtocol}} checked{{end}} title="{{if eq $.Lang "zh"}}PROXY protocol v2：一种 TCP 报文，向后端汇报访客 IP，需要后端适配{{else}}PROXY protocol v2: a TCP preamble that reports the visitor IP to the backend; the backend must support it{{end}}"></td>
+<td><button type="button" class="btn danger" onclick="delDomain('{{.Domain}}')">{{if eq $.Lang "zh"}}删除{{else}}Remove{{end}}</button></td>
+</tr>
+{{end}}
+</tbody>
+</table>
+<button class="btn accent" type="submit" id="domSave" hidden>{{if eq .Lang "zh"}}保存{{else}}Save{{end}}</button>
+</form>
+{{else}}
+<div class="muted">{{if eq .Lang "zh"}}未绑定域名{{else}}No domains bound{{end}}</div>
+{{end}}
 <form action="{{.Prefix}}/domain-add" method="post">
 <div class="frow"><label>{{if eq .Lang "zh"}}新域名{{else}}New domain{{end}}</label><input name="domain" placeholder="example.com"><button class="btn ok" type="submit">{{if eq .Lang "zh"}}添加{{else}}Add{{end}}</button></div>
+<div class="frow"><label></label><label class="chk"><input type="checkbox" name="proxy_protocol" value="1" title="{{if eq .Lang "zh"}}PROXY protocol v2：一种 TCP 报文，向后端汇报访客 IP，需要后端适配{{else}}PROXY protocol v2: a TCP preamble that reports the visitor IP to the backend; the backend must support it{{end}}"> PROXY protocol v2</label></div>
 </form>
  </div>
 </div>
@@ -314,6 +334,23 @@ apt-get update && apt-get install -y nginx{{end}}">{{.InitScript}}</textarea>
       resetBtn.textContent={{if eq .Lang "zh"}}'重置中...'{{else}}'Resetting...'{{end}};
     });
   }
+})();
+// Domain PROXY protocol batch toggle: reveal the save button when any
+// checkbox changes; delete via a JS-built form (avoid nesting forms).
+(function(){
+  var P='{{.Prefix}}';
+  var form=document.getElementById('domForm');
+  if(form){
+    var save=document.getElementById('domSave');
+    form.querySelectorAll('input[name=proto]').forEach(function(b){
+      b.addEventListener('change',function(){ save.hidden=false; });
+    });
+  }
+  window.delDomain=function(d){
+    var f=document.createElement('form'); f.method='post'; f.action=P+'/domain-del';
+    f.innerHTML='<input type="hidden" name="domain" value="'+d+'">';
+    document.body.appendChild(f); f.submit();
+  };
 })();
 </script>
 </body>

@@ -24,6 +24,7 @@ func newTestServer(t *testing.T) (*Server, *db.DB) {
 	t.Helper()
 	cfgPath := t.TempDir() + "/config.yaml"
 	t.Setenv("VPSMGR_CONFIG", cfgPath)
+	t.Setenv("VPSMGR_TRAEFIK_DIR", t.TempDir())
 	c := cfg.Default()
 	c.Panel.URLPath = "UserSecRet99"
 	c.Panel.AdminPath = testAdminSecret
@@ -322,5 +323,56 @@ func TestWrongMethodOnPostOnlyRouteIsBare404(t *testing.T) {
 	}
 	if hdr := rr.Header().Get("Allow"); hdr != "" {
 		t.Fatalf("GET /user-add sets Allow header = %q, want none", hdr)
+	}
+}
+
+func TestDomainsPageAndToggle(t *testing.T) {
+	srv, d := newTestServer(t)
+	setAdminPass(t, srv, "correct-horse-battery")
+	h := srv.Handler()
+	prefix := "/" + testAdminSecret
+
+	u, err := d.CreateUser("alice", "h", "10.42.0.2", 1, 30001, 10000, 1, 1024, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.AddDomain(u.ID, "example.com", false); err != nil {
+		t.Fatal(err)
+	}
+	cookie := adminLogin(t, h, prefix, "correct-horse-battery")
+
+	// The domains page lists the domain + owner.
+	rr := doReq(t, h, http.MethodGet, prefix+"/domains", nil, cookie)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET /domains = %d", rr.Code)
+	}
+	for _, want := range []string{"example.com", "alice"} {
+		if !strings.Contains(rr.Body.String(), want) {
+			t.Errorf("domains page missing %q", want)
+		}
+	}
+
+	// Admin batch toggle enables proxy protocol.
+	rr = doReq(t, h, http.MethodPost, prefix+"/domain-update",
+		url.Values{"proto": {"example.com"}}, cookie)
+	if rr.Code != http.StatusFound {
+		t.Fatalf("domain-update = %d, want 302", rr.Code)
+	}
+	dmn, err := d.GetDomainByDomain("example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !dmn.ProxyProtocol {
+		t.Error("admin toggle did not enable proxy protocol")
+	}
+
+	// Admin delete removes the domain.
+	rr = doReq(t, h, http.MethodPost, prefix+"/domain-del",
+		url.Values{"domain": {"example.com"}}, cookie)
+	if rr.Code != http.StatusFound {
+		t.Fatalf("domain-del = %d, want 302", rr.Code)
+	}
+	if _, err := d.GetDomainByDomain("example.com"); err == nil {
+		t.Error("domain still present after admin delete")
 	}
 }

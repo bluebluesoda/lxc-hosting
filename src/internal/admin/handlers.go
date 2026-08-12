@@ -447,3 +447,105 @@ func parseMem(s string) (int, error) {
 	}
 	return n, nil
 }
+
+// ---- domain management ----
+
+// domainView is one row of the admin domain panel.
+type domainView struct {
+	Domain        string
+	Username      string
+	UpdatedAt     string // UTC RFC3339; rendered in the browser's timezone
+	ProxyProtocol bool
+}
+
+type domainsPageData struct {
+	Title   string
+	Prefix  string
+	Msg     string
+	Err     string
+	Domains []domainView
+	Lang    string
+}
+
+func (s *Server) renderDomains(w http.ResponseWriter, r *http.Request, d domainsPageData) {
+	t, err := s.templates()
+	if err != nil {
+		http.Error(w, "template error: "+err.Error(), 500)
+		return
+	}
+	if d.Lang == "" {
+		d.Lang = langEn
+		if l, ok := r.Context().Value(langCtxKey).(string); ok && l != "" {
+			d.Lang = l
+		}
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	if err := t.ExecuteTemplate(w, "admin_domains.html", d); err != nil {
+		http.Error(w, err.Error(), 500)
+	}
+}
+
+// handleDomains renders the admin domain panel: every domain with its owner
+// and last-modified time, newest first.
+func (s *Server) handleDomains(w http.ResponseWriter, r *http.Request) {
+	d := domainsPageData{Title: "VPS Manager Admin — Domains", Prefix: s.prefix()}
+	all, err := s.mgr.AllDomains()
+	if err != nil {
+		d.Err = err.Error()
+	} else {
+		for _, x := range all {
+			d.Domains = append(d.Domains, domainView{Domain: x.Domain, Username: x.Username, UpdatedAt: x.UpdatedAt, ProxyProtocol: x.ProxyProtocol})
+		}
+	}
+	s.renderDomains(w, r, d)
+}
+
+// handleDomainDel deletes a domain (admin path). It finds the owning user and
+// removes the domain + its traefik file atomically.
+func (s *Server) handleDomainDel(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, err.Error(), 400)
+		return
+	}
+	domain := r.FormValue("domain")
+	if err := s.mgr.AdminDelDomain(domain); err != nil {
+		s.redirect(w, r, s.p("/domains"), "error: "+err.Error())
+		return
+	}
+	s.redirect(w, r, s.p("/domains"), s.t(r, "domain_deleted", domain))
+}
+
+// handleDomainUpdate applies the admin batch PROXY protocol toggle, same
+// semantics as the user panel.
+func (s *Server) handleDomainUpdate(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, err.Error(), 400)
+		return
+	}
+	checked := map[string]bool{}
+	for _, d := range r.Form["proto"] {
+		checked[d] = true
+	}
+	all, err := s.mgr.AllDomains()
+	if err != nil {
+		s.redirect(w, r, s.p("/domains"), "error: "+err.Error())
+		return
+	}
+	changed := 0
+	for _, x := range all {
+		on := checked[x.Domain]
+		if on != x.ProxyProtocol {
+			if err := s.mgr.AdminSetDomainProtocol(x.Domain, on); err != nil {
+				s.redirect(w, r, s.p("/domains"), "error: "+err.Error())
+				return
+			}
+			changed++
+		}
+	}
+	if changed == 0 {
+		s.redirect(w, r, s.p("/domains"), "ok: no changes")
+		return
+	}
+	s.redirect(w, r, s.p("/domains"), s.t(r, "domains_updated"))
+}

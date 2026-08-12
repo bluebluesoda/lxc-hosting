@@ -150,10 +150,18 @@ func Path() string {
 	return DefaultDataDir + "/config.yaml"
 }
 
-func (c *Config) DataDir() string    { return DefaultDataDir }
-func (c *Config) NftDir() string     { return DefaultNftDir }
-func (c *Config) NftMain() string    { return DefaultNftMain }
-func (c *Config) TraefikDir() string { return DefaultTraefikDir }
+func (c *Config) DataDir() string { return DefaultDataDir }
+func (c *Config) NftDir() string  { return DefaultNftDir }
+func (c *Config) NftMain() string { return DefaultNftMain }
+
+// TraefikDir is where per-domain dynamic files are written. VPSMGR_TRAEFIK_DIR
+// overrides it (used by tests to keep writes out of /etc/traefik).
+func (c *Config) TraefikDir() string {
+	if p := os.Getenv("VPSMGR_TRAEFIK_DIR"); p != "" {
+		return p
+	}
+	return DefaultTraefikDir
+}
 
 // SubnetIP returns the IP portion of the subnet CIDR.
 func (c *Config) SubnetIP() string {

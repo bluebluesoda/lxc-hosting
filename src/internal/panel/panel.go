@@ -102,6 +102,13 @@ func (s *Server) prefix() string { return "/" + s.cfg.Panel.URLPath }
 // p joins the prefix with a panel route (e.g. p("/login")).
 func (s *Server) p(route string) string { return s.prefix() + route }
 
+// domainRow is one domain in the user's overview list, with its PROXY
+// protocol toggle state.
+type domainRow struct {
+	Domain        string
+	ProxyProtocol bool
+}
+
 type pageData struct {
 	Title          string
 	User           *db.User
@@ -118,10 +125,10 @@ type pageData struct {
 	TrafficUsedGB  string // used this month (GB, 1 decimal) — only set when limited
 	TrafficPct     int    // used/quota * 100, clamped to 100
 	Throttled      bool   // over quota: NIC limited to 1Mbps
+	Domains        []domainRow
 	QuotaCPU       string
 	QuotaMem       string
 	QuotaDisk      string
-	Domains        []string
 	Msg            string
 	Err            string
 	PublicIP       string
@@ -144,6 +151,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/root-reset", s.requireAuth(s.requirePost(s.handleRootReset)))
 	mux.HandleFunc("/domain-add", s.requireAuth(s.requirePost(s.handleDomainAdd)))
 	mux.HandleFunc("/domain-del", s.requireAuth(s.requirePost(s.handleDomainDel)))
+	mux.HandleFunc("/domain-update", s.requireAuth(s.requirePost(s.handleDomainUpdate)))
 	mux.HandleFunc("/init-script", s.requireAuth(s.requirePost(s.handleInitScript)))
 	mux.HandleFunc("/images", s.requireAuth(s.requirePost(s.handleImages)))
 	mux.HandleFunc("/flash", s.requireAuth(s.requirePost(s.handleFlash)))
@@ -295,7 +303,7 @@ func (s *Server) buildData(u *db.User, msg, errMsg string) pageData {
 	}
 	domains, _ := s.db.ListDomains(u.ID)
 	for _, x := range domains {
-		d.Domains = append(d.Domains, x.Domain)
+		d.Domains = append(d.Domains, domainRow{Domain: x.Domain, ProxyProtocol: x.ProxyProtocol})
 	}
 	return d
 }

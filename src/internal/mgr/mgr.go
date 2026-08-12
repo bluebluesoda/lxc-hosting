@@ -495,6 +495,9 @@ func (m *Manager) Del(name string) error {
 		return fmt.Errorf("delete container: %w", err)
 	}
 	m.UnwireIPv6(name)
+	// Capture the domains BEFORE the user row is deleted (DeleteUser cascades
+	// them away) so their per-domain traefik files can be removed after.
+	domains, _ := m.db.ListDomains(u.ID)
 	// The remaining cleanup is best-effort: leftover nft rules / traefik
 	// config without a container are harmless and re-runnable on retry.
 	if err := m.fw.RemoveUser(name); err != nil {
@@ -503,14 +506,16 @@ func (m *Manager) Del(name string) error {
 	if err := m.fw.Reload(); err != nil {
 		fmt.Printf("  ! warn: reload nft: %v\n", err)
 	}
-	if err := m.tfx.RemoveUser(name); err != nil {
-		fmt.Printf("  ! warn: remove traefik config: %v\n", err)
-	}
 	if err := m.db.DeleteUser(u.ID); err != nil {
 		return err
 	}
 	if err := m.db.DeleteSessionsForUser(u.ID); err != nil {
 		return err
+	}
+	for _, d := range domains {
+		if err := m.tfx.RemoveDomain(d.Domain); err != nil {
+			fmt.Printf("  ! warn: remove traefik config for %s: %v\n", d.Domain, err)
+		}
 	}
 	m.limitMu.Lock()
 	delete(m.throttled, name)
@@ -551,25 +556,41 @@ func (m *Manager) ApplyV4State() error {
 func (m *Manager) ApplyTraefikState() error {
 	if m.cfg.Net.V4Forward {
 		_ = exec.Command("systemctl", "enable", "--now", "traefik.service").Run()
-		return m.SyncAllTraefik()
+		return m.SyncAllDomains()
 	}
 	_ = exec.Command("systemctl", "disable", "--now", "traefik.service").Run()
 	return nil
 }
 
-// SyncAllTraefik regenerates the dynamic config of every user's domains
-// (writes those that have domains, removes those that do not).
-func (m *Manager) SyncAllTraefik() error {
-	users, err := m.db.ListUsers()
+// SyncAllDomains reconciles the traefik dynamic directory against the DB (the
+// single source of truth): it regenerates every domain's YAML and removes any
+// leftover file that no longer matches a domain. This is the safety net that
+// fixes any drift left by a crash between a DB write and a file write.
+func (m *Manager) SyncAllDomains() error {
+	domains, err := m.db.ListAllDomains()
 	if err != nil {
 		return err
 	}
-	for _, u := range users {
-		if err := m.syncTraefik(u); err != nil {
-			return err
+	known := make(map[string]bool, len(domains))
+	var firstErr error
+	for _, d := range domains {
+		known[d.Domain] = true
+		if err := m.tfx.WriteDomain(d.Domain, d.IP, d.ProxyProtocol); err != nil && firstErr == nil {
+			firstErr = err
 		}
 	}
-	return nil
+	files, err := m.tfx.ListFiles()
+	if err != nil {
+		return err
+	}
+	for _, f := range files {
+		if !known[f] {
+			if err := m.tfx.RemoveDomain(f); err != nil && firstErr == nil {
+				firstErr = err
+			}
+		}
+	}
+	return firstErr
 }
 
 func (m *Manager) List() ([]*Result, error) {
@@ -790,7 +811,10 @@ func (m *Manager) Reinstall(name, image string) (string, error) {
 	return pass, nil
 }
 
-func (m *Manager) AddDomain(name, domain string) error {
+// AddDomain binds a domain to a user. DB and traefik YAML are kept in sync
+// atomically: insert the DB row, write the domain's YAML file, and if the file
+// write fails roll the DB row back so the two never disagree.
+func (m *Manager) AddDomain(name, domain string, proxyProtocol bool) error {
 	if !m.cfg.Net.V4Forward {
 		return errors.New("v4 forwarding is disabled (v4_forward: false) — domains are not available; re-enable with `vps v4-forward on`")
 	}
@@ -807,12 +831,18 @@ func (m *Manager) AddDomain(name, domain string) error {
 	} else if exists {
 		return errors.New("domain already bound")
 	}
-	if _, err := m.db.AddDomain(u.ID, domain); err != nil {
+	if _, err := m.db.AddDomain(u.ID, domain, proxyProtocol); err != nil {
 		return err
 	}
-	return m.syncTraefik(u)
+	if err := m.tfx.WriteDomain(domain, u.IP, proxyProtocol); err != nil {
+		_ = m.db.DeleteDomain(u.ID, domain) // roll back the DB row
+		return fmt.Errorf("write traefik config: %w", err)
+	}
+	return nil
 }
 
+// DelDomain unbinds a domain, atomically: delete the DB row, remove the YAML
+// file, and if the file removal fails re-insert the row.
 func (m *Manager) DelDomain(name, domain string) error {
 	u, err := m.db.GetUserByName(name)
 	if err != nil {
@@ -822,10 +852,81 @@ func (m *Manager) DelDomain(name, domain string) error {
 	if err != nil {
 		return err
 	}
+	dmn, err := m.db.GetDomain(u.ID, domain)
+	if err != nil {
+		return err
+	}
 	if err := m.db.DeleteDomain(u.ID, domain); err != nil {
 		return err
 	}
-	return m.syncTraefik(u)
+	if err := m.tfx.RemoveDomain(domain); err != nil {
+		if _, rerr := m.db.AddDomain(u.ID, domain, dmn.ProxyProtocol); rerr == nil {
+			return fmt.Errorf("remove traefik config: %w", err)
+		}
+		return err
+	}
+	return nil
+}
+
+// SetDomainProtocol toggles a user's domain PROXY protocol flag, atomically:
+// update the DB, rewrite the YAML, and on failure restore the old flag.
+func (m *Manager) SetDomainProtocol(name, domain string, on bool) error {
+	u, err := m.db.GetUserByName(name)
+	if err != nil {
+		return err
+	}
+	domain, err = normalizeDomain(domain)
+	if err != nil {
+		return err
+	}
+	dmn, err := m.db.GetDomain(u.ID, domain)
+	if err != nil {
+		return err
+	}
+	if dmn.ProxyProtocol == on {
+		return nil
+	}
+	if err := m.db.SetDomainProtocol(dmn.ID, on); err != nil {
+		return err
+	}
+	if err := m.tfx.WriteDomain(domain, u.IP, on); err != nil {
+		_ = m.db.SetDomainProtocol(dmn.ID, dmn.ProxyProtocol) // restore old flag
+		return fmt.Errorf("write traefik config: %w", err)
+	}
+	return nil
+}
+
+// AdminSetDomainProtocol is the admin-panel variant: it looks up the owning
+// user by the (globally unique) domain and applies the change.
+func (m *Manager) AdminSetDomainProtocol(domain string, on bool) error {
+	dmn, err := m.db.GetDomainByDomain(domain)
+	if err != nil {
+		return err
+	}
+	u, err := m.db.GetUserByID(dmn.UserID)
+	if err != nil {
+		return err
+	}
+	return m.SetDomainProtocol(u.Name, domain, on)
+}
+
+// AdminDelDomain is the admin-panel variant of DelDomain.
+func (m *Manager) AdminDelDomain(domain string) error {
+	dmn, err := m.db.GetDomainByDomain(domain)
+	if err != nil {
+		return err
+	}
+	u, err := m.db.GetUserByID(dmn.UserID)
+	if err != nil {
+		return err
+	}
+	return m.DelDomain(u.Name, domain)
+}
+
+// AllDomains returns every domain with its owner (username/IP) and the
+// PROXY protocol flag, newest modification first. For the admin panel.
+func (m *Manager) AllDomains() ([]*db.DomainView, error) {
+	return m.db.ListAllDomains()
 }
 
 // HardenAll applies the NIC isolation options to every existing container.
@@ -871,21 +972,6 @@ func (m *Manager) EnsureBlockRoutes() error {
 		}
 	}
 	return firstErr
-}
-
-func (m *Manager) syncTraefik(u *db.User) error {
-	domains, err := m.db.ListDomains(u.ID)
-	if err != nil {
-		return err
-	}
-	if len(domains) == 0 {
-		return m.tfx.RemoveUser(u.Name)
-	}
-	ds := make([]string, len(domains))
-	for i, d := range domains {
-		ds[i] = d.Domain
-	}
-	return m.tfx.WriteUser(u.Name, u.IP, ds)
 }
 
 // domainRe allows only lowercase letters, digits, dots and hyphens, starting

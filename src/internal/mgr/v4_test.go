@@ -22,7 +22,7 @@ func TestAddDomainRejectedWhenV4Off(t *testing.T) {
 		t.Fatal(err)
 	}
 	m := New(c, d)
-	if err := m.AddDomain("alice", "example.com"); err == nil {
+	if err := m.AddDomain("alice", "example.com", false); err == nil {
 		t.Fatal("AddDomain should be rejected when v4_forward is false")
 	}
 }

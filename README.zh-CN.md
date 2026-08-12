@@ -57,6 +57,8 @@ vps v4-forward on|off   # 共享 IPv4 入站开关：off = 容器仅 IPv6
 
 管理员可设置每用户的**月度流量配额**（GiB，上传+下载）；超限后容器上下行各限速 **1Mbps**。限速由 LXD 实时应用（tc qdisc），无需重启容器。
 
+域名可选用 **PROXY protocol v2**（443 TLS 直通向后端汇报访客 IP，后端需适配；HTTP/80 保持常规 X-Forwarded-For header）。管理员有**域名管理**页面：列出所有域名及其所属用户、最后修改时间（UTC，按浏览器时区显示），可修改该设置或删除域名。
+
 ## 配置
 
 `/etc/vpsmgr/config.yaml`（安装时自动生成）——**默认配置不建议修改**。参考：[docs/configuration.md](docs/configuration.md)。

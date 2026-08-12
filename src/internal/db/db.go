@@ -52,7 +52,9 @@ func (d *DB) migrate() error {
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
 			domain TEXT UNIQUE NOT NULL,
-			created_at TEXT NOT NULL
+			proxy_protocol INTEGER NOT NULL DEFAULT 0,
+			created_at TEXT NOT NULL,
+			updated_at TEXT NOT NULL DEFAULT ''
 		)`,
 		`CREATE TABLE IF NOT EXISTS sessions(
 			token TEXT PRIMARY KEY,
@@ -78,7 +80,43 @@ func (d *DB) migrate() error {
 	if err := d.migrateUserColumns(); err != nil {
 		return fmt.Errorf("migrate: add user columns: %w", err)
 	}
+	if err := d.migrateDomainColumns(); err != nil {
+		return fmt.Errorf("migrate: add domain columns: %w", err)
+	}
 	return d.migrateCPU()
+}
+
+// migrateDomainColumns adds columns to the domains table that were introduced
+// after the original schema (proxy_protocol, updated_at). PRAGMA-checked, same
+// approach as migrateUserColumns.
+func (d *DB) migrateDomainColumns() error {
+	want := map[string]string{
+		"proxy_protocol": `ALTER TABLE domains ADD COLUMN proxy_protocol INTEGER NOT NULL DEFAULT 0`,
+		"updated_at":     `ALTER TABLE domains ADD COLUMN updated_at TEXT NOT NULL DEFAULT ''`,
+	}
+	rows, err := d.sql.Query(`PRAGMA table_info(domains)`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var cid, notnull, pk int
+		var name, typ string
+		var dflt sql.NullString
+		if err := rows.Scan(&cid, &name, &typ, &notnull, &dflt, &pk); err != nil {
+			return err
+		}
+		delete(want, name)
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for _, stmt := range want {
+		if _, err := d.sql.Exec(stmt); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // migrateUserColumns adds columns to the users table that were introduced
