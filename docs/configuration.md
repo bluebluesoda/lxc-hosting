@@ -128,11 +128,10 @@ otherwise be unreachable).
   rejected until re-enabled). Containers still reach IPv4 outbound via the NAT4
   masquerade.
 
-Toggle at runtime with `vps v4-forward on|off` (or `vps config set
-net.v4_forward false`) — the rules are refreshed and traefik
-started/stopped immediately. The SSH/user ports stay recorded in the DB, so
-turning it back on restores everything. The user panel hides IPv4 inbound info
-and shows "v4 SSH unavailable" while off.
+Toggle at runtime with `vps config set net.v4_forward true|false` — the rules
+are refreshed and traefik started/stopped immediately. The SSH/user ports stay
+recorded in the DB, so turning it back on restores everything. The user panel
+hides IPv4 inbound info and shows "v4 SSH unavailable" while off.
 
 ## Port 25 (SMTP) is always blocked
 

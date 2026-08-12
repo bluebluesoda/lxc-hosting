@@ -525,8 +525,8 @@ func (m *Manager) Del(name string) error {
 
 // ApplyV4State enforces the current v4_forward policy: it rewrites (when on)
 // or removes (when off) every user's DNAT rules, reloads the ruleset, and
-// starts/stops the traefik service to match. Called by `vps v4-forward` and
-// at the end of `vps install`.
+// starts/stops the traefik service to match. Called by
+// `vps config set net.v4_forward` and at the end of `vps install`.
 func (m *Manager) ApplyV4State() error {
 	users, err := m.db.ListUsers()
 	if err != nil {

@@ -45,14 +45,13 @@ sudo bash scripts/60-rhel-image.sh rocky     # Rocky 9
 
 ```
 vps add <name> [--cpu N] [--mem NG] [--disk NG]   # 默认 1核/1G/10G；cpu 可为整数核（≥1）或 0.1~0.9 小数；密码自动生成，仅显示一次
-vps update <name> [--cpu N] [--mem N] [--disk NG] # 磁盘只许扩
-vps reset-passwd <name>
-vps list
-vps show <name>
-vps start|stop|restart <name>
+vps quota <name> [--cpu N] [--mem N] [--disk NG]  # 磁盘只许扩
+vps passwd <name>                                 # 重发用户面板密码（仅显示一次）
+vps list [name]                                   # 全部用户，或单个详情
+vps power <name> start|stop|restart
 vps del <name>
 vps panel-url
-vps v4-forward on|off   # 共享 IPv4 入站开关：off = 容器仅 IPv6
+vps config set net.v4_forward true|false   # 共享 IPv4 入站开关：false = 容器仅 IPv6
 ```
 
 用户可在面板中设置自定义**初始化脚本**——重装后在容器内以 root 自动运行（输出在容器内 /var/log/vpsmgr-init.log），用于云厂商式的首次引导自动化。
@@ -65,7 +64,7 @@ vps v4-forward on|off   # 共享 IPv4 入站开关：off = 容器仅 IPv6
 
 ## 配置
 
-`/etc/vpsmgr/config.yaml`（安装时自动生成）——**默认配置不建议修改**。参考：[docs/configuration.md](docs/configuration.md)。
+`/etc/vpsmgr/config.yaml`（安装时自动生成）——**默认配置不建议修改**。正规入口是 `vps config list/set/help`，会校验每次改动并拒绝不可变字段。参考：[docs/configuration.md](docs/configuration.md)。
 
 ## 卸载
 

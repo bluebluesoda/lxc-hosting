@@ -65,14 +65,13 @@ one.
 
 ```
 vps add <name> [--cpu N] [--mem NG] [--disk NG]   # default 1 core / 1G / 10G; cpu = whole cores (>=1) or a decimal 0.1..0.9; password is auto-generated and shown once
-vps update <name> [--cpu N] [--mem N] [--disk NG] # disk can only grow
-vps reset-passwd <name>
-vps list
-vps show <name>
-vps start|stop|restart <name>
+vps quota <name> [--cpu N] [--mem N] [--disk NG]  # disk can only grow
+vps passwd <name>                                 # reissue user panel password (shown once)
+vps list [name]                                   # all users, or one user's detail
+vps power <name> start|stop|restart
 vps del <name>
 vps panel-url
-vps v4-forward on|off   # shared IPv4 inbound: off = IPv6-only containers
+vps config set net.v4_forward true|false   # shared IPv4 inbound: false = IPv6-only containers
 ```
 
 Users can set a custom **init script** in their panel — it runs as root inside
@@ -97,7 +96,9 @@ scroll; the latest 5000 entries are kept.
 ## Config
 
 `/etc/vpsmgr/config.yaml` (auto-generated at install) — **the defaults are not
-meant to be changed**. Reference: [docs/configuration.md](docs/configuration.md).
+meant to be changed**. The sanctioned interface is `vps config list/set/help`,
+which validates every change and refuses immutable fields. Reference:
+[docs/configuration.md](docs/configuration.md).
 
 ## Uninstall
 

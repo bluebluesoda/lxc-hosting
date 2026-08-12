@@ -146,7 +146,7 @@ echo " 用户端口范围：10000-29999（每容器整百块，如 10700-10799�
 echo " 容器数量上限：200"
 echo " 容器子网：10.<n>.0.0/24，默认 n=115"
 if [[ -n "${VPSMGR_IPV6_SUBNET:-}" ]]; then
-  echo "（启用 IPv6 时将询问是否保留 IPv4 入站；该选项可后用 vps v4-forward 切换）"
+  echo "（启用 IPv6 时将询问是否保留 IPv4 入站；该选项可后用 vps config set net.v4_forward true/false 切换）"
 fi
 echo "============================================================"
 echo

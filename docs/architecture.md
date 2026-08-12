@@ -77,7 +77,8 @@ src/      Go source (single binary: CLI + panel)
   exists while `net.v4_forward` is true. When false (IPv6-only box), no DNAT
   rules are written and traefik is stopped (domains kept but not served); the
   NAT4 masquerade stays so containers still reach IPv4 outbound. Toggle:
-  `vps v4-forward on|off`. The SSH/port values stay recorded in the DB.
+  `vps config set net.v4_forward true|false` (applied immediately). The SSH/port
+  values stay recorded in the DB.
 - **Port 25 is always blocked**: the ruleset's forward chain drops port 25
   (TCP+UDP, both directions) for all forwarded traffic — permanent anti-spam,
   only a full uninstall clears it.
@@ -110,7 +111,7 @@ src/      Go source (single binary: CLI + panel)
   charset and globally unique. **DB and YAML are kept in sync atomically**:
   every domain mutation updates the DB first, then the file, and rolls the DB
   back on a file failure; `SyncAllDomains` (run on `vps install` and
-  `vps v4-forward on`) regenerates everything from the DB and deletes orphan
+  `vps config set net.v4_forward true`) regenerates everything from the DB and deletes orphan
   files, fixing any crash drift. All timestamps are stored as UTC; the admin
   domain page renders them in the browser's timezone.
 - **Audit log**: resource-heavy user actions (power start/stop/restart,

@@ -948,7 +948,7 @@ func userDel(name string) error {
 
 func userQuota(args []string) error {
 	if len(args) < 1 {
-		return fmt.Errorf("usage: vps update <name> [--cpu 2] [--mem 2G] [--disk 20G]")
+		return fmt.Errorf("usage: vps quota <name> [--cpu 2] [--mem 2G] [--disk 20G] [--traffic 100]")
 	}
 	name := args[0]
 	fs := flag.NewFlagSet("update", flag.ContinueOnError)

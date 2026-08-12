@@ -56,7 +56,7 @@ fi
 
 # v4 forwarding off (chosen at install, IPv6-only box): install traefik but
 # keep it DISABLED — the domain proxy is not offered. Config is kept so a later
-# `vps v4-forward on` re-enables it without re-asking anything.
+# `vps config set net.v4_forward true` re-enables it without re-asking anything.
 V4_FWD="${VPSMGR_V4_FORWARD:-1}"
 if [[ "$V4_FWD" == "1" ]]; then
   systemctl enable --now traefik >/dev/null 2>&1 || die "cannot start traefik"
