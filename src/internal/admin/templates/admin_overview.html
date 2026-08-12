@@ -165,6 +165,7 @@ a.copy.copied { border-color: #86efac; background: #dcfce7; color: #15803d; }
           <th>{{if eq .Lang "zh"}}配额 CPU/内存/磁盘{{else}}Quota CPU/Mem/Disk{{end}}</th>
           <th>{{if eq .Lang "zh"}}CPU 使用{{else}}CPU use{{end}}</th>
           <th>{{if eq .Lang "zh"}}内存使用{{else}}Mem use{{end}}</th>
+          <th>{{if eq .Lang "zh"}}进程{{else}}Procs{{end}}</th>
           <th>{{if eq .Lang "zh"}}磁盘用量{{else}}Disk used{{end}}</th>
           <th>{{if eq .Lang "zh"}}本月流量 上/下{{else}}Traffic ↑/↓{{end}}</th>
           <th>{{if eq .Lang "zh"}}操作{{else}}Actions{{end}}</th>
@@ -179,6 +180,7 @@ a.copy.copied { border-color: #86efac; background: #dcfce7; color: #15803d; }
           <td>{{.QuotaCPU}} / {{.QuotaMem}} / {{.QuotaDisk}}<br><small>{{if eq .Lang "zh"}}流量{{else}}traffic{{end}}: {{if eq .TrafficGB 0}}{{if eq .Lang "zh"}}不限{{else}}unlimited{{end}}{{else}}{{.TrafficGB}} GB{{end}}</small></td>
           <td>{{.CPUUse}}</td>
           <td>{{.MemUse}}</td>
+          <td>{{if eq .State "Running"}}{{.Procs}} / {{.ProcsLimit}}{{else}}-{{end}}</td>
           <td>{{.DiskUsed}}</td>
           <td>↑ {{.UpGB}} / ↓ {{.DownGB}}</td>
           <td>

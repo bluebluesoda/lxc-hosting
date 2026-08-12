@@ -167,6 +167,7 @@ type instState struct {
 		Usage int64 `json:"usage"`
 		Total int64 `json:"total"`
 	} `json:"memory"`
+	Processes int64 `json:"processes"`
 	Network map[string]struct {
 		Addresses []struct {
 			Family  string `json:"family"`
@@ -223,6 +224,7 @@ func containerInfo(name string, st *instState) ContainerInfo {
 		ci.MemUsage = st.Memory.Usage
 		ci.MemTotal = st.Memory.Total
 	}
+	ci.Processes = st.Processes
 	for _, ifs := range st.Network {
 		ci.Rx += ifs.Counters.BytesReceived
 		ci.Tx += ifs.Counters.BytesSent
@@ -325,13 +327,14 @@ func (c *Client) TrafficMap() (map[string]Traffic, error) {
 
 // ContainerInfo is one snapshot of a container taken from a single state read.
 type ContainerInfo struct {
-	Status   string
-	CPUUsage int64 // nanoseconds of CPU time since start (0 if not running)
-	MemUsage int64 // bytes currently used (0 if not running)
-	MemTotal int64 // memory limit in bytes (0 if not running)
-	Rx       int64 // cumulative bytes received (download) since start
-	Tx       int64 // cumulative bytes sent (upload) since start
-	IPv4     string
+	Status     string
+	CPUUsage   int64 // nanoseconds of CPU time since start (0 if not running)
+	MemUsage   int64 // bytes currently used (0 if not running)
+	MemTotal   int64 // memory limit in bytes (0 if not running)
+	Processes  int64 // number of processes inside the container (0 if not running)
+	Rx         int64 // cumulative bytes received (download) since start
+	Tx         int64 // cumulative bytes sent (upload) since start
+	IPv4       string
 }
 
 // Containers returns a live snapshot of every container: one list call plus

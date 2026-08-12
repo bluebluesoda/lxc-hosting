@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"vpsmgr/internal/cfg"
+	"vpsmgr/internal/lx"
 	"vpsmgr/internal/mgr"
 	"vpsmgr/internal/pw"
 )
@@ -68,6 +69,8 @@ type userView struct {
 	UpGB       string
 	DownGB     string
 	IPv6       string
+	Procs      int64  // live process count (0 when stopped)
+	ProcsLimit string // per-container pids.max cap, e.g. "4096"
 }
 
 func (s *Server) buildPageData(msg, errMsg string) pageData {
@@ -127,6 +130,8 @@ func (s *Server) loadUsers(d *pageData) {
 			UpGB:       st.UpGB,
 			DownGB:     st.DownGB,
 			IPv6:       st.IPv6,
+			Procs:      st.Procs,
+			ProcsLimit: lx.DefaultProcessesLimit,
 		})
 	}
 	d.Users = vs

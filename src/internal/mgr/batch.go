@@ -128,6 +128,7 @@ type UserStatus struct {
 	UpGB     string
 	DownGB   string
 	IPv6     string
+	Procs    int64 // live process count (0 when stopped / unavailable)
 }
 
 // BatchUsers returns live status for every user with a MINIMAL number of LXD
@@ -180,7 +181,7 @@ func (m *Manager) BatchUsers() ([]*UserStatus, error) {
 		cur := s2[u.Name]
 		prev, ok := s1[u.Name]
 		up, down := m.TrafficFor(u.ID)
-		rs := &UserStatus{User: u, State: cur.Status, UpGB: FormatGB(up), DownGB: FormatGB(down)}
+		rs := &UserStatus{User: u, State: cur.Status, UpGB: FormatGB(up), DownGB: FormatGB(down), Procs: cur.Processes}
 		if ok && cur.Status == "Running" && prev.Status == "Running" && u.CPU > 0 {
 			delta := cur.CPUUsage - prev.CPUUsage
 			if delta < 0 {
