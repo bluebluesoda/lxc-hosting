@@ -34,13 +34,13 @@ jobs:
           CGO_ENABLED=0 GOOS=linux GOARCH=${{ matrix.arch }} go build \
             -trimpath -buildvcs=false \
             -ldflags="-s -w -X vpsmgr/internal/ver.Version=${VERSION}" \
-            -o "../vpsmgr-${{ matrix.arch }}" .
+            -o "../vps-${{ matrix.arch }}" .
 
       - name: Verify artifact
         run: |
-          file vpsmgr-${{ matrix.arch }}
+          file vps-${{ matrix.arch }}
           if [ "${{ matrix.arch }}" = "amd64" ]; then
-            ./vpsmgr-${{ matrix.arch }} version
+            ./vps-${{ matrix.arch }} version
           fi
 
       # The project is pure Go (no cgo); keep tests C-free too so they never
@@ -55,13 +55,13 @@ jobs:
       - name: Attest build provenance
         uses: actions/attest@v4
         with:
-          subject-path: vpsmgr-${{ matrix.arch }}
+          subject-path: vps-${{ matrix.arch }}
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: vpsmgr-${{ matrix.arch }}
-          path: vpsmgr-${{ matrix.arch }}
+          name: vps-${{ matrix.arch }}
+          path: vps-${{ matrix.arch }}
           if-no-files-found: error
 
   publish:
@@ -77,13 +77,13 @@ jobs:
       - name: Generate checksums
         run: |
           cd dist
-          sha256sum vpsmgr-amd64 vpsmgr-arm64 | tee SHA256SUMS
+          sha256sum vps-amd64 vps-arm64 | tee SHA256SUMS
 
       - name: Release
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            dist/vpsmgr-amd64
-            dist/vpsmgr-arm64
+            dist/vps-amd64
+            dist/vps-arm64
             dist/SHA256SUMS
           generate_release_notes: true

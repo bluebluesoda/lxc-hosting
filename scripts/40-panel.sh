@@ -23,9 +23,9 @@ build_local(){
   ensure_go || die "go toolchain install failed"
   log "building vpsmgr from source..."
   bash "$ROOT/build.sh" || die "build failed"
-  cp "$ROOT/bin/vpsmgr" /usr/local/bin/vpsmgr
-  chmod 755 /usr/local/bin/vpsmgr
-  log "installed /usr/local/bin/vpsmgr from source ($(/usr/local/bin/vpsmgr version))"
+  cp "$ROOT/bin/vps" /usr/local/bin/vps
+  chmod 755 /usr/local/bin/vps
+  log "installed /usr/local/bin/vps from source ($(/usr/local/bin/vps version))"
 }
 
 install_prebuilt(){
@@ -36,11 +36,11 @@ install_prebuilt(){
     *) log "warn: no prebuilt binary for $(uname -m), falling back to local build"; return 1 ;;
   esac
   dir="$(mktemp -d /tmp/vpsmgr-dl.XXXXXX)"
-  bin_url="https://github.com/$REPO/releases/latest/download/vpsmgr-$arch"
+  bin_url="https://github.com/$REPO/releases/latest/download/vps-$arch"
   sum_url="https://github.com/$REPO/releases/latest/download/SHA256SUMS"
   log "downloading prebuilt vpsmgr (linux/$arch) from GitHub releases..."
   log "  $bin_url"
-  curl -fsSL --max-time 120 -o "$dir/vpsmgr-$arch" "$bin_url" \
+  curl -fsSL --max-time 120 -o "$dir/vps-$arch" "$bin_url" \
     || { log "warn: binary download failed"; rm -rf "$dir"; return 1; }
   if curl -fsSL --max-time 30 -o "$dir/SHA256SUMS" "$sum_url"; then
     (cd "$dir" && sha256sum -c --ignore-missing --status SHA256SUMS) \
@@ -48,10 +48,10 @@ install_prebuilt(){
   else
     log "warn: could not fetch checksums, skipping verification"
   fi
-  cp "$dir/vpsmgr-$arch" /usr/local/bin/vpsmgr
-  chmod 755 /usr/local/bin/vpsmgr
+  cp "$dir/vps-$arch" /usr/local/bin/vps
+  chmod 755 /usr/local/bin/vps
   rm -rf "$dir"
-  log "installed /usr/local/bin/vpsmgr from release ($(/usr/local/bin/vpsmgr version))"
+  log "installed /usr/local/bin/vps from release ($(/usr/local/bin/vps version))"
 }
 
 if [[ "${VPSMGR_BUILD_MODE:-}" == "local" ]]; then
@@ -59,7 +59,7 @@ if [[ "${VPSMGR_BUILD_MODE:-}" == "local" ]]; then
   # stable binary), so what runs is exactly what the shown branch compiled.
   log "local build requested (--local-build)"
   build_local
-elif [[ ! -x /usr/local/bin/vpsmgr ]]; then
+elif [[ ! -x /usr/local/bin/vps ]]; then
   if install_prebuilt; then
     :
   else
@@ -67,14 +67,14 @@ elif [[ ! -x /usr/local/bin/vpsmgr ]]; then
     build_local
   fi
 else
-  log "vpsmgr already installed, skipping ($(/usr/local/bin/vpsmgr version))"
+  log "vps already installed, skipping ($(/usr/local/bin/vps version))"
 fi
 
-log "running vpsmgr install (config/cert/db/nft/systemd)..."
+log "running vps install (config/cert/db/nft/systemd)..."
 # Capture the install output so the one-time admin password printed by a fresh
-# `vpsmgr install` can be re-shown at the very end of the main installer.
+# `vps install` can be re-shown at the very end of the main installer.
 INSTALL_OUT="${TMPDIR:-/tmp}/vpsmgr-install.out"
-if /usr/local/bin/vpsmgr install 2>&1 | tee "$INSTALL_OUT"; then
+if /usr/local/bin/vps install 2>&1 | tee "$INSTALL_OUT"; then
   :
 else
   rm -f "$INSTALL_OUT"

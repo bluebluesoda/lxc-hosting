@@ -57,9 +57,9 @@ fi
 # version this config/db came from and migrate or warn. Only when the config is
 # kept (no --purge) — with --purge /etc/vpsmgr is deleted anyway. Graceful: if
 # the binary or the note-version command is missing/old, warn and carry on.
-if [[ $PURGE -eq 0 ]] && [[ -f /etc/vpsmgr/config.yaml ]] && command -v vpsmgr >/dev/null 2>&1; then
-  VERSION="$(vpsmgr version 2>/dev/null || true)"
-  if [[ -n "$VERSION" ]] && vpsmgr note-version "$VERSION" >/dev/null 2>&1; then
+if [[ $PURGE -eq 0 ]] && [[ -f /etc/vpsmgr/config.yaml ]] && command -v vps >/dev/null 2>&1; then
+  VERSION="$(vps version 2>/dev/null || true)"
+  if [[ -n "$VERSION" ]] && vps note-version "$VERSION" >/dev/null 2>&1; then
     log "recorded uninstall version $VERSION in /etc/vpsmgr/config.yaml"
   else
     log "warn: could not record uninstall version in config (${VERSION:-no version})"
@@ -67,7 +67,9 @@ if [[ $PURGE -eq 0 ]] && [[ -f /etc/vpsmgr/config.yaml ]] && command -v vpsmgr >
 fi
 
 log "removing files..."
-rm -f /usr/local/bin/vpsmgr /usr/local/bin/traefik
+# The CLI binary is `vps` in v0.3+; also remove a legacy vpsmgr binary left by
+# a pre-0.3 install.
+rm -f /usr/local/bin/vps /usr/local/bin/vpsmgr /usr/local/bin/traefik
 rm -f /etc/systemd/system/vpsmgr-panel.service /etc/systemd/system/vpsmgr-nft.service /etc/systemd/system/vpsmgr-ipv6.service /etc/systemd/system/traefik.service
 rm -f /etc/sysctl.d/99-vpsmgr.conf
 nft delete table inet vpsmgr 2>/dev/null || true

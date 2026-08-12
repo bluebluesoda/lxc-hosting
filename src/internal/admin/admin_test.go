@@ -41,7 +41,7 @@ func newTestServer(t *testing.T) (*Server, *db.DB) {
 }
 
 // setAdminPass stores the admin password hash both in the in-memory config and
-// in the temp config file, mirroring what `vpsmgr admin-passwd` writes.
+// in the temp config file, mirroring what `vps admin-passwd` writes.
 func setAdminPass(t *testing.T, srv *Server, pass string) {
 	t.Helper()
 	srv.cfg.Panel.AdminPass = mustHash(t, pass)

@@ -2,7 +2,7 @@
 
 ## Building
 
-`./build.sh [VERSION]` compiles the Go binary into `bin/vpsmgr`. It requires
+`./build.sh [VERSION]` compiles the Go binary into `bin/vps`. It requires
 any Go that supports toolchain auto-switch (≥ 1.21); `src/go.mod` pins the
 exact toolchain (go1.26.5).
 

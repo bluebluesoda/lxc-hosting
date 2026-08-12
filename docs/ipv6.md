@@ -18,7 +18,7 @@ block = [configured prefix][32-bit sha256(username)][16 host bits]
   `2602:fada:6::2bd8:6c9:0/112`, primary address `2602:fada:6::2bd8:6c9:1`.
 - The primary address is **byte-identical to the pre-/112 scheme**, so
   upgrading never changes an existing container's address.
-- Because the 32-bit hash space is small, `vpsmgr add` refuses a name whose
+- Because the 32-bit hash space is small, `vps add` refuses a name whose
   block collides with an existing user (hash collision) or would contain the
   bridge gateway address.
 
@@ -34,7 +34,7 @@ block = [configured prefix][32-bit sha256(username)][16 host bits]
 
 The bridge prefix length is clamped with `min(ones, 64)`-equivalent logic
 (`bridgePrefixLen`); both the installer preseed (`10-lxd.sh`) and
-`SetupIPv6Bridge` (run by `vpsmgr install` and on boot) apply it.
+`SetupIPv6Bridge` (run by `vps install` and on boot) apply it.
 
 ## Bridge setup (`SetupIPv6Bridge`)
 
@@ -86,8 +86,8 @@ For each container:
 
 vpsmgr renders `/etc/ndppd.conf` (one `rule <block>::/112` per container) and
 restarts the daemon on `add`/`del`; the config is rebuilt from the DB at boot
-by `vpsmgr-ipv6.service` / `vpsmgr ipv6-reapply` and by `vpsmgr install`, so
-rules survive reboots. `vpsmgr ipv6-reapply` also re-applies the per-container
+by `vpsmgr-ipv6.service` / `vps ipv6-reapply` and by `vps install`, so
+rules survive reboots. `vps ipv6-reapply` also re-applies the per-container
 routed-IPv6 config (self-healing: containers created before the host-routed
 scheme, or whose networkd config was corrupted, are repaired on every boot).
 
@@ -106,7 +106,7 @@ scheme, or whose networkd config was corrupted, are repaired on every boot).
   the RA default route without the on-link prefix, plus the `vpsmgr-ipv6`
   helper and boot unit). The runtime script installs these idempotently if an
   older image lacks them, so a pre-fix image still gets working IPv6.
-- `vpsmgr install` / `add` / `reinstall` — apply the per-container config
+- `vps install` / `add` / `reinstall` — apply the per-container config
   (`ConfigureContainerIPv6`); `ipv6-reapply` covers existing containers.
 - `check-ipv6-support.sh` — probe before install: reports the host's global
   addresses, auto-measures the subnet size (prefers the on-link routed block,

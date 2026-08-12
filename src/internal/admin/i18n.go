@@ -81,7 +81,7 @@ func tr(l, key string, args ...any) string {
 	m := map[string][2]string{ // key -> [zh, en]
 		"err_bad_login":      {"管理员密码错误", "invalid admin password"},
 		"err_too_many":       {"尝试过于频繁，请 1 分钟后再试", "Too many attempts, please wait 1 minute"},
-		"err_not_configured": {"管理员尚未初始化 — 请运行 `vpsmgr admin-passwd`", "admin not configured yet — run `vpsmgr admin-passwd`"},
+		"err_not_configured": {"管理员尚未初始化 — 请运行 `vps admin-passwd`", "admin not configured yet — run `vps admin-passwd`"},
 		"err_pass_mismatch":  {"两次输入的密码不一致", "The two passwords do not match"},
 		"err_pass_short":     {"管理员密码至少需要 14 位", "admin password must be at least 14 characters"},
 		"user_created":       {"用户已创建：\n%[1]v", "user created:\n%[1]v"},

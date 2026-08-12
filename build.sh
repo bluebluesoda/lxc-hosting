@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# build.sh — compile the vpsmgr Go binary into ./bin. Requires any Go that
+# build.sh — compile the vpsmgr Go binary (CLI name `vps`) into ./bin. Requires any Go that
 # supports toolchain auto-switch (>= 1.21); go.mod pins the go/toolchain
 # version (currently go1.26.5), so building always uses that exact release.
 # Usage: ./build.sh [VERSION]          # VERSION defaults to the source default
@@ -55,13 +55,13 @@ if [[ -n "$VERSION" ]]; then
   LDFLAGS="$LDFLAGS -X vpsmgr/internal/ver.Version=$VERSION"
 fi
 
-OUT="$ROOT/bin/vpsmgr"
+OUT="$ROOT/bin/vps"
 [[ "$GOOS" == "windows" ]] && OUT="$OUT.exe"
 (cd src && CGO_ENABLED=0 GOOS="$GOOS" GOARCH="$GOARCH" go build \
   -trimpath -buildvcs=false \
   -ldflags="$LDFLAGS" \
   -o "$OUT" .)
-log "built bin/vpsmgr"
+log "built bin/vps"
 
 if [[ "$GOOS" == "$(go env GOOS)" && "$GOARCH" == "$(go env GOARCH)" ]]; then
   log "version: $("$OUT" version 2>/dev/null || true)"
