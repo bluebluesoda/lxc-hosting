@@ -26,6 +26,17 @@ bash check-ipv6-support.sh #v6测试脚本
 
 装完运行 `vpsmgr panel-url` 查看完整面板地址——`https://<IP>:8443/<随机路径>`。该随机路径是面板唯一入口。
 
+## 可选：额外系统镜像
+
+默认系统为 Debian 13。想让用户重装容器时选 RHEL 系系统，可以（以 root）运行一次可选的镜像构建脚本——它不会在 `install.sh` 里自动执行，小型机器保持精简：
+
+```
+sudo bash scripts/60-rhel-image.sh          # Alma 9
+sudo bash scripts/60-rhel-image.sh rocky     # Rocky 9
+```
+
+之后重装弹窗会列出这些镜像供选择（即使只有默认镜像也会让用户选）。镜像构建与 Debian 一致：精简缓存、发布后删除基础镜像。
+
 ## 使用
 
 ```

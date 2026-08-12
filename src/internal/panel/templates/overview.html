@@ -77,6 +77,9 @@ footer a{color:var(--muted);text-decoration:underline}
 .overlay{position:fixed;inset:0;background:rgba(0,0,0,.45);display:none;align-items:center;justify-content:center;z-index:99;padding:1rem}
 .overlay.show{display:flex}
 .modal{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:1.2rem 1.3rem;width:100%;max-width:420px;box-shadow:var(--shadow)}
+.imglist{display:flex;gap:.45rem;flex-wrap:wrap;margin:.35rem 0 .7rem}
+.imgopt{display:inline-flex;align-items:center;gap:.35rem;border:1px solid var(--border);border-radius:7px;padding:.3rem .6rem;cursor:pointer}
+.imgopt:has(input:checked){border-color:var(--accent);color:var(--accent)}
 .modal h3{margin:0 0 .7rem;font-size:1rem;color:var(--head)}
 .modal .muted{margin:0 0 .8rem}
 .modal .frow{margin-bottom:.7rem}
@@ -176,9 +179,16 @@ footer a{color:var(--muted);text-decoration:underline}
 <div class="overlay" id="reModal">
 <div class="modal">
 <h3>{{if eq .Lang "zh"}}重装系统{{else}}Reinstall{{end}}</h3>
-<p class="muted">{{if eq .Lang "zh"}}将删除容器内全部数据，以相同 IP / 端口 / 配额重建 Debian 13。域名与端口规则保留。面板登录密码不变，重装后自动生成新的 root 密码。{{else}}All data inside the container will be deleted and Debian 13 rebuilt with the same IP / ports / quota. Domain bindings and port rules are kept. The panel login password stays the same; a new root password is generated on reinstall.{{end}}</p>
+<p class="muted">{{if eq .Lang "zh"}}将删除容器内全部数据，以相同 IP / 端口 / 配额重建所选系统。域名与端口规则保留。面板登录密码不变，重装后自动生成新的 root 密码。{{else}}All data inside the container will be deleted and the selected system rebuilt with the same IP / ports / quota. Domain bindings and port rules are kept. The panel login password stays the same; a new root password is generated on reinstall.{{end}}</p>
 <form action="{{.Prefix}}/reinstall" method="post" id="reForm">
 <input type="hidden" name="confirm" value="1">
+{{if .Images}}
+<div class="imglist">
+{{range .Images}}
+<label class="imgopt"><input type="radio" name="image" value="{{.Alias}}"{{if eq .Alias $.DefaultImage}} checked{{end}}>{{.Label}}</label>
+{{end}}
+</div>
+{{end}}
 <div class="actions">
 <button class="btn" type="button" id="reCancel">{{if eq .Lang "zh"}}取消{{else}}Cancel{{end}}</button>
 <button class="btn danger" type="submit" id="reConfirm">{{if eq .Lang "zh"}}确认重装（数据全部丢弃）{{else}}Confirm reinstall (all data lost){{end}}</button>

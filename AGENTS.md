@@ -48,8 +48,9 @@ Keep the top-level READMEs concise; technical detail belongs in `docs/`
 - Container hostnames are random (`vps-<8hex>`) and never equal the username.
 - `install.sh --local-build` must always rebuild (never reuse an installed
   binary) and warn about the branch.
-- Image builds (`50-image.sh`) must stay slim (apt clean) and delete the base
-  image after publishing.
+- Image builds (`50-image.sh`, `60-rhel-image.sh`) must stay slim (apt/dnf
+  clean) and delete the base image after publishing. `60-rhel-image.sh` is
+  optional and must never be part of `install.sh` (small boxes stay lean).
 - Never add cgo or force C compilation.
 
 ## Conventions

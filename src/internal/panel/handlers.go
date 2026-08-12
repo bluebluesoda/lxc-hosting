@@ -185,7 +185,7 @@ func (s *Server) handleReinstall(w http.ResponseWriter, r *http.Request) {
 		s.redirect(w, r, s.p(""), "error: please confirm reinstall")
 		return
 	}
-	pass, err := s.mgr.Reinstall(u.Name)
+	pass, err := s.mgr.Reinstall(u.Name, r.FormValue("image"))
 	if err != nil {
 		s.redirect(w, r, s.p(""), "error: "+err.Error())
 		return

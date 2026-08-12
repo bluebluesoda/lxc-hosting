@@ -36,6 +36,21 @@ Run `vpsmgr panel-url` after installation to get the full panel address —
 `https://<IP>:8443/<random-path>`. This random path is the panel's only entry
 point.
 
+## Optional: extra OS images
+
+The default is Debian 13. To let users reinstall their container with a
+RHEL-family system, run (once, as root) the optional image builder — it is NOT
+run by `install.sh` so small boxes stay lean:
+
+```
+sudo bash scripts/60-rhel-image.sh          # Alma 9
+sudo bash scripts/60-rhel-image.sh rocky     # Rocky 9
+```
+
+Reinstall then offers the built images as a choice (always, even with only the
+default). The image is slimmed and the base image deleted, same as the Debian
+one.
+
 ## Usage
 
 ```

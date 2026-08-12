@@ -109,6 +109,19 @@ Built by `50-image.sh` from `images:debian/13` (fallback `images:debian/trixie`)
   the runtime fallback for containers is the remote `images:debian/13`.
 - `git` / `python3` are deliberately **not** baked in (heavy / opinionated).
 
+## Optional RHEL-family image (`vpsmgr/alma-sshd`)
+
+`60-rhel-image.sh` (NOT part of `install.sh`, run by the admin only when
+wanted) builds an Alma 9 image — `rocky` builds Rocky 9 instead — with the same
+hygiene: sshd + universal tooling via `dnf`, `dnf clean all` + cache/log
+removal, base image deleted after publishing.
+
+The reinstall dialog in the user panel enumerates every local `vpsmgr/*-sshd`
+image (always offering Debian 13 first) and the user picks one; `mgr.Reinstall`
+validates that a picked non-default image still exists. Containers run from
+either base with the same light provisioning (random hostname, root password,
+sshd enabled — the service is `sshd` on RHEL and `ssh` on Debian).
+
 ## Per-container provisioning
 
 `mgr.Provision` runs inside every new or reinstalled container and:

@@ -489,6 +489,26 @@ func (c *Client) ImageExists(alias string) (bool, error) {
 	return true, nil
 }
 
+// ImageAliases returns every image alias stored locally, e.g. to enumerate the
+// managed reinstall images (`vpsmgr/*-sshd`).
+func (c *Client) ImageAliases() ([]string, error) {
+	var images []struct {
+		Aliases []struct {
+			Name string `json:"name"`
+		} `json:"aliases"`
+	}
+	if err := c.get("/1.0/images?recursion=1", &images); err != nil {
+		return nil, err
+	}
+	var out []string
+	for _, img := range images {
+		for _, a := range img.Aliases {
+			out = append(out, a.Name)
+		}
+	}
+	return out, nil
+}
+
 // PoolResources returns the storage pool's total/used bytes from the LXD API.
 func (c *Client) PoolResources(pool string) (total, used int64, err error) {
 	var res struct {

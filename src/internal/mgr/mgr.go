@@ -109,13 +109,13 @@ func randomHostname() string {
 }
 
 // Provision sets the root password and ensures sshd is running. It also gives
-// the container a random hostname (never the username). If the image is the
-// prebuilt sshd image only a light setup is done; otherwise sshd is installed
-// on the fly.
+// the container a random hostname (never the username). A prebuilt managed
+// image (any `vpsmgr/*` alias, Debian or RHEL-family) only needs a light setup;
+// otherwise sshd is installed on the fly (Debian fallback only).
 func (m *Manager) Provision(name, image, pass string) error {
 	host := randomHostname()
 	// hostSetup: apply the hostname live + persist it, and stop cloud-init
-	// (present in images:debian/13) from resetting it back to the instance
+	// (present in the distro images) from resetting it back to the instance
 	// name (= username) on the next boot.
 	hostSetup := `
 VPSMGR_HOST='` + host + `'
@@ -126,11 +126,14 @@ sed -i "s/^127\.0\.1\.1.*/127.0.1.1 $VPSMGR_HOST/" /etc/hosts 2>/dev/null || tru
 mkdir -p /etc/cloud/cloud.cfg.d
 printf 'preserve_hostname: true\n' > /etc/cloud/cloud.cfg.d/99-vpsmgr-hostname.cfg
 `
-	if image == m.cfg.LXD.Image {
+	if strings.HasPrefix(image, "vpsmgr/") {
+		// Prebuilt image: only hostname + root password + make sure sshd runs.
+		// The service is `sshd` on RHEL-family and `ssh` on Debian, so try
+		// both. The readiness probe already confirmed the container is up.
 		script := hostSetup + rootPassScript(pass) + `
 if command -v sshd >/dev/null 2>&1; then
-  systemctl is-active ssh >/dev/null 2>&1 || systemctl start ssh
-  systemctl enable ssh >/dev/null 2>&1 || true
+  systemctl is-active sshd >/dev/null 2>&1 || systemctl start sshd >/dev/null 2>&1 || systemctl start ssh >/dev/null 2>&1 || true
+  systemctl enable sshd >/dev/null 2>&1 || systemctl enable ssh >/dev/null 2>&1 || true
 fi`
 		_, err := m.lx.ExecSH(name, script)
 		return err
@@ -545,10 +548,13 @@ func (m *Manager) ResetRootPassword(name string) (string, error) {
 	return pass, nil
 }
 
-// Reinstall destroys and recreates the container keeping IP/ports/domains.
-// A new random root password is generated (returned for one-time display);
-// the panel login password is unchanged.
-func (m *Manager) Reinstall(name string) (string, error) {
+// Reinstall destroys and recreates the container keeping IP/ports/domains,
+// using the selected OS image. image may be a managed alias ("vpsmgr/...");
+// empty or the default alias resolves to Debian 13 (prebuilt, else the remote
+// fallback). A picked non-default managed image must exist on the host. A new
+// random root password is generated (returned for one-time display); the panel
+// login password is unchanged.
+func (m *Manager) Reinstall(name, image string) (string, error) {
 	m.opMu.Lock()
 	defer m.opMu.Unlock()
 
@@ -559,9 +565,13 @@ func (m *Manager) Reinstall(name string) (string, error) {
 	if err := m.lx.Delete(u.Name); err != nil {
 		return "", fmt.Errorf("delete container: %w", err)
 	}
-	image, err := m.imageName()
-	if err != nil {
-		return "", err
+	if image == "" || image == m.cfg.LXD.Image {
+		image, err = m.imageName()
+		if err != nil {
+			return "", err
+		}
+	} else if ok, _ := m.lx.ImageExists(image); !ok {
+		return "", fmt.Errorf("image %s is not available on this host (run the image build script)", image)
 	}
 	ipv6, _ := m.IPv6Addr(u.Name)
 	if err := m.lx.Launch(m.cfg.LXD.Pool, m.cfg.LXD.Bridge, u.Name, image, u.IP, ipv6, u.CPU, u.MemMB, u.DiskGB); err != nil {
