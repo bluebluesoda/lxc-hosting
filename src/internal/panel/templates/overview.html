@@ -109,7 +109,7 @@ footer a{color:var(--muted);text-decoration:underline}
 <h2>{{if eq .Lang "zh"}}概览{{else}}Overview{{end}}<span> · {{.User.Name}}</span></h2>
 <table>
 <tr><th>{{if eq .Lang "zh"}}可用端口{{else}}Ports{{end}}</th><td colspan="3">{{if .PublicPorts}}<code>{{.PublicPorts}}</code>{{end}}<span class="muted">{{if .PublicPorts}}&nbsp;{{end}}SSH: {{.PortBase}}</span></td></tr>
-{{if .IPv6}}<tr><th>IPv6</th><td colspan="3"><code>{{.IPv6}}</code></td></tr>{{end}}
+{{if .IPv6}}<tr><th>IPv6</th><td colspan="3"><code>{{.IPv6}}</code>{{if .IPv6Block}}<div class="muted" style="margin-top:4px">{{if eq .Lang "zh"}}本机拥有完整地址块 {{.IPv6Block}},块内任意地址均可绑定使用。{{else}}You own the whole block {{.IPv6Block}} — any address inside it can be bound.{{end}}</div>{{end}}</td></tr>{{end}}
 <tr><th>{{if eq .Lang "zh"}}SSH 登录{{else}}SSH access{{end}}</th><td colspan="3"><code>{{.SSH}}</code></td></tr>
 <tr><th>{{if eq .Lang "zh"}}本月流量{{else}}Traffic (this month){{end}}</th><td colspan="3">↑ {{.UpGB}} GB / ↓ {{.DownGB}} GB</td></tr>
 </table>
@@ -129,7 +129,7 @@ footer a{color:var(--muted);text-decoration:underline}
 <form action="{{.Prefix}}/power" method="post" class="inline"><input type="hidden" name="action" value="restart"><button class="btn">{{if eq .Lang "zh"}}重启{{else}}Restart{{end}}</button></form>
 </div>
 <div class="btnrow">
-<form action="{{.Prefix}}/root-reset" method="post" class="inline"><button class="btn accent">{{if eq .Lang "zh"}}重置 root 密码{{else}}Reset root password{{end}}</button></form>
+<form action="{{.Prefix}}/root-reset" method="post" class="inline"><button class="btn accent" id="resetBtn">{{if eq .Lang "zh"}}重置 root 密码{{else}}Reset root password{{end}}</button></form>
 <button class="btn danger" id="reBtn">{{if eq .Lang "zh"}}重装系统{{else}}Reinstall{{end}}</button>
 </div>
 </div>
@@ -279,6 +279,16 @@ footer a{color:var(--muted);text-decoration:underline}
     else{var ta=document.createElement('textarea');ta.value=txt;document.body.appendChild(ta);ta.select();document.execCommand('copy');ta.remove();done.call(this);}
   });
   dispModal.addEventListener('click',function(e){if(e.target===dispModal)closeDisp();});
+  // Root password reset takes ~10s+; show a busy state on the button so it
+  // cannot be clicked again while the POST is in flight.
+  var resetBtn=document.getElementById('resetBtn');
+  if(resetBtn){
+    var rf=resetBtn.closest('form');
+    rf.addEventListener('submit',function(){
+      resetBtn.classList.add('pending');resetBtn.disabled=true;
+      resetBtn.textContent={{if eq .Lang "zh"}}'重置中...'{{else}}'Resetting...'{{end}};
+    });
+  }
 })();
 </script>
 </body>

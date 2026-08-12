@@ -778,6 +778,9 @@ func printAdded(r *mgr.Result) {
 	fmt.Printf("quotas:   %s cpu / %d MiB / %d GiB\n", mgr.FormatCPU(u.CPU), u.MemMB, u.DiskGB)
 	if r.IPv6 != "" {
 		fmt.Printf("ipv6:     %s\n", r.IPv6)
+		if r.IPv6Block != "" {
+			fmt.Printf("ipv6 blk: %s  (any address in this block is yours)\n", r.IPv6Block)
+		}
 	}
 	if r.Password != "" {
 		fmt.Printf("password: %s  (panel + root)\n", r.Password)
@@ -794,6 +797,9 @@ func printResult(r *mgr.Result) {
 	fmt.Printf("ip:       %s\n", u.IP)
 	if r.IPv6 != "" {
 		fmt.Printf("ipv6:     %s\n", r.IPv6)
+		if r.IPv6Block != "" {
+			fmt.Printf("ipv6 blk: %s  (any address in this block is yours)\n", r.IPv6Block)
+		}
 	}
 	if sr := mgr.ServicePorts(u.PortBase, r.PortsPerUser); sr != "" {
 		fmt.Printf("ports:    %s (ssh: %d)\n", sr, u.PortBase)

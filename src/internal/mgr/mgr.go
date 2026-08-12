@@ -332,7 +332,8 @@ type Result struct {
 	MemUse       string
 	UpGB         string
 	DownGB       string
-	IPv6         string
+	IPv6         string // primary global address (the one to connect to)
+	IPv6Block    string // the /112 block the container owns (informational)
 }
 
 // sampleUsage reads CPU/memory usage twice ~1s apart to derive CPU percentage.
@@ -378,13 +379,14 @@ func (m *Manager) ResultFor(u *db.User, pass string) *Result {
 		ds[i] = d.Domain
 	}
 	up, down := m.TrafficFor(u.ID)
-	v6 := ""
+	ipv6, _ := m.IPv6Addr(u.Name)
+	block := ""
 	if b, _ := m.IPv6Block(u.Name); b != nil {
-		v6 = b.String()
+		block = b.String()
 	}
 	return &Result{User: u, Password: pass, PublicIP: m.cfg.DisplayIP(),
 		State: st, Domains: ds, PortsPerUser: m.cfg.Net.PortsPerUser,
-		UpGB: FormatGB(up), DownGB: FormatGB(down), IPv6: v6}
+		UpGB: FormatGB(up), DownGB: FormatGB(down), IPv6: ipv6, IPv6Block: block}
 }
 
 func (m *Manager) Del(name string) error {

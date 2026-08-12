@@ -122,7 +122,8 @@ type pageData struct {
 	Lang        string
 	UpGB        string
 	DownGB      string
-	IPv6        string
+	IPv6        string // primary global address (the one to connect to)
+	IPv6Block   string // the /112 block the container owns (informational)
 }
 
 func (s *Server) Handler() http.Handler {
@@ -259,8 +260,11 @@ func (s *Server) buildData(u *db.User, msg, errMsg string) pageData {
 		d.IP = u.IP
 	}
 	if s.cfg.IPv6Enabled() {
-		if b, _ := s.mgr.IPv6Block(u.Name); b != nil { // pure computation, no lxc call
-			d.IPv6 = b.String()
+		if ipv6, _ := s.mgr.IPv6Addr(u.Name); ipv6 != "" { // pure computation, no lxc call
+			d.IPv6 = ipv6
+		}
+		if b, _ := s.mgr.IPv6Block(u.Name); b != nil {
+			d.IPv6Block = b.String()
 		}
 	}
 	up, down := s.mgr.TrafficFor(u.ID) // pure DB read

@@ -198,8 +198,8 @@ func (m *Manager) BatchUsers() ([]*UserStatus, error) {
 		} else {
 			rs.DiskUsed = "-"
 		}
-		if b, err := m.IPv6Block(u.Name); err == nil && b != nil {
-			rs.IPv6 = b.String()
+		if ipv6, err := m.IPv6Addr(u.Name); err == nil {
+			rs.IPv6 = ipv6
 		}
 		out = append(out, rs)
 	}
