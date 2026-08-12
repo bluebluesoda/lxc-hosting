@@ -29,7 +29,7 @@ bash check-ipv6-support.sh #v6测试脚本
 ## 使用
 
 ```
-vpsmgr add <name> [--password X] [--cpu N] [--mem NG] [--disk NG]   # 默认 1核/1G/10G；cpu 可为整数核（≥1）或 0.1~0.9 小数
+vpsmgr add <name> [--cpu N] [--mem NG] [--disk NG]   # 默认 1核/1G/10G；cpu 可为整数核（≥1）或 0.1~0.9 小数；密码自动生成，仅显示一次
 vpsmgr update <name> [--cpu N] [--mem N] [--disk NG] # 磁盘只许扩
 vpsmgr reset-passwd <name>
 vpsmgr list

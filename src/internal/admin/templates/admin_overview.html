@@ -132,7 +132,6 @@ a.copy.copied { border-color: #86efac; background: #dcfce7; color: #15803d; }
     <h2>{{if eq .Lang "zh"}}创建用户{{else}}Create user{{end}}</h2>
     <form action="{{.Prefix}}/user-add" method="post" class="form-grid" id="createForm">
       <div class="field"><label>{{if eq .Lang "zh"}}用户名{{else}}Username{{end}}</label><input name="name" pattern="[a-z]([a-z0-9-]*[a-z0-9])?" maxlength="63" required title="{{if eq .Lang "zh"}}以小写字母开头，只能含小写字母、数字、连字符（63 位内）{{else}}starts with a lowercase letter; letters, digits and hyphens only (max 63){{end}}"></div>
-      <div class="field"><label>{{if eq .Lang "zh"}}密码（留空自动生成）{{else}}Password (blank = auto){{end}}</label><input name="password" type="text"></div>
       <div class="field"><label>CPU</label>
         <div class="cpu-row"><input name="cpu" id="cfCpu" type="number" min="0.1" step="0.1" value="1" required title="{{if eq .Lang "zh"}}整数核心（≥1）或 0.1~0.9 小数（单核的时间片占比）{{else}}whole cores (>= 1) or a decimal 0.1..0.9 (a fraction of one core){{end}}"><span class="step"><button type="button" onclick="stepCpu('cfCpu',1)" title="+">▲</button><button type="button" onclick="stepCpu('cfCpu',-1)" title="−">▼</button></span></div>
       </div>

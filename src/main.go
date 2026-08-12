@@ -138,7 +138,7 @@ func main() {
 func usage() {
 	fmt.Print(`vpsmgr ` + ver.Version + `
 usage:
-  vpsmgr add <name> [--password X] [--cpu 1] [--mem 1G] [--disk 10G]
+  vpsmgr add <name> [--cpu 1] [--mem 1G] [--disk 10G]
   vpsmgr update <name> [--cpu 2] [--mem 2G] [--disk 20G]
   vpsmgr reset-passwd <name>    # reissue panel password (shown once)
   vpsmgr admin-passwd           # reset admin panel password (shown once)
@@ -445,14 +445,13 @@ func cmdAdminPasswd() error {
 
 func userAdd(args []string) error {
 	if len(args) < 1 {
-		return fmt.Errorf("usage: vpsmgr add <name> [--password X] [--cpu 1] [--mem 1G] [--disk 10G]")
+		return fmt.Errorf("usage: vpsmgr add <name> [--cpu 1] [--mem 1G] [--disk 10G]")
 	}
 	name := args[0]
 	fs := flag.NewFlagSet("add", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	var cpuS string
-	var memS, diskS, passS string
-	fs.StringVar(&passS, "password", "", "")
+	var memS, diskS string
 	fs.StringVar(&cpuS, "cpu", "", "")
 	fs.StringVar(&memS, "mem", "", "")
 	fs.StringVar(&diskS, "disk", "", "")
@@ -518,7 +517,7 @@ func userAdd(args []string) error {
 	}
 	defer d.Close()
 	m := mgr.New(c, d)
-	res, err := m.Add(name, mgr.AddOptions{Password: passS, CPU: cpu, MemMB: mem, DiskGB: disk})
+	res, err := m.Add(name, mgr.AddOptions{CPU: cpu, MemMB: mem, DiskGB: disk})
 	if err != nil {
 		return err
 	}

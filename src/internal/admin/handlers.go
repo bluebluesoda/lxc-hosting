@@ -274,12 +274,12 @@ func (s *Server) handleUserAdd(w http.ResponseWriter, r *http.Request) {
 		s.redirect(w, r, s.p(""), "error: "+s.t(r, "err_invalid_disk"))
 		return
 	}
-	pass := r.FormValue("password")
-	res, err := s.mgr.Add(name, mgr.AddOptions{Password: pass, CPU: cpu, MemMB: memMB, DiskGB: diskGB})
+	res, err := s.mgr.Add(name, mgr.AddOptions{CPU: cpu, MemMB: memMB, DiskGB: diskGB})
 	if err != nil {
 		s.redirect(w, r, s.p(""), "error: "+err.Error())
 		return
 	}
+	// The password is always auto-generated and shown once.
 	cred := "user:      " + res.User.Name +
 		"\npassword:  " + res.Password +
 		"\npanel:     https://" + s.cfg.DisplayIP() + ":8443/" + s.cfg.Panel.URLPath

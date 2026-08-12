@@ -88,6 +88,10 @@ func (m *Manager) imageName() (string, error) {
 	return m.cfg.LXD.ImageFallback, nil
 }
 
+// rootPassScript sets the container root password via chpasswd. The password
+// is always generated from [a-zA-Z0-9] (pw.Generate) — no user-supplied value
+// ever reaches this string, so the single-quoted interpolation cannot break
+// out of the shell command.
 func rootPassScript(pass string) string {
 	return fmt.Sprintf("printf 'root:%s\\n' | chpasswd\n", pass)
 }
@@ -146,10 +150,9 @@ systemctl restart ssh`
 }
 
 type AddOptions struct {
-	Password string
-	CPU      int
-	MemMB    int
-	DiskGB   int
+	CPU    int
+	MemMB  int
+	DiskGB int
 }
 
 func (m *Manager) Add(name string, opt AddOptions) (*Result, error) {
@@ -171,10 +174,11 @@ func (m *Manager) Add(name string, opt AddOptions) (*Result, error) {
 	if _, err := m.db.GetUserByName(name); err == nil {
 		return nil, errors.New("user already exists: " + name)
 	}
-	if opt.Password == "" {
-		opt.Password = pw.Generate(20)
-	}
-	hash, err := pw.Hash(opt.Password)
+	// Passwords are always generated ([a-zA-Z0-9]) — no user-supplied password
+	// is ever accepted, so nothing untrusted reaches the provisioning shell
+	// scripts.
+	pass := pw.Generate(20)
+	hash, err := pw.Hash(pass)
 	if err != nil {
 		return nil, err
 	}
@@ -221,7 +225,7 @@ func (m *Manager) Add(name string, opt AddOptions) (*Result, error) {
 			_ = m.db.DeleteUser(createdID)
 		}
 	}
-	if err := m.Provision(name, image, opt.Password); err != nil {
+	if err := m.Provision(name, image, pass); err != nil {
 		cleanup()
 		return nil, fmt.Errorf("provision container: %w", err)
 	}
@@ -245,7 +249,7 @@ func (m *Manager) Add(name string, opt AddOptions) (*Result, error) {
 		cleanup()
 		return nil, err
 	}
-	return m.ResultFor(u, opt.Password), nil
+	return m.ResultFor(u, pass), nil
 }
 
 // checkIPv6Collision refuses a new container if its deterministic IPv6 address

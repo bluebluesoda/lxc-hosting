@@ -39,7 +39,7 @@ point.
 ## Usage
 
 ```
-vpsmgr add <name> [--password X] [--cpu N] [--mem NG] [--disk NG]   # default 1 core / 1G / 10G; cpu = whole cores (>=1) or a decimal 0.1..0.9
+vpsmgr add <name> [--cpu N] [--mem NG] [--disk NG]   # default 1 core / 1G / 10G; cpu = whole cores (>=1) or a decimal 0.1..0.9; password is auto-generated and shown once
 vpsmgr update <name> [--cpu N] [--mem N] [--disk NG] # disk can only grow
 vpsmgr reset-passwd <name>
 vpsmgr list
