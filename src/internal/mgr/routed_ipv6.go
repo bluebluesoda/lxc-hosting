@@ -10,8 +10,13 @@ import (
 // discovery (which port isolation blocks), and applies the deterministic
 // primary /128:
 //
-//   - Debian (systemd-networkd): add [IPv6AcceptRA] UseOnLinkPrefix=false +
-//     UseRoutePrefix=false so the parent prefix is not on-link.
+//   - Debian (systemd-networkd): rebuild [IPv6AcceptRA] with
+//     UseOnLinkPrefix=false + UseRoutePrefix=false + UseAutonomousPrefix=false
+//     + DHCPv6Client=no so the parent prefix is not on-link, no SLAAC address
+//     is generated, and the RA's Managed flag never starts a DHCPv6 client,
+//     bind the deterministic /128 with an [Address] section, and set
+//     DHCP=ipv4. Idempotent and self-healing: a mangled config from an older
+//     buggy run is stripped and rebuilt.
 //   - RHEL-family (NetworkManager): the connection is set to ipv6.method=ignore
 //     (the kernel then handles RA), the baked kernel sysctls give the RA
 //     default route but not the on-link prefix and drop redirects, and the
@@ -42,8 +47,32 @@ if command -v nmcli >/dev/null 2>&1 && ! systemctl is-active systemd-networkd >/
   ip -6 addr replace %q/128 dev eth0 2>/dev/null || true
 else
   CFG=/etc/systemd/network/eth0.network
-  if ! grep -qs 'UseOnLinkPrefix=false' "$CFG" 2>/dev/null; then
-    printf '\n[IPv6AcceptRA]\nUseOnLinkPrefix=false\nUseRoutePrefix=false\n' >> "$CFG"
+  changed=0
+  # Rebuild the [IPv6AcceptRA] section from scratch — the only way to heal
+  # both the mangled single-line residue buggy old versions wrote and sections
+  # missing any option. Canonical contents: the parent prefix is never on-link
+  # and never a route, no SLAAC address is generated, and the RA's Managed flag
+  # must not start a DHCPv6 client (a dynamic address would fall outside the
+  # routed /112, which ipv6_filtering drops).
+  if ! grep -qs '^DHCPv6Client=no$' "$CFG" 2>/dev/null; then
+    awk 'BEGIN{s=0} /^n\[IPv6AcceptRA\]/{next} /^\[IPv6AcceptRA\]$/{s=1;next} s&&/^\[/{s=0} !s' "$CFG" > "$CFG.new" && mv "$CFG.new" "$CFG"
+    printf '\n[IPv6AcceptRA]\nUseOnLinkPrefix=false\nUseRoutePrefix=false\nUseAutonomousPrefix=false\nDHCPv6Client=no\n' >> "$CFG"
+    changed=1
+  fi
+  # Statically bind the deterministic primary /128. A reinstall deletes the
+  # container but LXD's dnsmasq keeps its DHCPv6 lease for up to an hour, so
+  # DHCPv6 would hand the recreated container a dynamic address instead —
+  # binding the /128 directly makes IPv6 independent of that.
+  if ! grep -qs '^Address=%s/128$' "$CFG" 2>/dev/null; then
+    printf '\n[Address]\nAddress=%s/128\n' %q >> "$CFG"
+    changed=1
+  fi
+  # Drop DHCPv6: the dynamic address it would assign is outside the /112.
+  if grep -qs '^DHCP=true$' "$CFG" 2>/dev/null; then
+    sed -i 's/^DHCP=true$/DHCP=ipv4/' "$CFG"
+    changed=1
+  fi
+  if [ "$changed" = 1 ]; then
     systemctl restart systemd-networkd || true
   fi
 fi
@@ -52,7 +81,7 @@ for r in $(ip -6 route show dev eth0 | awk '{print $1}'); do
     %s*) ip -6 route del "$r" dev eth0 2>/dev/null || true ;;
   esac
 done
-ip -6 route flush cache 2>/dev/null || true`, ipv6, ipv6, prefix)
+ip -6 route flush cache 2>/dev/null || true`, ipv6, ipv6, ipv6, ipv6, ipv6, prefix)
 	return script, nil
 }
 
@@ -74,10 +103,12 @@ func (m *Manager) ConfigureContainerIPv6(name string) error {
 	return nil
 }
 
-// EnsureRoutedIPv6 applies the host-routed IPv6 setup to every existing
+// EnsureRoutedIPv6 applies the host-routed IPv6 setup to every running
 // container, so inter-container IPv6 goes through the host with L2 between
 // containers staying isolated (no broadcast/NDP plane, no MITM, only
-// address-addressed routed traffic). Runs on `vpsmgr install`; idempotent.
+// address-addressed routed traffic). Runs on `vpsmgr install` and
+// `vpsmgr ipv6-reapply`; idempotent. Stopped or not-yet-created containers
+// are skipped, not errors.
 func (m *Manager) EnsureRoutedIPv6() error {
 	if !m.cfg.IPv6Enabled() {
 		return nil
@@ -88,6 +119,9 @@ func (m *Manager) EnsureRoutedIPv6() error {
 	}
 	var firstErr error
 	for _, u := range users {
+		if st, err := m.lx.State(u.Name); err != nil || st != "Running" {
+			continue // stopped or not created yet
+		}
 		if err := m.ConfigureContainerIPv6(u.Name); err != nil && firstErr == nil {
 			firstErr = err
 		}

@@ -53,9 +53,13 @@ printf "PermitRootLogin yes\nPasswordAuthentication yes\n" > /etc/ssh/sshd_confi
 systemctl enable ssh
 # Containers route peer IPv6 through the host, so they must not treat the
 # parent prefix as on-link. Tell systemd-networkd to skip RA on-link and route
-# prefixes; peer traffic then always goes to the default gateway.
+# prefixes; peer traffic then always goes to the default gateway. DHCPv6 is
+# off: its dynamic address would fall outside the routed /112 (dropped by
+# ipv6_filtering), and on reinstall the stale DHCPv6 lease for the
+# deterministic block would hand a fresh container that useless address.
 if [ -f /etc/systemd/network/eth0.network ]; then
-  printf '\n[IPv6AcceptRA]\nUseOnLinkPrefix=false\nUseRoutePrefix=false\n' >> /etc/systemd/network/eth0.network
+  sed -i "s/^DHCP=true\$/DHCP=ipv4/" /etc/systemd/network/eth0.network
+  printf "\n[IPv6AcceptRA]\nUseOnLinkPrefix=false\nUseRoutePrefix=false\nUseAutonomousPrefix=false\nDHCPv6Client=no\n" >> /etc/systemd/network/eth0.network
 fi
 # slim the published image: drop apt lists/archives and logs. Without this the
 # image balloons ~70MiB beyond just openssh (apt lists alone are ~50MiB).

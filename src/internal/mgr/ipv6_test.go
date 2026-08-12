@@ -145,6 +145,54 @@ func TestIPv6Block(t *testing.T) {
 	}
 }
 
+// The generated container script must: keep the parent prefix off-link, forbid
+// SLAAC, statically bind the deterministic /128, turn DHCPv6 off, strip the
+// mangled residue buggy older versions wrote, and flush stale on-link routes.
+func TestIPv6ContainerScript(t *testing.T) {
+	c := cfg.Default()
+	c.Net.IPv6Subnet = "2602:fada:6::/64"
+	m := &Manager{cfg: c}
+	script, err := m.ipv6ContainerScript("alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"2602:fada:6::2bd8:6c9:1",   // deterministic primary
+		"UseOnLinkPrefix=false",     // peers via the host, not L2
+		"UseRoutePrefix=false",      // parent prefix never a route
+		"UseAutonomousPrefix=false", // no SLAAC address outside the /112
+		"DHCPv6Client=no",           // RA Managed flag must not start DHCPv6
+		"Address=2602:fada:6::2bd8:6c9:1/128", // static bind, DHCPv6-independent
+		"DHCP=ipv4",                 // DHCPv6 off
+		"s/^DHCP=true$/DHCP=ipv4/",  // flips the baked DHCP=true
+		"n\\[IPv6AcceptRA\\]",          // heals mangled old configs (awk regex)
+		"2602:fada:6*",              // stale on-link route flush
+		"ip -6 route flush cache",
+	} {
+		if !strings.Contains(script, want) {
+			t.Errorf("script missing %q:\n%s", want, script)
+		}
+	}
+	// The RA options must appear in a real [IPv6AcceptRA] section, not a
+	// mangled single line (the bug that made the old fix a no-op): backslash-n
+	// escapes degraded to literal 'n', e.g. 'n[IPv6AcceptRA]nUseOnLinkPrefix'.
+	if strings.Contains(script, "n[IPv6AcceptRA]nUseOnLinkPrefix") {
+		t.Errorf("script contains mangled residue:\n%s", script)
+	}
+}
+
+func TestIPv6ContainerScriptDisabled(t *testing.T) {
+	c := cfg.Default() // IPv6 disabled by default
+	m := &Manager{cfg: c}
+	script, err := m.ipv6ContainerScript("alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if script != "" {
+		t.Errorf("expected empty script when IPv6 disabled, got %q", script)
+	}
+}
+
 // checkIPv6BlockCollision must refuse a new container whose deterministic
 // block is already taken by another user, skip the user itself, and be a no-op
 // for a nil block (IPv6 disabled).

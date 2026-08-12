@@ -61,9 +61,23 @@ keeps the authoritative route), and IPv6 forwarding is enabled.
 
 For each container:
 
-- The `eth0` device sets `ipv6.address=<block>::1` (primary, DHCPv6) and
+- The `eth0` device sets `ipv6.address=<block>::1` and
   `ipv6.routes=<block>::/112`, so LXD routes the whole block to the container.
   Any address inside the /112 that the container binds is delivered to it.
+- The primary `/128` is **bound statically** inside the container (a networkd
+  `[Address]` section on Debian, a boot-time service on RHEL) — it does not
+  depend on DHCPv6. This matters on reinstall: LXD's dnsmasq keeps the deleted
+  container's DHCPv6 lease for the deterministic address for up to an hour, so
+  DHCPv6 would hand the recreated container a *dynamic* address instead, which
+  falls outside the routed /112 and is dropped by `ipv6_filtering`. Binding the
+  /128 directly makes IPv6 survive reinstalls.
+- DHCPv6 is turned off on Debian (`DHCP=ipv4` plus `[IPv6AcceptRA] DHCPv6Client=no`
+  — the RA's Managed flag would otherwise start the DHCPv6 client regardless of
+  `DHCP=`), and the RA is told to generate no SLAAC address, so the container
+  never ends up with a stray address outside its /112. RA
+  `UseOnLinkPrefix=false` / `UseRoutePrefix=false` keep the parent prefix
+  off-link, so a container reaches a peer through the host (its default
+  gateway) instead of direct L2 neighbour discovery.
 - `ndppd` proxies Neighbor Discovery on the **external** interface for every
   /112: an upstream neighbor solicitation for an address in a block is relayed
   to the bridge, the container answers, and ndppd relays the NA back. Kernel
@@ -73,7 +87,9 @@ For each container:
 vpsmgr renders `/etc/ndppd.conf` (one `rule <block>::/112` per container) and
 restarts the daemon on `add`/`del`; the config is rebuilt from the DB at boot
 by `vpsmgr-ipv6.service` / `vpsmgr ipv6-reapply` and by `vpsmgr install`, so
-rules survive reboots.
+rules survive reboots. `vpsmgr ipv6-reapply` also re-applies the per-container
+routed-IPv6 config (self-healing: containers created before the host-routed
+scheme, or whose networkd config was corrupted, are repaired on every boot).
 
 ## Installer flow
 

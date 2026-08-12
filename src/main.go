@@ -317,7 +317,8 @@ func cmdInstall() error {
 }
 
 // cmdIPv6Reapply re-attaches IPv6 pass-through plumbing for all existing
-// containers (bridge config, /128 routes, proxy_ndp). No-op when IPv6 disabled.
+// containers (bridge config, /128 routes, proxy_ndp) and re-applies the
+// per-container routed-IPv6 config. No-op when IPv6 disabled.
 func cmdIPv6Reapply() error {
 	c, err := cfg.Load()
 	if err != nil {
@@ -329,7 +330,13 @@ func cmdIPv6Reapply() error {
 	}
 	defer d.Close()
 	m := mgr.New(c, d)
-	return m.RewireAllIPv6()
+	if err := m.RewireAllIPv6(); err != nil {
+		return err
+	}
+	// Also re-apply the per-container routed-IPv6 config, so the boot unit and
+	// a manual `vpsmgr ipv6-reapply` heal containers that were created before
+	// the host-routed scheme existed or whose networkd config got corrupted.
+	return m.EnsureRoutedIPv6()
 }
 
 func writeUnit(name, content string) error {
