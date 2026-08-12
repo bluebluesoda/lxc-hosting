@@ -355,28 +355,47 @@ func cmdInstall() error {
 	if err != nil {
 		return err
 	}
+	defer d2.Close()
 	m2 := mgr.New(c, d2)
 	if err := m2.ApplyV4State(); err != nil {
-		d2.Close()
 		return fmt.Errorf("apply v4 policy: %w", err)
 	}
-	d2.Close()
-	// Admin panel: on a FRESH install (admin enabled and no password yet)
-	// generate a random admin password and show it once. On adoption/upgrade
-	// the existing hash is kept — never reprint a password the admin may not
-	// expect to be displayed. When admin is disabled nothing is printed.
-	if c.Panel.AdminPath != "" && c.Panel.AdminPass == "" {
-		pass := pw.Generate(20)
-		hash, err := pw.Hash(pass)
-		if err != nil {
+	// Admin password now lives in the DB (settings table). Migrate a legacy
+	// hash found in the config file once, then drop it from the file so the
+	// credential is no longer a hand-editable config field.
+	if c.Panel.AdminPass != "" {
+		if _, ok, err := d2.GetSetting(db.SettingAdminPassHash); err != nil {
 			return err
+		} else if !ok {
+			if err := d2.SetSetting(db.SettingAdminPassHash, c.Panel.AdminPass); err != nil {
+				return err
+			}
+			log.Printf("migrated admin password hash from config.yaml to database")
 		}
-		c.Panel.AdminPass = hash
+		c.Panel.AdminPass = ""
 		if err := cfg.Save(c); err != nil {
 			return err
 		}
-		fmt.Printf("admin panel initialized: %s\n", c.PanelURL("/"+c.Panel.AdminPath))
-		fmt.Printf("admin password (shown once): %s\n", pass)
+	}
+	// Admin panel: on a FRESH install (admin enabled and no hash yet in the
+	// DB) generate a random admin password and show it once. On adoption the
+	// existing hash is kept — never reprint a password the admin may not
+	// expect to be displayed. When admin is disabled nothing is printed.
+	if c.Panel.AdminPath != "" {
+		if _, ok, err := d2.GetSetting(db.SettingAdminPassHash); err != nil {
+			return err
+		} else if !ok {
+			pass := pw.Generate(20)
+			hash, err := pw.Hash(pass)
+			if err != nil {
+				return err
+			}
+			if err := d2.SetSetting(db.SettingAdminPassHash, hash); err != nil {
+				return err
+			}
+			fmt.Printf("admin panel initialized: %s\n", c.PanelURL("/"+c.Panel.AdminPath))
+			fmt.Printf("admin password (shown once): %s\n", pass)
+		}
 	}
 	if c.Panel.URLPath != "" {
 		fmt.Printf("panel initialized: %s\n", c.PanelURL(panelPath(c)))
@@ -596,8 +615,12 @@ func cmdAdminPasswd() error {
 	if err != nil {
 		return err
 	}
-	c.Panel.AdminPass = hash
-	if err := cfg.Save(c); err != nil {
+	d, err := db.Open(c.Panel.DB)
+	if err != nil {
+		return err
+	}
+	defer d.Close()
+	if err := d.SetSetting(db.SettingAdminPassHash, hash); err != nil {
 		return err
 	}
 	fmt.Printf("admin password reset: %s\n", pass)

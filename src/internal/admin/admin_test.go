@@ -18,8 +18,8 @@ import (
 const testAdminSecret = "Adm1n-SecretX"
 
 // newTestServer builds an admin Server against a temp DB and points
-// VPSMGR_CONFIG at a temp config file so the per-login disk read in
-// currentAdminHash() stays isolated from the host's real config.
+// VPSMGR_CONFIG at a temp config file so the per-login DB read in
+// currentAdminHash() stays isolated from the host's real config/db.
 func newTestServer(t *testing.T) (*Server, *db.DB) {
 	t.Helper()
 	cfgPath := t.TempDir() + "/config.yaml"
@@ -41,12 +41,11 @@ func newTestServer(t *testing.T) (*Server, *db.DB) {
 	return New(c, d, mgr.New(c, d)), d
 }
 
-// setAdminPass stores the admin password hash both in the in-memory config and
-// in the temp config file, mirroring what `vps admin-passwd` writes.
+// setAdminPass stores the admin password hash in the DB settings table,
+// mirroring what `vps admin-passwd` / the web UI write.
 func setAdminPass(t *testing.T, srv *Server, pass string) {
 	t.Helper()
-	srv.cfg.Panel.AdminPass = mustHash(t, pass)
-	if err := cfg.Save(srv.cfg); err != nil {
+	if err := srv.db.SetSetting(db.SettingAdminPassHash, mustHash(t, pass)); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -151,18 +150,31 @@ func TestAdminPasswordChange(t *testing.T) {
 	if rr.Code != http.StatusFound {
 		t.Fatalf("admin-pass mismatch = %d, want 302", rr.Code)
 	}
-	if !pw.Verify(srv.cfg.Panel.AdminPass, "old-pass-12345678") {
+	if !pw.Verify(storedHash(t, srv), "old-pass-12345678") {
 		t.Fatal("password changed despite mismatch")
 	}
-	// Successful change persists the new hash in the config object.
+	// Successful change persists the new hash in the DB settings table.
 	rr = doReq(t, h, http.MethodPost, prefix+"/admin-pass",
 		url.Values{"new_password": {"new-pass-123456789"}, "confirm_password": {"new-pass-123456789"}}, sess)
 	if rr.Code != http.StatusFound {
 		t.Fatalf("admin-pass = %d, want 302", rr.Code)
 	}
-	if !pw.Verify(srv.cfg.Panel.AdminPass, "new-pass-123456789") {
+	if !pw.Verify(storedHash(t, srv), "new-pass-123456789") {
 		t.Fatal("new password hash not stored")
 	}
+}
+
+// storedHash reads the admin password hash back from the DB settings table.
+func storedHash(t *testing.T, srv *Server) string {
+	t.Helper()
+	v, ok, err := srv.db.GetSetting(db.SettingAdminPassHash)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("no admin password hash stored")
+	}
+	return v
 }
 
 func TestAdminLogout(t *testing.T) {

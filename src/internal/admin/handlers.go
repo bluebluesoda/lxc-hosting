@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"vpsmgr/internal/cfg"
+	"vpsmgr/internal/db"
 	"vpsmgr/internal/lx"
 	"vpsmgr/internal/mgr"
 	"vpsmgr/internal/pw"
@@ -188,16 +189,17 @@ func (s *Server) storeFlash(r *http.Request, msg, kind string) {
 	}
 }
 
-// currentAdminHash reads the admin password hash fresh from the config file on
-// every login. The CLI (`vps admin-passwd`) and the web UI both write the
-// hash to the config, so this makes a CLI reset effective immediately without
+// currentAdminHash reads the admin password hash fresh from the DB on every
+// login. The CLI (`vps admin-passwd`) and the web UI both write the hash to
+// the settings table, so a CLI reset is effective immediately without
 // restarting the panel service. Login is low-frequency, so the extra read is
 // negligible.
 func (s *Server) currentAdminHash() string {
-	if c, err := cfg.Load(); err == nil {
-		return c.Panel.AdminPass
+	v, _, err := s.db.GetSetting(db.SettingAdminPassHash)
+	if err != nil {
+		return ""
 	}
-	return s.cfg.Panel.AdminPass
+	return v
 }
 
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
@@ -417,8 +419,7 @@ func (s *Server) handleAdminPass(w http.ResponseWriter, r *http.Request) {
 		s.redirect(w, r, s.p(""), "error: "+err.Error())
 		return
 	}
-	s.cfg.Panel.AdminPass = hash
-	if err := cfg.Save(s.cfg); err != nil {
+	if err := s.db.SetSetting(db.SettingAdminPassHash, hash); err != nil {
 		s.redirect(w, r, s.p(""), "error: "+err.Error())
 		return
 	}
