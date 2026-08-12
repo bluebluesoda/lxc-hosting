@@ -100,7 +100,14 @@ scheme, or whose networkd config was corrupted, are repaired on every boot).
   of the default small install otherwise).
 - `10-lxd.sh` — puts the (clamped) prefix on `lxdbr0` at `lxd init` time.
 - `20-network.sh` — enables IPv6 forwarding.
-- `50-image.sh` / `vpsmgr install` — nothing IPv6-specific.
+- `50-image.sh` — bakes the Debian networkd IPv6 config (`DHCP=ipv4`,
+  `[IPv6AcceptRA]` off-link/no-SLAAC/no-DHCPv6) into the published image.
+- `60-rhel-image.sh` — bakes the RHEL kernel-managed IPv6 plumbing (sysctls for
+  the RA default route without the on-link prefix, plus the `vpsmgr-ipv6`
+  helper and boot unit). The runtime script installs these idempotently if an
+  older image lacks them, so a pre-fix image still gets working IPv6.
+- `vpsmgr install` / `add` / `reinstall` — apply the per-container config
+  (`ConfigureContainerIPv6`); `ipv6-reapply` covers existing containers.
 - `check-ipv6-support.sh` — probe before install: reports the host's global
   addresses, auto-measures the subnet size (prefers the on-link routed block,
   e.g. AWS's /80, over the address's own configured length), and verifies from

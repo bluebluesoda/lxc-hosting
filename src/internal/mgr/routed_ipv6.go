@@ -18,9 +18,11 @@ import (
 //     DHCP=ipv4. Idempotent and self-healing: a mangled config from an older
 //     buggy run is stripped and rebuilt.
 //   - RHEL-family (NetworkManager): the connection is set to ipv6.method=ignore
-//     (the kernel then handles RA), the baked kernel sysctls give the RA
-//     default route but not the on-link prefix and drop redirects, and the
-//     primary /128 is applied via the baked vpsmgr-ipv6.service.
+//     (the kernel then handles RA), the kernel sysctls give the RA default
+//     route but not the on-link prefix and drop redirects, and the primary
+//     /128 is applied via vpsmgr-ipv6.service. The sysctls/helper/unit are
+//     baked into the image but are also installed here when an older image
+//     lacks them, so a pre-fix image still gets working IPv6.
 //
 // Both end by flushing stale on-link / redirect routes for the parent prefix.
 func (m *Manager) ipv6ContainerScript(name string) (string, error) {
@@ -43,6 +45,21 @@ if command -v nmcli >/dev/null 2>&1 && ! systemctl is-active systemd-networkd >/
   CONN=$(nmcli -t -f NAME con show 2>/dev/null | grep -i eth0 | head -1)
   [ -n "$CONN" ] && nmcli con mod "$CONN" ipv6.method ignore >/dev/null 2>&1 || true
   printf '%%s/128\n' %q > /etc/vpsmgr-ipv6.conf
+  # The RHEL image bakes these, but images published before the fix (or built
+  # from an older script) lack them — install idempotently so this always
+  # works: kernel takes the RA default route but never the on-link prefix.
+  if [ ! -f /etc/sysctl.d/99-vpsmgr-ipv6.conf ]; then
+    printf 'net.ipv6.conf.eth0.accept_ra = 1\nnet.ipv6.conf.eth0.accept_ra_pinfo = 0\nnet.ipv6.conf.eth0.accept_redirects = 0\n' > /etc/sysctl.d/99-vpsmgr-ipv6.conf
+  fi
+  sysctl -p /etc/sysctl.d/99-vpsmgr-ipv6.conf 2>/dev/null || true
+  if [ ! -f /usr/local/sbin/vpsmgr-ipv6 ]; then
+    printf '#!/bin/sh\n[ -f /etc/vpsmgr-ipv6.conf ] || exit 0\nip -6 addr replace "$(cat /etc/vpsmgr-ipv6.conf)" dev eth0\n' > /usr/local/sbin/vpsmgr-ipv6
+    chmod +x /usr/local/sbin/vpsmgr-ipv6
+  fi
+  if [ ! -f /etc/systemd/system/vpsmgr-ipv6.service ]; then
+    printf '[Unit]\nDescription=vpsmgr IPv6 primary address\nAfter=network-online.target\nWants=network-online.target\n[Service]\nType=oneshot\nExecStart=/usr/local/sbin/vpsmgr-ipv6\nRemainAfterExit=yes\n[Install]\nWantedBy=multi-user.target\n' > /etc/systemd/system/vpsmgr-ipv6.service
+    systemctl daemon-reload >/dev/null 2>&1 || true
+  fi
   systemctl enable --now vpsmgr-ipv6.service >/dev/null 2>&1 || true
   ip -6 addr replace %q/128 dev eth0 2>/dev/null || true
 else
