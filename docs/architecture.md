@@ -193,6 +193,19 @@ module is built into the kernel.
 - Mutating actions are POST-only; sessions are 3-day HttpOnly+Secure+
   SameSite=Lax cookies; a per-IP login rate limiter.
 - Containers are LXD-unprivileged with `security.nesting=true`.
+- The panel runs as an unprivileged system user (`vpsmgr`), not root, so a
+  compromise of the panel process can no longer become instant host root. It
+  holds exactly what it needs:
+  - `lxd` group + a real home under `/home` for the snap `lxc` client (create/
+    exec/reset operations);
+  - ambient `CAP_NET_ADMIN` + `CAP_NET_RAW` (nft/ip/sysctl, and to spawn the
+    `ndppd` NDP proxy, which also runs as `vpsmgr`);
+  - ownership of `/etc/vpsmgr` and group-write to `/etc/traefik/dynamic`.
+  The `CapabilityBoundingSet` is deliberately not restricted: the snap `lxc`
+  launcher (`snap-confine`) needs capabilities outside the ambient set to set
+  up its mount namespace, and restricting the bounding set breaks it.
+  The CLI (`vpsmgr add/del/...`) still runs as root and spawns the daemons it
+  manages (e.g. `ndppd`) under the `vpsmgr` uid via `setpriv`.
 
 ## Traffic accounting
 

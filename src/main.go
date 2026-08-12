@@ -33,6 +33,10 @@ After=network-online.target
 Wants=network-online.target
 [Service]
 Type=simple
+User=vpsmgr
+Group=vpsmgr
+AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW
+RuntimeDirectory=vpsmgr
 ExecStart=/usr/local/bin/vpsmgr serve
 Restart=always
 RestartSec=3
@@ -60,6 +64,10 @@ Wants=network-online.target
 Before=vpsmgr-panel.service
 [Service]
 Type=oneshot
+User=vpsmgr
+Group=vpsmgr
+AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW
+RuntimeDirectory=vpsmgr
 ExecStart=/usr/local/bin/vpsmgr ipv6-reapply
 RemainAfterExit=yes
 [Install]
@@ -198,6 +206,11 @@ func cmdInstall() error {
 	if err := os.MkdirAll(cfg.DefaultDataDir, 0o755); err != nil {
 		return err
 	}
+	// The panel runs unprivileged (see panelUnit); the service user must exist
+	// before any ndppd daemon is spawned (via setpriv to the vpsmgr user).
+	if err := ensureServiceUser(); err != nil {
+		return err
+	}
 	// LXD's security.ipv6_filtering (enabled on every container's eth0) only
 	// works while the br_netfilter kernel module is loaded, and LXD does NOT
 	// load it itself: a container with the option simply refuses to boot
@@ -255,6 +268,11 @@ func cmdInstall() error {
 	if err := f.Reload(); err != nil {
 		return err
 	}
+	// Hand the panel's runtime files to the service user now that every root
+	// write to them is done.
+	if err := handOverFiles(); err != nil {
+		return err
+	}
 	if err := writeUnit("vpsmgr-panel.service", panelUnit); err != nil {
 		return err
 	}
@@ -278,8 +296,13 @@ func cmdInstall() error {
 			return fmt.Errorf("enable vpsmgr-ipv6: %s", strings.TrimSpace(string(out)))
 		}
 	}
-	if out, err := exec.Command("systemctl", "enable", "--now", "vpsmgr-panel.service").CombinedOutput(); err != nil {
+	// The panel must pick up a changed unit (e.g. a new runtime user) on
+	// upgrade, so restart rather than plain `enable --now`.
+	if out, err := exec.Command("systemctl", "enable", "vpsmgr-panel.service").CombinedOutput(); err != nil {
 		return fmt.Errorf("enable vpsmgr-panel: %s", strings.TrimSpace(string(out)))
+	}
+	if out, err := exec.Command("systemctl", "restart", "vpsmgr-panel.service").CombinedOutput(); err != nil {
+		return fmt.Errorf("restart vpsmgr-panel: %s", strings.TrimSpace(string(out)))
 	}
 	// Admin panel: on a FRESH install (admin enabled and no password yet)
 	// generate a random admin password and show it once. On adoption/upgrade
@@ -318,6 +341,40 @@ func cmdIPv6Reapply() error {
 	defer d.Close()
 	m := mgr.New(c, d)
 	return m.RewireAllIPv6()
+}
+
+// ensureServiceUser creates the unprivileged user the panel runs as and grants
+// it the group memberships it needs: lxd for container operations (LXD API and
+// `lxc exec`), traefik for the dynamic-rules directory. Called by `vpsmgr
+// install` as root; idempotent. The user needs a real home under /home for the
+// snap lxc client.
+func ensureServiceUser() error {
+	if _, err := exec.Command("id", "-u", "vpsmgr").Output(); err != nil {
+		if out, err := exec.Command("useradd", "-r", "-m", "vpsmgr").CombinedOutput(); err != nil {
+			return fmt.Errorf("create vpsmgr user: %s", strings.TrimSpace(string(out)))
+		}
+	}
+	// Best-effort memberships: the lxd group exists once LXD is installed,
+	// traefik exists once 30-traefik.sh ran. Either may be absent on a partial
+	// install; the panel only needs them for the corresponding features.
+	_ = exec.Command("usermod", "-aG", "lxd", "vpsmgr").Run()
+	_ = exec.Command("usermod", "-aG", "traefik", "vpsmgr").Run()
+	// vpsmgr manages its own ndppd instance; the distro service would conflict
+	// (two daemons binding the external interface).
+	_ = exec.Command("systemctl", "disable", "--now", "ndppd.service").Run()
+	return nil
+}
+
+// handOverFiles makes the panel's data directory vpsmgr-owned and opens the
+// traefik dynamic directory for group writes, so the panel can manage users
+// without running as root. Called at the end of `vpsmgr install`, after every
+// root write to those paths; idempotent.
+func handOverFiles() error {
+	if out, err := exec.Command("chown", "-R", "vpsmgr:vpsmgr", cfg.DefaultDataDir).CombinedOutput(); err != nil {
+		return fmt.Errorf("chown %s: %s", cfg.DefaultDataDir, strings.TrimSpace(string(out)))
+	}
+	_ = exec.Command("chmod", "0770", "/etc/traefik/dynamic").Run()
+	return nil
 }
 
 func writeUnit(name, content string) error {
