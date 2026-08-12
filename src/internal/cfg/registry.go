@@ -3,6 +3,7 @@ package cfg
 import (
 	"fmt"
 	"net"
+	"regexp"
 	"strconv"
 	"strings"
 )
@@ -51,8 +52,8 @@ func (k FieldKind) String() string {
 type Apply int
 
 const (
-	ApplyRestart Apply = iota // systemctl restart vpsmgr-panel
-	ApplyInstall              // re-run vps install
+	ApplyRestart Apply = iota // panel is restarted automatically by `vps config set`
+	ApplyInstall              // re-run `vps install` (or `vps config set --apply`)
 	ApplyImmediate            // applied by vps config set right now
 	ApplyNextAdd              // used on the next vps add / reinstall
 	ApplyNone                 // not settable
@@ -61,13 +62,13 @@ const (
 func (a Apply) String() string {
 	switch a {
 	case ApplyRestart:
-		return "systemctl restart vpsmgr-panel"
+		return "restart panel (auto)"
 	case ApplyInstall:
 		return "re-run vps install"
 	case ApplyImmediate:
 		return "applied immediately"
 	case ApplyNextAdd:
-		return "next vps add / reinstall"
+		return "next add / reinstall"
 	case ApplyNone:
 		return "-"
 	}
@@ -80,8 +81,23 @@ type Field struct {
 	Kind  FieldKind
 	Apply Apply
 	Desc  string
-	Get    func(c *Config) string
+	Get   func(c *Config) string
 	Assign func(c *Config, v string) error
+}
+
+// Editable reports whether the field may be changed via `vps config set`:
+// "yes", "no", or "only-when-empty" (the two secret panel paths can be set to
+// re-enable a disabled panel, but are frozen once set).
+func (f *Field) Editable() string {
+	switch f.Kind {
+	case KindOperator, KindRuntime:
+		return "yes"
+	case KindImmutable:
+		if f.Key == "panel.url_path" || f.Key == "panel.admin_url_path" {
+			return "only-when-empty"
+		}
+	}
+	return "no"
 }
 
 // Fields is the registry backing `vps config list/set/help`.
@@ -98,19 +114,41 @@ var Fields = []Field{
 		}},
 	{"panel.cert", KindOperator, ApplyRestart, "panel TLS certificate path",
 		getStr(func(c *Config) string { return c.Panel.Cert }),
-		setStr(func(c *Config, v string) { c.Panel.Cert = v })},
+		nonEmpty("panel.cert", func(c *Config, v string) { c.Panel.Cert = v })},
 	{"panel.key", KindOperator, ApplyRestart, "panel TLS private key path",
 		getStr(func(c *Config) string { return c.Panel.Key }),
-		setStr(func(c *Config, v string) { c.Panel.Key = v })},
-	{"panel.db", KindOperator, ApplyRestart, "SQLite database path",
+		nonEmpty("panel.key", func(c *Config, v string) { c.Panel.Key = v })},
+	{"panel.db", KindOperator, ApplyInstall, "SQLite database path",
 		getStr(func(c *Config) string { return c.Panel.DB }),
-		setStr(func(c *Config, v string) { c.Panel.DB = v })},
+		nonEmpty("panel.db", func(c *Config, v string) { c.Panel.DB = v })},
 	{"panel.public_ip", KindOperator, ApplyInstall, "NIC IPv4 used by firewall/routing (cert is regenerated)",
 		getStr(func(c *Config) string { return c.Panel.PublicIP }),
-		setStr(func(c *Config, v string) { c.Panel.PublicIP = v })},
-	{"panel.display_ip", KindOperator, ApplyRestart, "public IPv4 shown to users (panel URL / SSH hints)",
+		func(c *Config, v string) error {
+			v = strings.TrimSpace(v)
+			if v == "" || v == "AUTO" {
+				c.Panel.PublicIP = ""
+				return nil
+			}
+			if net.ParseIP(v) == nil {
+				return fmt.Errorf("panel.public_ip must be a valid IP address or AUTO")
+			}
+			c.Panel.PublicIP = v
+			return nil
+		}},
+	{"panel.display_ip", KindOperator, ApplyRestart, "public IPv4 shown to users (panel URL / SSH hints); empty = fall back to public_ip",
 		getStr(func(c *Config) string { return c.Panel.DisplayIP }),
-		setStr(func(c *Config, v string) { c.Panel.DisplayIP = v })},
+		func(c *Config, v string) error {
+			v = strings.TrimSpace(v)
+			if v == "" || v == "AUTO" {
+				c.Panel.DisplayIP = ""
+				return nil
+			}
+			if net.ParseIP(v) == nil {
+				return fmt.Errorf("panel.display_ip must be a valid IP address, or empty/AUTO")
+			}
+			c.Panel.DisplayIP = v
+			return nil
+		}},
 	{"panel.session_days", KindOperator, ApplyRestart, "login session lifetime in days",
 		getStr(func(c *Config) string { return strconv.Itoa(c.Panel.SessionDays) }),
 		func(c *Config, v string) error {
@@ -122,13 +160,25 @@ var Fields = []Field{
 			return nil
 		}},
 	{"panel.url_path", KindImmutable, ApplyRestart,
-		"secret prefix of the user panel (immutable once set; settable only when currently empty = enable)",
+		"secret prefix of the user panel (immutable once set; settable only while empty = enable)",
 		getStr(func(c *Config) string { return c.Panel.URLPath }),
-		func(c *Config, v string) error { c.Panel.URLPath = v; return nil }},
+		func(c *Config, v string) error {
+			if err := setSecretPath(v, c.Panel.AdminPath, "panel.url_path"); err != nil {
+				return err
+			}
+			c.Panel.URLPath = v
+			return nil
+		}},
 	{"panel.admin_url_path", KindImmutable, ApplyRestart,
-		"secret prefix of the admin panel (immutable once set; settable only when currently empty = enable)",
+		"secret prefix of the admin panel (immutable once set; settable only while empty = enable)",
 		getStr(func(c *Config) string { return c.Panel.AdminPath }),
-		func(c *Config, v string) error { c.Panel.AdminPath = v; return nil }},
+		func(c *Config, v string) error {
+			if err := setSecretPath(v, c.Panel.URLPath, "panel.admin_url_path"); err != nil {
+				return err
+			}
+			c.Panel.AdminPath = v
+			return nil
+		}},
 	{"panel.admin_pass_hash", KindSpecial, ApplyNone,
 		"admin password bcrypt hash — set via `vps admin-passwd` (stored in the DB)",
 		func(c *Config) string { return "(in database, via `vps admin-passwd`)" },
@@ -160,7 +210,7 @@ var Fields = []Field{
 		}},
 	{"net.ext_if", KindOperator, ApplyInstall, "external NIC (auto-detected from default route)",
 		getStr(func(c *Config) string { return c.Net.ExtIF }),
-		setStr(func(c *Config, v string) { c.Net.ExtIF = v })},
+		nonEmpty("net.ext_if", func(c *Config, v string) { c.Net.ExtIF = v })},
 	{"net.ipv6_subnet", KindOperator, ApplyInstall,
 		"global IPv6 prefix for pass-through (e.g. 2602:fada:6::/64); empty = disabled",
 		getStr(func(c *Config) string { return c.Net.IPv6Subnet }),
@@ -180,10 +230,10 @@ var Fields = []Field{
 		}},
 	{"lxd.image", KindOperator, ApplyNextAdd, "container image alias used on add/reinstall",
 		getStr(func(c *Config) string { return c.LXD.Image }),
-		setStr(func(c *Config, v string) { c.LXD.Image = v })},
+		nonEmpty("lxd.image", func(c *Config, v string) { c.LXD.Image = v })},
 	{"lxd.image_fallback", KindOperator, ApplyNextAdd, "fallback remote image when the local one is missing",
 		getStr(func(c *Config) string { return c.LXD.ImageFallback }),
-		setStr(func(c *Config, v string) { c.LXD.ImageFallback = v })},
+		nonEmpty("lxd.image_fallback", func(c *Config, v string) { c.LXD.ImageFallback = v })},
 	{"lxd.pool", KindImmutable, ApplyNone,
 		"storage pool — fixed at install",
 		getStr(func(c *Config) string { return c.LXD.Pool }),
@@ -198,7 +248,7 @@ var Fields = []Field{
 		}},
 	{"lxd.socket", KindOperator, ApplyRestart, "LXD daemon Unix socket path",
 		getStr(func(c *Config) string { return c.LXD.Socket }),
-		setStr(func(c *Config, v string) { c.LXD.Socket = v })},
+		nonEmpty("lxd.socket", func(c *Config, v string) { c.LXD.Socket = v })},
 	{"installed_version", KindAuto, ApplyNone, "binary version that installed/adopted this config (auto)",
 		getStr(func(c *Config) string { return c.InstalledVersion }),
 		func(c *Config, v string) error {
@@ -211,10 +261,39 @@ var Fields = []Field{
 		}},
 }
 
+var secretPathRe = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
+
+// setSecretPath validates a secret panel path for the enable case: at least 10
+// chars, safe charset, and different from the other panel's path.
+func setSecretPath(v, other, key string) error {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return fmt.Errorf("%s cannot be empty", key)
+	}
+	if len(v) < 10 {
+		return fmt.Errorf("%s must be at least 10 characters (got %d)", key, len(v))
+	}
+	if !secretPathRe.MatchString(v) {
+		return fmt.Errorf("%s must contain only [A-Za-z0-9_-]", key)
+	}
+	if other != "" && v == other {
+		return fmt.Errorf("%s must differ from the other panel path", key)
+	}
+	return nil
+}
+
 func getStr(f func(c *Config) string) func(c *Config) string { return f }
 
-func setStr(f func(c *Config, v string)) func(c *Config, v string) error {
-	return func(c *Config, v string) error { f(c, v); return nil }
+// nonEmpty returns an Assign that trims and requires a non-empty value.
+func nonEmpty(key string, set func(c *Config, v string)) func(c *Config, v string) error {
+	return func(c *Config, v string) error {
+		v = strings.TrimSpace(v)
+		if v == "" {
+			return fmt.Errorf("%s must not be empty", key)
+		}
+		set(c, v)
+		return nil
+	}
 }
 
 func parseBool(v string) (bool, bool) {

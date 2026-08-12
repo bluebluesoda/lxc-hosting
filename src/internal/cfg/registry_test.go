@@ -107,3 +107,98 @@ func TestAdminPassHashManagedElsewhere(t *testing.T) {
 		t.Errorf("admin_pass_hash list value = %q", v)
 	}
 }
+
+func TestEditableClassification(t *testing.T) {
+	cases := map[string]string{
+		"panel.listen":          "yes",
+		"panel.session_days":    "yes",
+		"net.v4_forward":        "yes",
+		"net.ipv6_subnet":       "yes",
+		"panel.url_path":        "only-when-empty",
+		"panel.admin_url_path":  "only-when-empty",
+		"net.subnet":            "no",
+		"net.gateway":           "no",
+		"lxd.pool":              "no",
+		"lxd.bridge":            "no",
+		"panel.admin_pass_hash": "no",
+		"installed_version":     "no",
+	}
+	for key, want := range cases {
+		if got := FieldFor(key).Editable(); got != want {
+			t.Errorf("Editable(%s) = %q, want %q", key, got, want)
+		}
+	}
+}
+
+func TestSecretPathValidators(t *testing.T) {
+	c := Default()
+	// too short
+	if err := FieldFor("panel.url_path").Assign(c, "Short1"); err == nil {
+		t.Error("short url_path accepted")
+	}
+	// bad charset
+	if err := FieldFor("panel.url_path").Assign(c, "bad path with spaces"); err == nil {
+		t.Error("url_path with spaces accepted")
+	}
+	// valid
+	if err := FieldFor("panel.url_path").Assign(c, "Ab1_cdE-9x"); err != nil {
+		t.Fatalf("valid url_path rejected: %v", err)
+	}
+	// collision with the other panel path
+	c.Panel.AdminPath = "Xy-9ab_cdE"
+	if err := FieldFor("panel.url_path").Assign(c, "Xy-9ab_cdE"); err == nil {
+		t.Error("url_path equal to admin_url_path accepted")
+	}
+	// empty rejected
+	if err := FieldFor("panel.admin_url_path").Assign(c, ""); err == nil {
+		t.Error("empty admin_url_path accepted")
+	}
+}
+
+func TestIPValidators(t *testing.T) {
+	c := Default()
+	if err := FieldFor("panel.public_ip").Assign(c, "1.2.3.4"); err != nil {
+		t.Fatalf("valid public_ip rejected: %v", err)
+	}
+	if c.Panel.PublicIP != "1.2.3.4" {
+		t.Errorf("public_ip = %q", c.Panel.PublicIP)
+	}
+	if err := FieldFor("panel.public_ip").Assign(c, "not-an-ip"); err == nil {
+		t.Error("invalid public_ip accepted")
+	}
+	// AUTO clears it so FillAuto re-detects on the next load.
+	if err := FieldFor("panel.public_ip").Assign(c, "AUTO"); err != nil {
+		t.Fatalf("AUTO public_ip rejected: %v", err)
+	}
+	if c.Panel.PublicIP != "" {
+		t.Errorf("AUTO public_ip not cleared: %q", c.Panel.PublicIP)
+	}
+	// display_ip may be empty (fall back to public_ip).
+	if err := FieldFor("panel.display_ip").Assign(c, ""); err != nil {
+		t.Fatalf("empty display_ip rejected: %v", err)
+	}
+	if err := FieldFor("panel.display_ip").Assign(c, "2001:db8::1"); err != nil {
+		t.Fatalf("valid IPv6 display_ip rejected: %v", err)
+	}
+	if err := FieldFor("panel.display_ip").Assign(c, "junk"); err == nil {
+		t.Error("invalid display_ip accepted")
+	}
+}
+
+func TestPanelDBApplyIsInstall(t *testing.T) {
+	if got := FieldFor("panel.db").Apply; got != ApplyInstall {
+		t.Errorf("panel.db apply = %v, want re-run vps install", got)
+	}
+	if err := FieldFor("panel.db").Assign(Default(), ""); err == nil {
+		t.Error("empty db path accepted")
+	}
+}
+
+func TestNonEmptyOperators(t *testing.T) {
+	c := Default()
+	for _, key := range []string{"panel.cert", "panel.key", "net.ext_if", "lxd.image", "lxd.socket"} {
+		if err := FieldFor(key).Assign(c, ""); err == nil {
+			t.Errorf("%s: empty accepted", key)
+		}
+	}
+}

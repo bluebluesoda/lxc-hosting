@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -606,10 +607,7 @@ func cmdConfig(args []string) error {
 	case "list":
 		return configList()
 	case "set":
-		if len(args) != 3 {
-			return fmt.Errorf("usage: vps config set <key> <value>")
-		}
-		return configSet(args[1], args[2])
+		return configSet(args[1:])
 	case "help":
 		configHelp()
 		return nil
@@ -625,33 +623,68 @@ func configList() error {
 		return fmt.Errorf("load config: %w", err)
 	}
 	w := tabwriter.NewWriter(os.Stdout, 2, 4, 2, ' ', 0)
-	fmt.Fprintln(w, "KEY\tKIND\tAPPLY\tVALUE")
+	fmt.Fprintln(w, "KEY\tEDITABLE\tKIND\tAPPLY\tVALUE")
 	for _, f := range cfg.Fields {
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", f.Key, f.Kind, f.Apply, cfg.FieldValue(c, f.Key))
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", f.Key, f.Editable(), f.Kind, f.Apply, cfg.FieldValue(c, f.Key))
 	}
-	return w.Flush()
+	if err := w.Flush(); err != nil {
+		return err
+	}
+	fmt.Println("\neditable: yes = changeable · no = refused · only-when-empty = re-enable a disabled panel")
+	return nil
 }
 
 func configHelp() {
 	w := tabwriter.NewWriter(os.Stdout, 2, 4, 2, ' ', 0)
-	fmt.Fprintln(w, "KEY\tKIND\tAPPLY\tDESCRIPTION")
+	fmt.Fprintln(w, "KEY\tEDITABLE\tKIND\tAPPLY\tDESCRIPTION")
 	for _, f := range cfg.Fields {
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", f.Key, f.Kind, f.Apply, f.Desc)
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", f.Key, f.Editable(), f.Kind, f.Apply, f.Desc)
 	}
 	_ = w.Flush()
+	fmt.Println("\neditable: yes = changeable · no = refused · only-when-empty = re-enable a disabled panel")
+	fmt.Println("apply: restart panel (auto) = the panel is restarted for you · re-run vps install = run `vps install` or re-set with --apply")
 }
 
 func configUsage() {
 	fmt.Print(`usage:
-  vps config list              show current config, annotated with kind/apply
-  vps config set <key> <value>  change one field (validated; immutable fields refused)
-  vps config help              describe every field and how changes take effect
+  vps config list                show current config, annotated with editable/kind/apply
+  vps config set <key> <value>   change one field (validated; immutable fields refused)
+                                 [--apply]    apply install-class fields now (runs vps install)
+                                 [--no-apply] save only, do not apply
+  vps config help                describe every field and how changes take effect
 `)
 }
 
-// configSet validates a field against the registry, saves it, and applies (or
-// prints the required action for) the change.
-func configSet(key, value string) error {
+// configSet parses `set <key> <value> [flags]`, validates against the registry,
+// saves, and applies the change: restart-class fields restart the panel
+// automatically, runtime toggles apply immediately, install-class fields warn
+// unless --apply is given.
+func configSet(args []string) error {
+	key, value := "", ""
+	apply, noApply := false, false
+	for _, a := range args {
+		switch a {
+		case "--apply":
+			apply = true
+		case "--no-apply":
+			noApply = true
+		default:
+			if key == "" {
+				key = a
+			} else if value == "" {
+				value = a
+			} else {
+				return fmt.Errorf("usage: vps config set <key> <value> [--apply|--no-apply]")
+			}
+		}
+	}
+	if key == "" || value == "" {
+		return fmt.Errorf("usage: vps config set <key> <value> [--apply|--no-apply]")
+	}
+	if apply && noApply {
+		return fmt.Errorf("--apply and --no-apply are mutually exclusive")
+	}
+
 	f := cfg.FieldFor(key)
 	if f == nil {
 		return fmt.Errorf("unknown config key %q — see `vps config help`", key)
@@ -662,58 +695,118 @@ func configSet(key, value string) error {
 	}
 	// Immutable fields are refused, except (re-)enabling the two secret panel
 	// paths while they are currently empty (panel disabled).
-	if f.Kind == cfg.KindImmutable {
+	if f.Kind == cfg.KindImmutable && (f.Editable() != "only-when-empty" || cfg.FieldValue(c, key) != "") {
 		cur := cfg.FieldValue(c, key)
-		switch key {
-		case "panel.url_path", "panel.admin_url_path":
-			if cur != "" {
-				return fmt.Errorf("%s is fixed once set (currently %q); changing it would break existing links", key, cur)
-			}
-		default:
-			return fmt.Errorf("%s is fixed at install and cannot be changed — see `vps config help`", key)
+		if f.Editable() == "only-when-empty" && cur != "" {
+			return fmt.Errorf("%s is not editable (already set to %q) — fixed once set; see `vps config help`", key, cur)
 		}
+		return fmt.Errorf("%s is not editable (fixed at install) — see `vps config help`", key)
 	}
 	if f.Kind == cfg.KindAuto {
-		return fmt.Errorf("%s is auto-written by the panel and cannot be set", key)
+		return fmt.Errorf("%s is not editable (auto-written by the panel)", key)
 	}
+
+	old := cfg.FieldValue(c, key)
 	if err := f.Assign(c, value); err != nil {
 		return err
+	}
+	if cfg.FieldValue(c, key) == old {
+		fmt.Printf("%s is already %q — nothing to do.\n", key, old)
+		return nil
 	}
 	if err := cfg.Save(c); err != nil {
 		return fmt.Errorf("save config: %w", err)
 	}
+	if noApply {
+		fmt.Printf("%s saved (not applied).\n", key)
+		return nil
+	}
+
 	switch f.Apply {
 	case cfg.ApplyRestart:
-		fmt.Printf("%s updated. Apply: systemctl restart vpsmgr-panel\n", key)
+		switch key {
+		case "panel.listen":
+			if !listenFree(c.Panel.Listen) {
+				return fmt.Errorf("config saved, but the new listen port is already in use (%s) — panel not restarted", c.Panel.Listen)
+			}
+		case "panel.cert":
+			if _, err := os.Stat(c.Panel.Cert); err != nil {
+				fmt.Printf("warning: certificate file %s does not exist — panel may fail to start\n", c.Panel.Cert)
+			}
+		case "panel.key":
+			if _, err := os.Stat(c.Panel.Key); err != nil {
+				fmt.Printf("warning: key file %s does not exist — panel may fail to start\n", c.Panel.Key)
+			}
+		}
+		if err := restartPanel(); err != nil {
+			fmt.Printf("%s saved, but the panel was NOT restarted: %v\n", key, err)
+			return nil
+		}
+		fmt.Printf("%s updated and panel restarted.\n", key)
 	case cfg.ApplyInstall:
-		fmt.Printf("%s updated. Apply: re-run vps install\n", key)
+		if key == "net.ext_if" {
+			if _, err := os.Stat("/sys/class/net/" + c.Net.ExtIF); err != nil {
+				fmt.Printf("warning: network interface %q not found\n", c.Net.ExtIF)
+			}
+		}
+		if !apply {
+			fmt.Printf("%s saved but NOT applied. Run `vps install` to apply (regenerates firewall/routing/container wiring), or re-run with --apply.\n", key)
+			return nil
+		}
+		if err := cmdInstall(); err != nil {
+			return fmt.Errorf("config saved, but `vps install` failed: %w", err)
+		}
+		fmt.Printf("%s updated and applied (vps install ran).\n", key)
 	case cfg.ApplyNextAdd:
-		fmt.Printf("%s updated. Applies on the next vps add / reinstall\n", key)
+		fmt.Printf("%s saved. Applies on the next vps add / reinstall.\n", key)
 	case cfg.ApplyImmediate:
+		if err := applyV4State(c); err != nil {
+			return err
+		}
+		fmt.Printf("%s updated and applied (firewall/traefik state refreshed).\n", key)
+	case cfg.ApplyNone:
+		return fmt.Errorf("%s is not settable", key)
+	}
+	return nil
+}
+
+// restartPanel restarts the vpsmgr-panel systemd service and waits for it to
+// come back. It refuses (returns an error) when the panel is not running as an
+// active systemd service — in that case the operator must restart it manually.
+func restartPanel() error {
+	if out, err := exec.Command("systemctl", "is-active", "--quiet", "vpsmgr-panel.service").CombinedOutput(); err != nil {
+		return fmt.Errorf("vpsmgr-panel.service is not an active systemd service (%s) — restart the panel manually", strings.TrimSpace(string(out)))
+	}
+	if err := exec.Command("systemctl", "restart", "vpsmgr-panel.service").Run(); err != nil {
+		return fmt.Errorf("systemctl restart vpsmgr-panel failed: %w", err)
+	}
+	for i := 0; i < 20; i++ {
+		if exec.Command("systemctl", "is-active", "--quiet", "vpsmgr-panel.service").Run() == nil {
+			return nil
+		}
+		time.Sleep(300 * time.Millisecond)
+	}
+	return fmt.Errorf("panel did not come back up after restart — check vpsmgr-panel.service")
+}
+
+// listenFree reports whether addr (e.g. ":8443") is free to bind.
+func listenFree(addr string) bool {
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		return false
+	}
+	ln.Close()
+	return true
+}
+
+// applyV4State enforces the current net.v4_forward policy (firewall + traefik).
+func applyV4State(c *cfg.Config) error {
 	d, err := db.Open(c.Panel.DB)
 	if err != nil {
 		return err
 	}
 	defer d.Close()
-	// Enforce immutable fields against the DB snapshot: refuse to serve when
-	// the config drifted from install (a box without a snapshot yet — a
-	// pre-feature install that never re-ran `vps install` — is allowed).
-	if snap, ok, err := d.GetSetting(db.SettingImmutableSnapshot); err != nil {
-		return err
-	} else if ok {
-		if err := c.VerifyImmutable(snap); err != nil {
-			return err
-		}
-	}
-	m := mgr.New(c, d)
-		if err := m.ApplyV4State(); err != nil {
-			return err
-		}
-		fmt.Printf("%s updated and applied (firewall/traefik state refreshed)\n", key)
-	case cfg.ApplyNone:
-		return fmt.Errorf("%s is not settable", key)
-	}
-	return nil
+	return mgr.New(c, d).ApplyV4State()
 }
 
 // cmdV4Forward toggles the shared IPv4 inbound policy. Turning it off makes
