@@ -5,48 +5,90 @@ import (
 	"strings"
 )
 
-// EnsureRoutedIPv6 makes containers route to each other's public IPv6 through
-// the host instead of trying direct L2 neighbour discovery (which port
-// isolation blocks). The LXD bridge advertises the parent prefix as on-link,
-// so a container would resolve a peer directly and the frame would die at the
-// isolated bridge port. Telling systemd-networkd to ignore the RA on-link and
-// route prefixes (plus dropping the ICMPv6 redirects the host would otherwise
-// send to put the peer back on-link) makes every peer packet go to the
-// container's default gateway — the host — which forwards it via the peer's
-// /112 route. L2 between containers stays isolated: no broadcast/NDP plane, no
-// MITM, only address-addressed routed traffic. No-op when IPv6 is disabled.
-func (m *Manager) EnsureRoutedIPv6() error {
-	if !m.cfg.IPv6Enabled() {
-		return nil
+// ipv6ContainerScript returns a shell script that configures a container's
+// IPv6 so peers are reached through the host instead of direct L2 neighbour
+// discovery (which port isolation blocks), and applies the deterministic
+// primary /128:
+//
+//   - Debian (systemd-networkd): add [IPv6AcceptRA] UseOnLinkPrefix=false +
+//     UseRoutePrefix=false so the parent prefix is not on-link.
+//   - RHEL-family (NetworkManager): the connection is set to ipv6.method=ignore
+//     (the kernel then handles RA), the baked kernel sysctls give the RA
+//     default route but not the on-link prefix and drop redirects, and the
+//     primary /128 is applied via the baked vpsmgr-ipv6.service.
+//
+// Both end by flushing stale on-link / redirect routes for the parent prefix.
+func (m *Manager) ipv6ContainerScript(name string) (string, error) {
+	ipv6, err := m.IPv6Addr(name)
+	if err != nil {
+		return "", err
+	}
+	if ipv6 == "" {
+		return "", nil
 	}
 	n, err := m.cfg.IPv6Network()
 	if err != nil {
-		return err
+		return "", err
 	}
-	// Bare prefix (without the trailing ::) used to match routes that belong to
-	// the parent prefix, e.g. 2406:da14:1dd2:a807:753a for .../80.
+	// Bare prefix (without the trailing ::) used to match routes that belong
+	// to the parent prefix, e.g. 2406:da14:1dd2:a807:753a for a /80.
 	prefix := strings.TrimSuffix(n.IP.String(), "::")
 	script := fmt.Sprintf(`set -e
-CFG=/etc/systemd/network/eth0.network
-if ! grep -qs 'UseOnLinkPrefix=false' "$CFG" 2>/dev/null; then
-  printf '\n[IPv6AcceptRA]\nUseOnLinkPrefix=false\nUseRoutePrefix=false\n' >> "$CFG"
-  systemctl restart systemd-networkd || true
+if command -v nmcli >/dev/null 2>&1 && ! systemctl is-active systemd-networkd >/dev/null 2>&1; then
+  CONN=$(nmcli -t -f NAME con show 2>/dev/null | grep -i eth0 | head -1)
+  [ -n "$CONN" ] && nmcli con mod "$CONN" ipv6.method ignore >/dev/null 2>&1 || true
+  printf '%%s/128\n' %q > /etc/vpsmgr-ipv6.conf
+  systemctl enable --now vpsmgr-ipv6.service >/dev/null 2>&1 || true
+  ip -6 addr replace %q/128 dev eth0 2>/dev/null || true
+else
+  CFG=/etc/systemd/network/eth0.network
+  if ! grep -qs 'UseOnLinkPrefix=false' "$CFG" 2>/dev/null; then
+    printf '\n[IPv6AcceptRA]\nUseOnLinkPrefix=false\nUseRoutePrefix=false\n' >> "$CFG"
+    systemctl restart systemd-networkd || true
+  fi
 fi
-# Drop stale on-link and redirect routes for the parent prefix so this
-# container stops trying to reach peers directly.
 for r in $(ip -6 route show dev eth0 | awk '{print $1}'); do
   case "$r" in
     %s*) ip -6 route del "$r" dev eth0 2>/dev/null || true ;;
   esac
 done
-ip -6 route flush cache || true`, prefix)
+ip -6 route flush cache 2>/dev/null || true`, ipv6, ipv6, prefix)
+	return script, nil
+}
+
+// ConfigureContainerIPv6 applies the host-routed IPv6 setup to one container
+// (its stack decides the mechanism). Called on add/reinstall for new
+// containers and by EnsureRoutedIPv6 for existing ones. No-op when IPv6 is
+// disabled or the container has no address.
+func (m *Manager) ConfigureContainerIPv6(name string) error {
+	if !m.cfg.IPv6Enabled() {
+		return nil
+	}
+	script, err := m.ipv6ContainerScript(name)
+	if err != nil || script == "" {
+		return err
+	}
+	if _, err := m.lx.ExecSH(name, script); err != nil {
+		return err
+	}
+	return nil
+}
+
+// EnsureRoutedIPv6 applies the host-routed IPv6 setup to every existing
+// container, so inter-container IPv6 goes through the host with L2 between
+// containers staying isolated (no broadcast/NDP plane, no MITM, only
+// address-addressed routed traffic). Runs on `vpsmgr install`; idempotent.
+func (m *Manager) EnsureRoutedIPv6() error {
+	if !m.cfg.IPv6Enabled() {
+		return nil
+	}
 	users, err := m.db.ListUsers()
 	if err != nil {
 		return err
 	}
 	var firstErr error
 	for _, u := range users {
-		if _, err := m.lx.ExecSH(u.Name, script); err != nil && firstErr == nil {
+		if err := m.ConfigureContainerIPv6(u.Name); err != nil && firstErr == nil {
 			firstErr = err
 		}
 	}

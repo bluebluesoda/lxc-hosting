@@ -244,6 +244,11 @@ func (m *Manager) Add(name string, opt AddOptions) (*Result, error) {
 		cleanup()
 		return nil, fmt.Errorf("wire ipv6: %w", err)
 	}
+	// Host-routed peer IPv6 (no L2 discovery / MITM between containers).
+	if err := m.ConfigureContainerIPv6(name); err != nil {
+		cleanup()
+		return nil, fmt.Errorf("config container ipv6: %w", err)
+	}
 	u, err := m.db.CreateUser(name, hash, ip, idx, portBase, opt.CPU, opt.MemMB, opt.DiskGB)
 	if err != nil {
 		cleanup()
@@ -605,6 +610,9 @@ func (m *Manager) Reinstall(name, image string) (string, error) {
 	}
 	if err := m.WireIPv6(u.Name); err != nil {
 		return "", fmt.Errorf("wire ipv6: %w", err)
+	}
+	if err := m.ConfigureContainerIPv6(u.Name); err != nil {
+		return "", fmt.Errorf("config container ipv6: %w", err)
 	}
 	return pass, nil
 }

@@ -60,7 +60,18 @@ rm -rf /var/cache/dnf /var/log/* /tmp/* /var/tmp/* 2>/dev/null || true
 # Drop the baked-in machine-id so every container boots its own: a shared
 # machine-id means a shared DHCPv6 DUID, which breaks dnsmasq lease renewals
 # and drops the container global IPv6 at the 1h lease mark.
-rm -f /etc/machine-id /var/lib/dbus/machine-id 2>/dev/null || true'; then
+rm -f /etc/machine-id /var/lib/dbus/machine-id 2>/dev/null || true
+# IPv6 for RHEL containers is kernel-managed: take the RA default route but
+# not the on-link prefix (peers route via the host), ignore redirects, and let
+# a boot unit apply the deterministic primary /128 that vpsmgr writes to
+# /etc/vpsmgr-ipv6.conf (NetworkManager ships ipv6.method=ignore and would
+# otherwise fight these settings). Written with printf because the build runs
+# inside a single-quoted sh -c block.
+printf 'net.ipv6.conf.eth0.accept_ra = 1\nnet.ipv6.conf.eth0.accept_ra_pinfo = 0\nnet.ipv6.conf.eth0.accept_redirects = 0\n' > /etc/sysctl.d/99-vpsmgr-ipv6.conf
+printf '#!/bin/sh\n[ -f /etc/vpsmgr-ipv6.conf ] || exit 0\nip -6 addr replace "$(cat /etc/vpsmgr-ipv6.conf)" dev eth0\n' > /usr/local/sbin/vpsmgr-ipv6
+chmod +x /usr/local/sbin/vpsmgr-ipv6
+printf '[Unit]\nDescription=vpsmgr IPv6 primary address\nAfter=network-online.target\nWants=network-online.target\n[Service]\nType=oneshot\nExecStart=/usr/local/sbin/vpsmgr-ipv6\nRemainAfterExit=yes\n[Install]\nWantedBy=multi-user.target\n' > /etc/systemd/system/vpsmgr-ipv6.service
+systemctl enable vpsmgr-ipv6.service >/dev/null 2>&1 || true'; then
     lxc stop "$NAME" --timeout=30 || true
     lxc publish "$NAME" --alias "$IMAGE"
     lxc delete --force "$NAME" || true
