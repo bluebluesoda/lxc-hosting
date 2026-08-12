@@ -186,7 +186,7 @@ func (m *Manager) BatchUsers() ([]*UserStatus, error) {
 			if delta < 0 {
 				delta = 0
 			}
-			pct := float64(delta) / 1e9 / float64(u.CPU) * 100
+			pct := float64(delta) / 1e9 / (float64(u.CPU) / 10) * 100
 			rs.CPUUse = fmt.Sprintf("%.0f%%", pct)
 			rs.MemUse = humanBytes(cur.MemUsage)
 		} else {

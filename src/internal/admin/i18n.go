@@ -90,7 +90,6 @@ func tr(l, key string, args ...any) string {
 		"power_ok":           {"%[1]v %[2]v 成功", "%[2]v %[1]v ok"},
 		"new_panel_password": {"用户 %[1]v 的面板密码已重置：\n%[2]v\n面板：%[3]v", "%[1]v panel password reset:\n%[2]v\npanel: %[3]v"},
 		"admin_pass_changed": {"管理员密码已修改", "admin password changed"},
-		"err_invalid_cpu":    {"CPU 必须是整数", "cpu must be an integer"},
 		"err_invalid_disk":   {"磁盘必须是整数 GiB", "disk must be an integer (GiB)"},
 	}
 	pair, ok := m[key]

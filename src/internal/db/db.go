@@ -40,7 +40,7 @@ func (d *DB) migrate() error {
 			idx INTEGER UNIQUE NOT NULL,
 			ip TEXT NOT NULL,
 			port_base INTEGER NOT NULL,
-			cpu INTEGER NOT NULL DEFAULT 1,
+			cpu INTEGER NOT NULL DEFAULT 10,
 			mem_mb INTEGER NOT NULL DEFAULT 1024,
 			disk_gb INTEGER NOT NULL DEFAULT 10,
 			created_at TEXT NOT NULL
@@ -71,6 +71,27 @@ func (d *DB) migrate() error {
 		if _, err := d.sql.Exec(s); err != nil {
 			return fmt.Errorf("migrate: %w", err)
 		}
+	}
+	return d.migrateCPU()
+}
+
+// migrateCPU converts the cpu column from whole cores to tenths of a core
+// (cpu=1 now means 0.1 cores; cpu=10 means 1 core). Old databases stored whole
+// cores as integers, so multiply by 10. Guarded by PRAGMA user_version so it
+// runs exactly once — the fresh-install default (10) must never be doubled.
+func (d *DB) migrateCPU() error {
+	var v int
+	if err := d.sql.QueryRow("PRAGMA user_version").Scan(&v); err != nil {
+		return fmt.Errorf("migrate: read user_version: %w", err)
+	}
+	if v >= 1 {
+		return nil
+	}
+	if _, err := d.sql.Exec(`UPDATE users SET cpu = cpu * 10`); err != nil {
+		return fmt.Errorf("migrate: scale cpu to tenths: %w", err)
+	}
+	if _, err := d.sql.Exec(`PRAGMA user_version = 1`); err != nil {
+		return fmt.Errorf("migrate: set user_version: %w", err)
 	}
 	return nil
 }

@@ -149,6 +149,8 @@ usage:
   vpsmgr panel-url              print panel address
   vpsmgr note-version <ver>     record binary version that left this config (used by uninstall.sh)
   vpsmgr version
+cpu:  whole cores >= 1 (e.g. --cpu 2), or a fraction of one core in 0.1..0.9
+      (e.g. --cpu 0.5 — the container is pinned to one core with a time slice)
 `)
 }
 
@@ -448,10 +450,10 @@ func userAdd(args []string) error {
 	name := args[0]
 	fs := flag.NewFlagSet("add", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
-	var cpuFlag int
+	var cpuS string
 	var memS, diskS, passS string
 	fs.StringVar(&passS, "password", "", "")
-	fs.IntVar(&cpuFlag, "cpu", 0, "")
+	fs.StringVar(&cpuS, "cpu", "", "")
 	fs.StringVar(&memS, "mem", "", "")
 	fs.StringVar(&diskS, "disk", "", "")
 	if err := fs.Parse(args[1:]); err != nil {
@@ -463,14 +465,13 @@ func userAdd(args []string) error {
 	provided := map[string]bool{}
 	fs.Visit(func(f *flag.Flag) { provided[f.Name] = true })
 
-	cpu, mem, disk := 1, 1024, 10
+	cpu, mem, disk := 10, 1024, 10 // tenths of a core, MiB, GiB
 	setCpu, setMem, setDisk := provided["cpu"], provided["mem"], provided["disk"]
 	var err error
 	if setCpu {
-		if err = validateCPU(strconv.Itoa(cpuFlag)); err != nil {
+		if cpu, err = mgr.ParseCPU(cpuS); err != nil {
 			return err
 		}
-		cpu = cpuFlag
 	}
 	if setMem {
 		if mem, err = parseMemStrict(memS); err != nil {
@@ -489,7 +490,7 @@ func userAdd(args []string) error {
 			if err != nil {
 				return err
 			}
-			cpu, _ = strconv.Atoi(s)
+			cpu, _ = mgr.ParseCPU(s)
 		}
 		if !setMem {
 			s, err := inter.Ask("Memory", "1024", " MiB (e.g. 512 or 1G)", validateMem)
@@ -550,9 +551,9 @@ func userUpdate(args []string) error {
 	name := args[0]
 	fs := flag.NewFlagSet("update", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
-	var cpuFlag int
+	var cpuS string
 	var memS, diskS string
-	fs.IntVar(&cpuFlag, "cpu", 0, "")
+	fs.StringVar(&cpuS, "cpu", "", "")
 	fs.StringVar(&memS, "mem", "", "")
 	fs.StringVar(&diskS, "disk", "", "")
 	if err := fs.Parse(args[1:]); err != nil {
@@ -581,10 +582,9 @@ func userUpdate(args []string) error {
 	cpu, mem, disk := u.CPU, u.MemMB, u.DiskGB
 	setCpu, setMem, setDisk := provided["cpu"], provided["mem"], provided["disk"]
 	if setCpu {
-		if err = validateCPU(strconv.Itoa(cpuFlag)); err != nil {
+		if cpu, err = mgr.ParseCPU(cpuS); err != nil {
 			return err
 		}
-		cpu = cpuFlag
 	}
 	if setMem {
 		if mem, err = parseMemStrict(memS); err != nil {
@@ -598,13 +598,13 @@ func userUpdate(args []string) error {
 	}
 
 	if inter.IsTTY() {
-		fmt.Printf("current quota: CPU %d / mem %d MiB / disk %d GiB\n", u.CPU, u.MemMB, u.DiskGB)
+		fmt.Printf("current quota: CPU %s / mem %d MiB / disk %d GiB\n", mgr.FormatCPU(u.CPU), u.MemMB, u.DiskGB)
 		if !setCpu {
-			s, err := inter.Ask("new CPU cores", strconv.Itoa(cpu), "", validateCPU)
+			s, err := inter.Ask("new CPU cores", mgr.FormatCPU(cpu), "", validateCPU)
 			if err != nil {
 				return err
 			}
-			cpu, _ = strconv.Atoi(s)
+			cpu, _ = mgr.ParseCPU(s)
 		}
 		if !setMem {
 			s, err := inter.Ask("new memory", strconv.Itoa(mem), " MiB (e.g. 512 or 1G)", validateMem)
@@ -701,9 +701,9 @@ func userList() error {
 	}
 	fmt.Printf("%-16s %-14s %-14s %-10s %-6s %-8s %-7s %-8s %-8s %-6s %-10s\n", "NAME", "IP", "PORTS", "STATE", "CPU", "MEM", "DISK", "UP_GB", "DOWN_GB", "CPU%", "MEMUSE")
 	for _, r := range results {
-		fmt.Printf("%-16s %-14s %-14s %-10s %-6d %-8d %-7d %-8s %-8s %-6s %-10s\n",
+		fmt.Printf("%-16s %-14s %-14s %-10s %-6s %-8d %-7d %-8s %-8s %-6s %-10s\n",
 			r.User.Name, r.User.IP, mgr.ServicePorts(r.User.PortBase, r.PortsPerUser),
-			r.State, r.User.CPU, r.User.MemMB, r.User.DiskGB, r.UpGB, r.DownGB, r.CPUUse, r.MemUse)
+			r.State, mgr.FormatCPU(r.User.CPU), r.User.MemMB, r.User.DiskGB, r.UpGB, r.DownGB, r.CPUUse, r.MemUse)
 	}
 	return nil
 }
@@ -739,7 +739,7 @@ func printAdded(r *mgr.Result) {
 	} else {
 		fmt.Printf("ssh:      %d\n", u.PortBase)
 	}
-	fmt.Printf("quotas:   %d cpu / %d MiB / %d GiB\n", u.CPU, u.MemMB, u.DiskGB)
+	fmt.Printf("quotas:   %s cpu / %d MiB / %d GiB\n", mgr.FormatCPU(u.CPU), u.MemMB, u.DiskGB)
 	if r.IPv6 != "" {
 		fmt.Printf("ipv6:     %s\n", r.IPv6)
 	}
@@ -764,7 +764,7 @@ func printResult(r *mgr.Result) {
 	} else {
 		fmt.Printf("ssh:      %d\n", u.PortBase)
 	}
-	fmt.Printf("quotas:   %d cpu / %d MiB / %d GiB\n", u.CPU, u.MemMB, u.DiskGB)
+	fmt.Printf("quotas:   %s cpu / %d MiB / %d GiB\n", mgr.FormatCPU(u.CPU), u.MemMB, u.DiskGB)
 	fmt.Printf("cpu use:  %s\n", r.CPUUse)
 	fmt.Printf("mem use:  %s\n", r.MemUse)
 	fmt.Printf("traffic:  up %s GB / down %s GB (this month)\n", r.UpGB, r.DownGB)
@@ -780,14 +780,8 @@ func printResult(r *mgr.Result) {
 var reInt = regexp.MustCompile(`^\d+$`)
 
 func validateCPU(s string) error {
-	if !reInt.MatchString(s) {
-		return fmt.Errorf("CPU cores must be an integer (no fractions)")
-	}
-	n, _ := strconv.Atoi(s)
-	if n < 1 {
-		return fmt.Errorf("CPU cores must be at least 1")
-	}
-	return nil
+	_, err := mgr.ParseCPU(s)
+	return err
 }
 
 // parseMemStrict parses a memory size into MiB: bare integer (MiB) or integer

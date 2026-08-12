@@ -49,19 +49,19 @@ type hostView struct {
 
 // userView is one row of the admin user table.
 type userView struct {
-	Name     string
-	State    string
-	Ports    string
-	SSHPort  string
-	QuotaCPU string
-	QuotaMem string
+	Name      string
+	State     string
+	Ports     string
+	SSHPort   string
+	QuotaCPU  string
+	QuotaMem  string
 	QuotaDisk string
-	CPUUse   string
-	MemUse   string
-	DiskUsed string
-	UpGB     string
-	DownGB   string
-	IPv6     string
+	CPUUse    string
+	MemUse    string
+	DiskUsed  string
+	UpGB      string
+	DownGB    string
+	IPv6      string
 }
 
 func (s *Server) buildPageData(msg, errMsg string) pageData {
@@ -84,13 +84,13 @@ func (s *Server) buildPageData(msg, errMsg string) pageData {
 		Uptime:    formatUptime(hs.Uptime),
 	}
 	if hs.Mem.MemTotal > 0 {
-		d.Host.MemPct = strconv.Itoa(int(hs.Mem.MemUsed * 100 / hs.Mem.MemTotal)) + "%"
+		d.Host.MemPct = strconv.Itoa(int(hs.Mem.MemUsed*100/hs.Mem.MemTotal)) + "%"
 	}
 	if hs.Mem.SwapTotal > 0 {
-		d.Host.SwapPct = strconv.Itoa(int(hs.Mem.SwapUsed * 100 / hs.Mem.SwapTotal)) + "%"
+		d.Host.SwapPct = strconv.Itoa(int(hs.Mem.SwapUsed*100/hs.Mem.SwapTotal)) + "%"
 	}
 	if hs.PoolTotal > 0 {
-		d.Host.PoolPct = strconv.Itoa(int(hs.PoolUsed * 100 / hs.PoolTotal)) + "%"
+		d.Host.PoolPct = strconv.Itoa(int(hs.PoolUsed*100/hs.PoolTotal)) + "%"
 	}
 	return d
 }
@@ -109,7 +109,7 @@ func (s *Server) loadUsers(d *pageData) {
 			State:     st.State,
 			Ports:     mgr.ServicePorts(u.PortBase, s.cfg.Net.PortsPerUser),
 			SSHPort:   strconv.Itoa(u.PortBase),
-			QuotaCPU:  strconv.Itoa(u.CPU),
+			QuotaCPU:  mgr.FormatCPU(u.CPU),
 			QuotaMem:  strconv.Itoa(u.MemMB) + " MiB",
 			QuotaDisk: strconv.Itoa(u.DiskGB) + " GiB",
 			CPUUse:    st.CPUUse,
@@ -259,9 +259,9 @@ func (s *Server) handleUserAdd(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	name := r.FormValue("name")
-	cpu, err := strconv.Atoi(r.FormValue("cpu"))
+	cpu, err := mgr.ParseCPU(r.FormValue("cpu"))
 	if err != nil {
-		s.redirect(w, r, s.p(""), "error: "+s.t(r, "err_invalid_cpu"))
+		s.redirect(w, r, s.p(""), "error: "+err.Error())
 		return
 	}
 	memMB, err := parseMem(r.FormValue("mem"))
@@ -309,9 +309,9 @@ func (s *Server) handleUserQuota(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	name := r.FormValue("name")
-	cpu, err := strconv.Atoi(r.FormValue("cpu"))
+	cpu, err := mgr.ParseCPU(r.FormValue("cpu"))
 	if err != nil {
-		s.redirect(w, r, s.p(""), "error: "+s.t(r, "err_invalid_cpu"))
+		s.redirect(w, r, s.p(""), "error: "+err.Error())
 		return
 	}
 	memMB, err := parseMem(r.FormValue("mem"))

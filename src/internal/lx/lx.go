@@ -382,10 +382,30 @@ func (c *Client) Restart(name string) error {
 	return c.WaitReady(name, 90*time.Second)
 }
 
-// SetCPU live-updates the CPU limit (number of cores).
-func (c *Client) SetCPU(name string, n int) error {
-	body := map[string]map[string]string{"config": {"limits.cpu": strconv.Itoa(n)}}
-	return c.patch("/1.0/instances/"+url.PathEscape(name), body, nil)
+// cpuLimitConfig maps a CPU quota in tenths of a core onto LXD config keys.
+// Whole cores set `limits.cpu=<n>`. Fractional quotas (0.1..0.9) pin the
+// container to a single core and add a time allowance
+// (`limits.cpu.allowance=<n>ms/100ms`) so it may only use that slice of the
+// core. Setting the allowance to "" removes it, which is how a fractional
+// quota is switched back to whole cores (PATCH merges and deletes empty keys).
+func cpuLimitConfig(cpuTenths int) map[string]string {
+	if cpuTenths%10 != 0 {
+		return map[string]string{
+			"limits.cpu":           "1",
+			"limits.cpu.allowance": strconv.Itoa(cpuTenths*10) + "ms/100ms",
+		}
+	}
+	return map[string]string{
+		"limits.cpu":           strconv.Itoa(cpuTenths / 10),
+		"limits.cpu.allowance": "",
+	}
+}
+
+// SetCPU live-updates the CPU quota (tenths of a core). Whole cores set
+// `limits.cpu`; fractional quotas pin to one core with a time allowance.
+func (c *Client) SetCPU(name string, cpuTenths int) error {
+	return c.patch("/1.0/instances/"+url.PathEscape(name),
+		map[string]map[string]string{"config": cpuLimitConfig(cpuTenths)}, nil)
 }
 
 // SetMem live-updates the memory limit.
@@ -449,6 +469,7 @@ func (c *Client) PoolResources(pool string) (total, used int64, err error) {
 // IPv6), root size and autostart enabled, then starts it and waits until it is
 // ready. security.nesting allows running Docker / nested containers inside.
 // pool and bridge name the storage pool and managed bridge (from config).
+// cpu is a quota in tenths of a core (see cpuLimitConfig).
 // Everything is submitted in ONE create request — the config, the eth0 static
 // addresses and the root size — so no follow-up device overrides are needed.
 func (c *Client) Launch(pool, bridge, name, image, ip, ipv6 string, cpu, memMB, diskGB int) error {
@@ -462,15 +483,14 @@ func (c *Client) Launch(pool, bridge, name, image, ip, ipv6 string, cpu, memMB, 
 	if ipv6 != "" {
 		eth0["ipv6.address"] = ipv6
 	}
+	config := cpuLimitConfig(cpu)
+	config["limits.memory"] = strconv.Itoa(memMB) + "MiB"
+	config["boot.autostart"] = "true"
+	config["security.nesting"] = "true"
 	req := createReq{
 		Name:   name,
 		Source: map[string]string{"type": "image", "alias": image},
-		Config: map[string]string{
-			"limits.cpu":       strconv.Itoa(cpu),
-			"limits.memory":    strconv.Itoa(memMB) + "MiB",
-			"boot.autostart":   "true",
-			"security.nesting": "true",
-		},
+		Config: config,
 		Devices: map[string]device{
 			"eth0": eth0,
 			"root": {"type": "disk", "path": "/", "pool": pool, "size": strconv.Itoa(diskGB) + "GiB"},

@@ -242,7 +242,7 @@ func (s *Server) buildData(u *db.User, msg, errMsg string) pageData {
 		Ports:       mgr.ServicePorts(u.PortBase, s.cfg.Net.PortsPerUser),
 		PublicPorts: s.cfg.DisplayIP() + ":" + mgr.ServicePorts(u.PortBase, s.cfg.Net.PortsPerUser),
 		SSH:         "ssh -p " + itoa(u.PortBase) + " root@" + s.cfg.DisplayIP(),
-		QuotaCPU:    itoa(u.CPU),
+		QuotaCPU:    mgr.FormatCPU(u.CPU),
 		QuotaMem:    itoa(u.MemMB) + " MiB",
 		QuotaDisk:   itoa(u.DiskGB) + " GiB",
 		Msg:         msg,

@@ -39,7 +39,9 @@ src/      Go source (single binary: CLI + panel)
   `lxdbr0` (10.42.0.0/24). The panel talks to the daemon over its **Unix-socket
   REST API** (`internal/lx`, one reusable HTTP connection, no `lxc` process
   spawn per call); only `lxc exec` (provisioning scripts, the readiness probe,
-  the per-container `df` probe) still shells out to the CLI.
+  the per-container `df` probe) still shells out to the CLI. Fractional CPU
+  quotas (0.1..0.9) are enforced as `limits.cpu=1` plus
+  `limits.cpu.allowance=<n>ms/100ms` — a one-core pin with a time slice.
 - **nftables** — one table `inet vpsmgr`: DNAT (prerouting+output) for port
   ranges, MASQUERADE for NAT4. Reload is idempotent (delete+apply). Restored
   on boot by `vpsmgr-nft.service`.
@@ -66,8 +68,9 @@ src/      Go source (single binary: CLI + panel)
 
 - User `i` (1..253): container IP `10.42.0.(i+1)`, port range
   `10000 + (i-1)*50`, 50 ports, the first maps to container SSH port 22.
-- Quotas: CPU cores, memory (MiB), disk (GiB). Disk maps onto the ZFS quota
-  and can only grow, never shrink.
+- Quotas: CPU (whole cores ≥ 1, or a fraction 0.1..0.9 of one core), memory
+  (MiB), disk (GiB). Disk maps onto the ZFS quota and can only grow, never
+  shrink.
 
 ## Storage
 

@@ -149,8 +149,8 @@ func (m *Manager) Add(name string, opt AddOptions) (*Result, error) {
 	if err := ValidateName(name); err != nil {
 		return nil, err
 	}
-	if opt.CPU < 1 {
-		return nil, errors.New("cpu must be >= 1")
+	if err := ValidateCPU(opt.CPU); err != nil {
+		return nil, err
 	}
 	if opt.MemMB < 64 {
 		return nil, errors.New("memory must be >= 64 MiB")
@@ -192,22 +192,41 @@ func (m *Manager) Add(name string, opt AddOptions) (*Result, error) {
 	if err := m.lx.Launch(m.cfg.LXD.Pool, m.cfg.LXD.Bridge, name, image, ip, ipv6, opt.CPU, opt.MemMB, opt.DiskGB); err != nil {
 		return nil, fmt.Errorf("launch container: %w", err)
 	}
+	// From here on any failure must roll the container and its host-side
+	// plumbing back, so a half-created user cannot leak a container, an IPv6
+	// route, nft rules or a dangling database record.
+	var createdID int64
+	cleanup := func() {
+		m.UnwireIPv6(name)
+		_ = m.lx.Delete(name)
+		_ = m.fw.RemoveUser(name)
+		_ = m.fw.Reload()
+		if createdID != 0 {
+			_ = m.db.DeleteUser(createdID)
+		}
+	}
 	if err := m.Provision(name, image, opt.Password); err != nil {
+		cleanup()
 		return nil, fmt.Errorf("provision container: %w", err)
 	}
 	// IPv6 pass-through: attach the /128 route + proxy_ndp entry for the
 	// container's SLAAC global address (no-op when IPv6 is disabled).
 	if err := m.WireIPv6(name); err != nil {
+		cleanup()
 		return nil, fmt.Errorf("wire ipv6: %w", err)
 	}
 	u, err := m.db.CreateUser(name, hash, ip, idx, portBase, opt.CPU, opt.MemMB, opt.DiskGB)
 	if err != nil {
+		cleanup()
 		return nil, fmt.Errorf("db: %w", err)
 	}
+	createdID = u.ID
 	if err := m.fw.WriteUser(name, u.IP, u.PortBase); err != nil {
+		cleanup()
 		return nil, fmt.Errorf("write nft rules: %w", err)
 	}
 	if err := m.fw.Reload(); err != nil {
+		cleanup()
 		return nil, err
 	}
 	return m.ResultFor(u, opt.Password), nil
@@ -277,7 +296,7 @@ func (m *Manager) sampleUsage() (map[string]lx.Usage, error) {
 
 func (m *Manager) decorateUsage(r *Result, use map[string]lx.Usage) {
 	if u, ok := use[r.User.Name]; ok && r.User.CPU > 0 {
-		pct := float64(u.CPUUsage) / 1e9 / float64(r.User.CPU) * 100
+		pct := float64(u.CPUUsage) / 1e9 / (float64(r.User.CPU) / 10) * 100
 		if pct < 0 {
 			pct = 0
 		}
@@ -368,6 +387,9 @@ func (m *Manager) UpdateQuotas(name string, cpu, memMB, diskGB int) (*Result, er
 		return nil, err
 	}
 	if cpu > 0 {
+		if err := ValidateCPU(cpu); err != nil {
+			return nil, err
+		}
 		if err := m.lx.SetCPU(u.Name, cpu); err != nil {
 			return nil, err
 		}

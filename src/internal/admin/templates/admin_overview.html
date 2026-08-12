@@ -57,6 +57,11 @@ form.inline { display: inline; }
 @media (prefers-color-scheme: dark) { .field label { color: #9aa0a8; } }
 .field input { width: 100%; padding: 8px 10px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 13px; background: #fff; color: inherit; }
 @media (prefers-color-scheme: dark) { .field input { background: #15171b; border-color: #3a3f47; } }
+.cpu-row { display: flex; gap: 4px; align-items: stretch; }
+.cpu-row input { flex: 1; min-width: 0; }
+.cpu-row .step { display: flex; flex-direction: column; }
+.cpu-row .step button { flex: 1; padding: 0 8px; font-size: 10px; line-height: 1; border-radius: 6px; }
+.cpu-row .step button + button { margin-top: 2px; }
 .empty { color: #9ca3af; text-align: center; padding: 20px; }
 .msg { background: #dcfce7; color: #166534; border: 1px solid #bbf7d0; padding: 8px 12px; border-radius: 8px; font-size: 13px; margin-bottom: 14px; }
 @media (prefers-color-scheme: dark) { .msg { background: #123a24; color: #86efac; border-color: #14532d; } }
@@ -128,7 +133,9 @@ a.copy.copied { border-color: #86efac; background: #dcfce7; color: #15803d; }
     <form action="{{.Prefix}}/user-add" method="post" class="form-grid" id="createForm">
       <div class="field"><label>{{if eq .Lang "zh"}}用户名{{else}}Username{{end}}</label><input name="name" pattern="[a-z]([a-z0-9-]*[a-z0-9])?" maxlength="63" required title="{{if eq .Lang "zh"}}以小写字母开头，只能含小写字母、数字、连字符（63 位内）{{else}}starts with a lowercase letter; letters, digits and hyphens only (max 63){{end}}"></div>
       <div class="field"><label>{{if eq .Lang "zh"}}密码（留空自动生成）{{else}}Password (blank = auto){{end}}</label><input name="password" type="text"></div>
-      <div class="field"><label>CPU</label><input name="cpu" id="cfCpu" type="number" min="1" value="1" required></div>
+      <div class="field"><label>CPU</label>
+        <div class="cpu-row"><input name="cpu" id="cfCpu" type="number" min="0.1" step="0.1" value="1" required title="{{if eq .Lang "zh"}}整数核心（≥1）或 0.1~0.9 小数（单核的时间片占比）{{else}}whole cores (>= 1) or a decimal 0.1..0.9 (a fraction of one core){{end}}"><span class="step"><button type="button" onclick="stepCpu('cfCpu',1)" title="+">▲</button><button type="button" onclick="stepCpu('cfCpu',-1)" title="−">▼</button></span></div>
+      </div>
       <div class="field"><label>{{if eq .Lang "zh"}}内存 MiB{{else}}Memory MiB{{end}}</label><input name="mem" id="cfMem" value="1024" required></div>
       <div class="field"><label>{{if eq .Lang "zh"}}磁盘 GiB{{else}}Disk GiB{{end}}</label><input name="disk" id="cfDisk" type="number" min="1" value="10" required></div>
       <button type="submit" class="primary" id="cfBtn">{{if eq .Lang "zh"}}创建{{else}}Create{{end}}</button>
@@ -213,7 +220,9 @@ a.copy.copied { border-color: #86efac; background: #dcfce7; color: #15803d; }
     <h3>{{if eq .Lang "zh"}}调整配额{{else}}Update quotas{{end}}: <span id="quotaName"></span></h3>
     <form action="{{.Prefix}}/user-quota" method="post" class="form-grid" id="quotaForm">
       <input type="hidden" name="name" id="quotaNameHidden">
-      <div class="field"><label>CPU</label><input name="cpu" id="quotaCpu" type="number" min="1" required></div>
+      <div class="field"><label>CPU</label>
+        <div class="cpu-row"><input name="cpu" id="quotaCpu" type="number" min="0.1" step="0.1" required title="{{if eq .Lang "zh"}}整数核心（≥1）或 0.1~0.9 小数（单核的时间片占比）{{else}}whole cores (>= 1) or a decimal 0.1..0.9 (a fraction of one core){{end}}"><span class="step"><button type="button" onclick="stepCpu('quotaCpu',1)" title="+">▲</button><button type="button" onclick="stepCpu('quotaCpu',-1)" title="−">▼</button></span></div>
+      </div>
       <div class="field"><label>{{if eq .Lang "zh"}}内存 MiB{{else}}Memory MiB{{end}}</label><input name="mem" id="quotaMem" required></div>
       <div class="field"><label>{{if eq .Lang "zh"}}磁盘 GiB{{else}}Disk GiB{{end}}</label><input name="disk" id="quotaDisk" type="number" min="1" required></div>
       <button type="submit" class="primary" id="quotaSaveBtn">{{if eq .Lang "zh"}}保存{{else}}Save{{end}}</button>
@@ -244,12 +253,29 @@ function copyModal(){
 function quota(name, cpu, mem, disk){
   document.getElementById('quotaName').textContent = name;
   document.getElementById('quotaNameHidden').value = name;
-  document.getElementById('quotaCpu').value = parseInt(cpu);
+  document.getElementById('quotaCpu').value = parseFloat(cpu);
   document.getElementById('quotaMem').value = parseInt(mem);
   document.getElementById('quotaDisk').value = parseInt(disk);
+  syncCpuStep(document.getElementById('quotaCpu'));
   document.getElementById('quotaModal').classList.add('open');
 }
 function closeQuota(){ document.getElementById('quotaModal').classList.remove('open'); }
+// CPU stepper: 0.1-core steps below one core, whole-core steps from 1 up.
+// From 1 down goes to 0.9; from 0.9 up goes to 1. Clamped at the 0.1 minimum.
+function stepCpu(id, dir){
+  var el = document.getElementById(id);
+  var v = parseFloat(el.value);
+  if (isNaN(v)) v = 1;
+  var nv = (dir > 0) ? ((v < 1) ? v + 0.1 : v + 1) : ((v <= 1) ? v - 0.1 : v - 1);
+  nv = Math.round(nv * 10) / 10;
+  if (nv < 0.1) nv = 0.1;
+  el.value = nv;
+  el.dispatchEvent(new Event('input'));
+}
+function syncCpuStep(el){
+  var v = parseFloat(el.value);
+  if (!isNaN(v)) el.step = (v < 1) ? 0.1 : 1;
+}
 function del(name){
   if (!confirm("{{if eq .Lang "zh"}}删除用户 " + name + "？此操作将删除容器和所有数据，不可恢复。{{else}}Delete user " + name + "? This deletes the container and all data. This cannot be undone.{{end}}")) return;
   var f = document.createElement('form'); f.method='post'; f.action = P + '/user-del';
@@ -264,9 +290,11 @@ function del(name){
   try {
     var saved = JSON.parse(localStorage.getItem(KEY) || 'null');
     if (saved) { if (saved.cpu) cpu.value = saved.cpu; if (saved.mem) mem.value = saved.mem; if (saved.disk) disk.value = saved.disk; }
+    syncCpuStep(cpu);
   } catch (e) {}
   function persist(){ try { localStorage.setItem(KEY, JSON.stringify({cpu: cpu.value, mem: mem.value, disk: disk.value})); } catch (e) {} }
-  cpu.addEventListener('input', persist); mem.addEventListener('input', persist); disk.addEventListener('input', persist);
+  function onCpu(){ syncCpuStep(cpu); persist(); }
+  cpu.addEventListener('input', onCpu); mem.addEventListener('input', persist); disk.addEventListener('input', persist);
   document.getElementById('createForm').addEventListener('submit', function(){
     btn.disabled = true; btn.classList.add('busy'); btn.textContent = CREATE_ING;
   });
@@ -292,6 +320,9 @@ function del(name){
     btn.disabled = true; btn.classList.add('busy');
     btn.textContent = {{if eq .Lang "zh"}}"保存中…"{{else}}"Saving…"{{end}};
   });
+  // Keep the native spinner granularity in sync with the value.
+  var qc = document.getElementById('quotaCpu');
+  if (qc) qc.addEventListener('input', function(){ syncCpuStep(qc); });
 })();
 // consume flash banner once
 fetch(P + '/flash', {method:'POST'}).then(function(r){return r.json();}).then(function(j){
