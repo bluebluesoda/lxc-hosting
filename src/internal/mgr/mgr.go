@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"vpsmgr/internal/cfg"
@@ -27,6 +28,12 @@ type Manager struct {
 	lx  *lx.Client
 	fw  *fw.Firewall
 	tfx *tfx.Traefik
+
+	// opMu serializes Add/Del/Reinstall within this process (the panels share
+	// one Manager), so two simultaneous creates cannot race for the same
+	// index/IP. Cross-process CLI races are still caught by the users.idx
+	// UNIQUE constraint plus Add's rollback.
+	opMu sync.Mutex
 }
 
 func New(c *cfg.Config, d *db.DB) *Manager {
@@ -146,6 +153,9 @@ type AddOptions struct {
 }
 
 func (m *Manager) Add(name string, opt AddOptions) (*Result, error) {
+	m.opMu.Lock()
+	defer m.opMu.Unlock()
+
 	if err := ValidateName(name); err != nil {
 		return nil, err
 	}
@@ -187,6 +197,12 @@ func (m *Manager) Add(name string, opt AddOptions) (*Result, error) {
 	portBase := m.cfg.Net.PortBase + (idx-1)*m.cfg.Net.PortsPerUser
 	ipv6, _ := m.IPv6Addr(name)
 	if err := m.checkIPv6Collision(name, ipv6); err != nil {
+		return nil, err
+	}
+	// Defend against orphan containers: a crashed create (or an out-of-band
+	// `lxc` instance) could already hold this name or the IP NextFreeIdx just
+	// gave us. Refuse rather than create a bridge IP conflict.
+	if err := m.checkLXDConflict(name, ip); err != nil {
 		return nil, err
 	}
 	if err := m.lx.Launch(m.cfg.LXD.Pool, m.cfg.LXD.Bridge, name, image, ip, ipv6, opt.CPU, opt.MemMB, opt.DiskGB); err != nil {
@@ -259,6 +275,26 @@ func (m *Manager) checkIPv6Collision(name, addr string) error {
 	return nil
 }
 
+// checkLXDConflict refuses to create a container whose name or static IPv4 is
+// already claimed by a live LXD instance. This only fires on orphans — a
+// crashed add that left a container behind, or an out-of-band `lxc` instance —
+// because DB users are excluded by NextFreeIdx beforehand.
+func (m *Manager) checkLXDConflict(name, ip string) error {
+	ips, err := m.lx.InstanceStaticIPs()
+	if err != nil {
+		return err
+	}
+	for n, v := range ips {
+		if n == name {
+			return fmt.Errorf("container name %q already exists in LXD (orphan?); choose another name", name)
+		}
+		if v == ip {
+			return fmt.Errorf("IPv4 %s already assigned to live container %q (orphan?); choose another name", ip, n)
+		}
+	}
+	return nil
+}
+
 type Result struct {
 	User         *db.User
 	Password     string
@@ -323,6 +359,9 @@ func (m *Manager) ResultFor(u *db.User, pass string) *Result {
 }
 
 func (m *Manager) Del(name string) error {
+	m.opMu.Lock()
+	defer m.opMu.Unlock()
+
 	if err := ValidateName(name); err != nil {
 		return err
 	}
@@ -330,10 +369,15 @@ func (m *Manager) Del(name string) error {
 	if err != nil {
 		return err
 	}
-	m.UnwireIPv6(name)
+	// If the container cannot actually be removed, keep the DB record and let
+	// the admin retry. Deleting the row anyway would orphan the container and
+	// let NextFreeIdx reuse its IP/ports for a new user — a bridge IP conflict.
 	if err := m.lx.Delete(name); err != nil {
-		fmt.Printf("  ! warn: delete container: %v\n", err)
+		return fmt.Errorf("delete container: %w", err)
 	}
+	m.UnwireIPv6(name)
+	// The remaining cleanup is best-effort: leftover nft rules / traefik
+	// config without a container are harmless and re-runnable on retry.
 	if err := m.fw.RemoveUser(name); err != nil {
 		fmt.Printf("  ! warn: remove nft rules: %v\n", err)
 	}
@@ -501,6 +545,9 @@ func (m *Manager) ResetRootPassword(name string) (string, error) {
 // A new random root password is generated (returned for one-time display);
 // the panel login password is unchanged.
 func (m *Manager) Reinstall(name string) (string, error) {
+	m.opMu.Lock()
+	defer m.opMu.Unlock()
+
 	u, err := m.db.GetUserByName(name)
 	if err != nil {
 		return "", err

@@ -440,14 +440,44 @@ func (c *Client) SetDisk(name string, gb int) error {
 	return c.patch("/1.0/instances/"+url.PathEscape(name), body, nil)
 }
 
-// Delete force-stops the container if needed and removes it.
+// Delete force-stops the container if needed and removes it. Already-gone
+// containers are treated as success so deletions are retryable after a partial
+// cleanup; any other failure (e.g. the daemon being unreachable) is returned
+// because the caller must not pretend the container is gone.
 func (c *Client) Delete(name string) error {
 	st, err := c.stateOf(name)
-	if err == nil && st.Status != "Stopped" {
+	if err != nil {
+		if strings.Contains(err.Error(), "Instance not found") {
+			return nil
+		}
+		return err
+	}
+	if st.Status != "Stopped" {
 		_ = c.sendOp(http.MethodPut, "/1.0/instances/"+url.PathEscape(name)+"/state",
 			stateAction{Action: "stop", Force: true, Timeout: -1}, 2*time.Minute)
 	}
 	return c.sendOp(http.MethodDelete, "/1.0/instances/"+url.PathEscape(name), nil, 2*time.Minute)
+}
+
+// InstanceStaticIPs returns every instance's name and its configured static
+// IPv4 (the eth0 device's ipv4.address), regardless of running state. Instances
+// created from a profile without an own eth0 override carry an empty IP but are
+// still returned, so the caller can detect name collisions too. Used to refuse
+// an add whose name or IP is already claimed by a live LXD instance.
+func (c *Client) InstanceStaticIPs() (map[string]string, error) {
+	var insts []instance
+	if err := c.get("/1.0/instances?recursion=1", &insts); err != nil {
+		return nil, err
+	}
+	out := make(map[string]string, len(insts))
+	for _, it := range insts {
+		ip := ""
+		if d, ok := it.Devices["eth0"]; ok {
+			ip = d["ipv4.address"]
+		}
+		out[it.Name] = ip
+	}
+	return out, nil
 }
 
 // ImageExists reports whether an image alias is present.

@@ -43,8 +43,11 @@ src/      Go source (single binary: CLI + panel)
   quotas (0.1..0.9) are enforced as `limits.cpu=1` plus
   `limits.cpu.allowance=<n>ms/100ms` — a one-core pin with a time slice.
 - **nftables** — one table `inet vpsmgr`: DNAT (prerouting+output) for port
-  ranges, MASQUERADE for NAT4. Reload is idempotent (delete+apply). Restored
-  on boot by `vpsmgr-nft.service`.
+  ranges, MASQUERADE for NAT4. Reload applies the whole ruleset as **one atomic
+  batch** (`delete table` + rules in a single `nft -f`, with an idempotent
+  `nft add table` first to cover boot where the table is absent), so a bad rule
+  can never leave tenants without NAT. Restored on boot by
+  `vpsmgr-nft.service`.
 - **UFW** — vpsmgr manages its firewall through its own nftables table, so the
   installer **disables UFW** when it is active: UFW's default-DROP policy runs
   before LXD's `table inet lxd` rules and silently kills container IPv4 (no
@@ -68,6 +71,13 @@ src/      Go source (single binary: CLI + panel)
 
 - User `i` (1..253): container IP `10.42.0.(i+1)`, port range
   `10000 + (i-1)*50`, 50 ports, the first maps to container SSH port 22.
+- Add/Del/Reinstall are serialized by a per-process mutex, and `mgr.Add` rolls
+  back the container, IPv6 route, nft rules and DB record on any post-launch
+  failure. `mgr.Del` refuses to drop the DB row when the container cannot
+  actually be removed (it would orphan the container and let `NextFreeIdx`
+  reuse its IP for a new user); a fresh add also refuses a name/IP already
+  claimed by a live LXD instance, so orphaned containers cannot cause bridge
+  IP conflicts.
 - Quotas: CPU (whole cores ≥ 1, or a fraction 0.1..0.9 of one core), memory
   (MiB), disk (GiB). Disk maps onto the ZFS quota and can only grow, never
   shrink.

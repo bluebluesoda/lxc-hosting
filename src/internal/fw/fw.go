@@ -22,12 +22,14 @@ func (f *Firewall) userFile(name string) string {
 
 func (f *Firewall) MainPath() string { return f.cfg.NftMain() }
 
-// WriteMain writes the authoritative main config (table, chains, masquerade,
-// include of per-user files).
-func (f *Firewall) WriteMain() error {
-	sub := f.cfg.Net.Subnet
-	ext := f.cfg.Net.ExtIF
-	content := fmt.Sprintf(`table inet vpsmgr {
+// mainContent renders the authoritative main config: delete the table first so
+// `nft -f` applies the whole ruleset as ONE atomic batch (if any rule fails,
+// the previous table survives instead of vanishing mid-reload).
+func mainContent(c *cfg.Config) string {
+	sub := c.Net.Subnet
+	ext := c.Net.ExtIF
+	return fmt.Sprintf(`delete table inet vpsmgr
+table inet vpsmgr {
   chain prerouting {
     type nat hook prerouting priority dstnat; policy accept;
   }
@@ -42,8 +44,13 @@ func (f *Firewall) WriteMain() error {
   }
 }
 include "%s"
-`, sub, ext, filepath.Join(f.cfg.NftDir(), "*.nft"))
-	return os.WriteFile(f.MainPath(), []byte(content), 0o644)
+`, sub, ext, filepath.Join(c.NftDir(), "*.nft"))
+}
+
+// WriteMain writes the authoritative main config (table, chains, masquerade,
+// include of per-user files).
+func (f *Firewall) WriteMain() error {
+	return os.WriteFile(f.MainPath(), []byte(mainContent(f.cfg)), 0o644)
 }
 
 // WriteUser writes the DNAT rules for a user. Two sets: prerouting (external
@@ -72,12 +79,13 @@ func (f *Firewall) RemoveUser(name string) error {
 	return os.Remove(f.userFile(name))
 }
 
-// Reload rebuilds the vpsmgr table from the main config (delete then apply).
+// Reload rebuilds the vpsmgr table as one atomic nft batch. nft rules do not
+// survive a reboot, so on boot the table does not exist and a `delete table`
+// inside the batch would fail it; `nft add table` is idempotent, so ensure the
+// table exists first. The batch then delete-and-recreates atomically: any rule
+// error rolls the whole batch back and the previous table stays intact.
 func (f *Firewall) Reload() error {
-	del := exec.Command("nft", "delete", "table", "inet", "vpsmgr")
-	if err := del.Run(); err != nil {
-		// table may not exist yet; that is fine
-	}
+	_ = exec.Command("nft", "add", "table", "inet", "vpsmgr").Run()
 	apply := exec.Command("nft", "-f", f.MainPath())
 	if out, err := apply.CombinedOutput(); err != nil {
 		return fmt.Errorf("nft -f: %s", strings.TrimSpace(string(out)))

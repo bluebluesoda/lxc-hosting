@@ -47,7 +47,7 @@ Wants=network-online.target
 Before=vpsmgr-panel.service
 [Service]
 Type=oneshot
-ExecStart=/bin/sh -c 'nft delete table inet vpsmgr 2>/dev/null; exec nft -f /etc/vpsmgr/nftables.conf'
+ExecStart=/bin/sh -c 'nft add table inet vpsmgr 2>/dev/null; exec nft -f /etc/vpsmgr/nftables.conf'
 RemainAfterExit=yes
 [Install]
 WantedBy=multi-user.target
