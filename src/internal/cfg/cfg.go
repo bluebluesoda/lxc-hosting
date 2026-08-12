@@ -65,6 +65,12 @@ const (
 	ThrottleDisplay = "1Mbps"
 )
 
+// GeneratedBanner is prepended to every file the panel generates, telling
+// operators the file is managed and will be overwritten. '# ' is a valid
+// comment in nftables, YAML, sysctl and systemd unit files alike.
+const GeneratedBanner = "# Managed by vpsmgr — generated file, do not edit by hand.\n" +
+	"# Changes are overwritten on the next write; use the panel / `vps` CLI instead.\n"
+
 type Config struct {
 	Panel PanelCfg `yaml:"panel"`
 	Net   NetCfg   `yaml:"net"`

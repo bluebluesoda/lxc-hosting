@@ -8,13 +8,16 @@ import (
 )
 
 // TestMainContentStartsWithDeleteTable verifies the atomic-reload contract:
-// the generated config begins with `delete table`, so a single `nft -f`
-// applies the whole ruleset as one batch instead of deleting and re-adding in
-// two separate commands.
+// the generated config begins with `delete table` (after the comment banner),
+// so a single `nft -f` applies the whole ruleset as one batch instead of
+// deleting and re-adding in two separate commands.
 func TestMainContentStartsWithDeleteTable(t *testing.T) {
 	c := cfg.Default()
 	content := mainContent(c)
-	if !strings.HasPrefix(content, "delete table inet vpsmgr\n") {
+	if !strings.HasPrefix(content, cfg.GeneratedBanner) {
+		t.Fatalf("mainContent missing the managed-by banner:\n%s", content)
+	}
+	if !strings.Contains(content, "delete table inet vpsmgr\n") {
 		t.Fatalf("mainContent does not start with delete table:\n%s", content)
 	}
 	if !strings.Contains(content, `include "/etc/vpsmgr/nftables.d/*.nft"`) {

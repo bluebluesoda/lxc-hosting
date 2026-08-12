@@ -28,7 +28,9 @@ import (
 	"vpsmgr/internal/ver"
 )
 
-const panelUnit = `[Unit]
+const panelUnit = `# Managed by vpsmgr — installed file, do not edit by hand.
+# Changes are overwritten on the next install.
+[Unit]
 Description=vpsmgr panel
 After=network-online.target
 Wants=network-online.target
@@ -41,7 +43,9 @@ RestartSec=3
 WantedBy=multi-user.target
 `
 
-const nftUnit = `[Unit]
+const nftUnit = `# Managed by vpsmgr — installed file, do not edit by hand.
+# Changes are overwritten on the next install.
+[Unit]
 Description=vpsmgr nftables rules
 After=network-online.target lxd.service
 Wants=network-online.target
@@ -54,7 +58,9 @@ RemainAfterExit=yes
 WantedBy=multi-user.target
 `
 
-const ipv6Unit = `[Unit]
+const ipv6Unit = `# Managed by vpsmgr — installed file, do not edit by hand.
+# Changes are overwritten on the next install.
+[Unit]
 Description=vpsmgr IPv6 pass-through routes
 After=network-online.target lxd.service vpsmgr-nft.service
 Wants=network-online.target

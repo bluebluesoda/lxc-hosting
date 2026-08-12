@@ -28,7 +28,7 @@ func (f *Firewall) MainPath() string { return f.cfg.NftMain() }
 func mainContent(c *cfg.Config) string {
 	sub := c.Net.Subnet
 	ext := c.Net.ExtIF
-	return fmt.Sprintf(`delete table inet vpsmgr
+	return fmt.Sprintf(`%sdelete table inet vpsmgr
 table inet vpsmgr {
   chain prerouting {
     type nat hook prerouting priority dstnat; policy accept;
@@ -60,7 +60,7 @@ table inet vpsmgr {
   }
 }
 include "%s"
-`, sub, ext, filepath.Join(c.NftDir(), "*.nft"))
+`, cfg.GeneratedBanner, sub, ext, filepath.Join(c.NftDir(), "*.nft"))
 }
 
 // WriteMain writes the authoritative main config (table, chains, masquerade,
@@ -83,6 +83,7 @@ func (f *Firewall) WriteUser(name, ip string, sshPort, startPort, perUser int) e
 		daddr = ""
 	}
 	var b strings.Builder
+	b.WriteString(cfg.GeneratedBanner)
 	fmt.Fprintf(&b, "add rule inet vpsmgr prerouting tcp dport %d dnat ip to %s:22\n", sshPort, ip)
 	fmt.Fprintf(&b, "add rule inet vpsmgr prerouting tcp dport %d-%d dnat ip to %s\n", startPort, last, ip)
 	fmt.Fprintf(&b, "add rule inet vpsmgr prerouting udp dport %d-%d dnat ip to %s\n", startPort, last, ip)

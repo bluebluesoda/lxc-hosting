@@ -51,6 +51,7 @@ func (t *Traefik) filePath(domain string) string {
 func (t *Traefik) WriteDomain(domain, ip string, proxyProtocol bool) error {
 	san := sanitizeDomain(domain)
 	var b strings.Builder
+	b.WriteString(cfg.GeneratedBanner)
 	fmt.Fprintf(&b, "http:\n  routers:\n    u-%s:\n      rule: \"Host(`%s`)\"\n      entryPoints: [web]\n      service: s-%s\n", san, domain, san)
 	fmt.Fprintf(&b, "  services:\n    s-%s:\n      loadBalancer:\n        servers: [{ url: \"http://%s:80\" }]\n", san, ip)
 	fmt.Fprintf(&b, "tcp:\n  routers:\n    t-%s:\n      rule: \"HostSNI(`%s`)\"\n      entryPoints: [websecure]\n      tls: { passthrough: true }\n      service: t-%s\n", san, domain, san)

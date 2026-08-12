@@ -12,6 +12,8 @@ log(){ echo "[20] $*"; }
 # kernel LPE attack surface for tenants. Value 1, not 2: the host stack (LXD,
 # ZFS, Go panel/traefik) is untouched. Matches RHEL 9.3+'s shipped default.
 cat > /etc/sysctl.d/99-vpsmgr.conf <<EOF
+# Managed by vpsmgr — generated file, do not edit by hand.
+# Changes are overwritten on the next install.
 net.ipv4.ip_forward=1
 net.core.default_qdisc=fq
 net.ipv4.tcp_congestion_control=bbr

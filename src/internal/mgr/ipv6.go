@@ -10,6 +10,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	"vpsmgr/internal/cfg"
 )
 
 // IPv6 pass-through support (verified empirically):
@@ -270,6 +272,7 @@ func (m *Manager) ndppdConf(add, drop string) (string, error) {
 	}
 	sort.Strings(sorted)
 	var b strings.Builder
+	b.WriteString(cfg.GeneratedBanner)
 	fmt.Fprintf(&b, "proxy %s {\n", ext)
 	for _, n := range sorted {
 		block, err := m.IPv6Block(n)
