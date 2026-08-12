@@ -13,6 +13,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"text/tabwriter"
 	"time"
 
 	"vpsmgr/internal/admin"
@@ -128,6 +129,8 @@ func main() {
 			break
 		}
 		err = cmdNoteVersion(os.Args[2])
+	case "config":
+		err = cmdConfig(os.Args[2:])
 	case "version":
 		fmt.Println(ver.Version)
 		return
@@ -154,6 +157,7 @@ usage:
   vps show <name>
   vps panel-url              print panel address
   vps v4-forward on|off      enable/disable IPv4 inbound (ssh/ports/domains); rules refresh
+  vps config list|set|help   inspect/change config.yaml with per-field kind+apply
   vps note-version <ver>     record binary version that left this config (used by uninstall.sh)
   vps version
 cpu:  whole cores >= 1 (e.g. --cpu 2), or a fraction of one core in 0.1..0.9
@@ -559,6 +563,119 @@ func cmdPanelURL() error {
 	}
 	if c.Panel.URLPath == "" && c.Panel.AdminPath == "" {
 		fmt.Println("both panels are disabled (url_path and admin_url_path are empty)")
+	}
+	return nil
+}
+
+// cmdConfig implements `vps config list|set|help`, the sanctioned interface for
+// editing config.yaml. Every key is described by the cfg.Field registry, so the
+// CLI enforces the documented kind/apply semantics instead of leaving a raw
+// YAML edit as the only path.
+func cmdConfig(args []string) error {
+	if len(args) == 0 {
+		configUsage()
+		return nil
+	}
+	switch args[0] {
+	case "list":
+		return configList()
+	case "set":
+		if len(args) != 3 {
+			return fmt.Errorf("usage: vps config set <key> <value>")
+		}
+		return configSet(args[1], args[2])
+	case "help":
+		configHelp()
+		return nil
+	default:
+		configUsage()
+		return nil
+	}
+}
+
+func configList() error {
+	c, err := cfg.Load()
+	if err != nil {
+		return fmt.Errorf("load config: %w", err)
+	}
+	w := tabwriter.NewWriter(os.Stdout, 2, 4, 2, ' ', 0)
+	fmt.Fprintln(w, "KEY\tKIND\tAPPLY\tVALUE")
+	for _, f := range cfg.Fields {
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", f.Key, f.Kind, f.Apply, cfg.FieldValue(c, f.Key))
+	}
+	return w.Flush()
+}
+
+func configHelp() {
+	w := tabwriter.NewWriter(os.Stdout, 2, 4, 2, ' ', 0)
+	fmt.Fprintln(w, "KEY\tKIND\tAPPLY\tDESCRIPTION")
+	for _, f := range cfg.Fields {
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", f.Key, f.Kind, f.Apply, f.Desc)
+	}
+	_ = w.Flush()
+}
+
+func configUsage() {
+	fmt.Print(`usage:
+  vps config list              show current config, annotated with kind/apply
+  vps config set <key> <value>  change one field (validated; immutable fields refused)
+  vps config help              describe every field and how changes take effect
+`)
+}
+
+// configSet validates a field against the registry, saves it, and applies (or
+// prints the required action for) the change.
+func configSet(key, value string) error {
+	f := cfg.FieldFor(key)
+	if f == nil {
+		return fmt.Errorf("unknown config key %q — see `vps config help`", key)
+	}
+	c, err := cfg.Load()
+	if err != nil {
+		return fmt.Errorf("load config: %w", err)
+	}
+	// Immutable fields are refused, except (re-)enabling the two secret panel
+	// paths while they are currently empty (panel disabled).
+	if f.Kind == cfg.KindImmutable {
+		cur := cfg.FieldValue(c, key)
+		switch key {
+		case "panel.url_path", "panel.admin_url_path":
+			if cur != "" {
+				return fmt.Errorf("%s is fixed once set (currently %q); changing it would break existing links", key, cur)
+			}
+		default:
+			return fmt.Errorf("%s is fixed at install and cannot be changed — see `vps config help`", key)
+		}
+	}
+	if f.Kind == cfg.KindAuto {
+		return fmt.Errorf("%s is auto-written by the panel and cannot be set", key)
+	}
+	if err := f.Assign(c, value); err != nil {
+		return err
+	}
+	if err := cfg.Save(c); err != nil {
+		return fmt.Errorf("save config: %w", err)
+	}
+	switch f.Apply {
+	case cfg.ApplyRestart:
+		fmt.Printf("%s updated. Apply: systemctl restart vpsmgr-panel\n", key)
+	case cfg.ApplyInstall:
+		fmt.Printf("%s updated. Apply: re-run vps install\n", key)
+	case cfg.ApplyNextAdd:
+		fmt.Printf("%s updated. Applies on the next vps add / reinstall\n", key)
+	case cfg.ApplyImmediate:
+		d, err := db.Open(c.Panel.DB)
+		if err != nil {
+			return err
+		}
+		defer d.Close()
+		m := mgr.New(c, d)
+		if err := m.ApplyV4State(); err != nil {
+			return err
+		}
+		fmt.Printf("%s updated and applied (firewall/traefik state refreshed)\n", key)
+	case cfg.ApplyNone:
+		return fmt.Errorf("%s is not settable", key)
 	}
 	return nil
 }

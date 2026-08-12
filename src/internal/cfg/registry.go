@@ -1,0 +1,246 @@
+package cfg
+
+import (
+	"fmt"
+	"net"
+	"strconv"
+	"strings"
+)
+
+// FieldKind classifies how a config field may be touched. This is the single
+// source of truth for "who can change what" — `vps config help` renders it and
+// `vps config set` enforces it, so there is no ambiguity between editable and
+// fixed fields.
+type FieldKind int
+
+const (
+	// KindImmutable is fixed at install; changing it would break existing
+	// containers/wiring. Refused by `vps config set` (the two secret panel
+	// paths are an exception: they may be SET when currently empty, i.e.
+	// re-enabling a disabled panel).
+	KindImmutable FieldKind = iota
+	// KindOperator is operator-editable; the Apply column says how the change
+	// takes effect (panel restart, `vps install`, next add, ...).
+	KindOperator
+	// KindRuntime is a live toggle applied immediately (net.v4_forward).
+	KindRuntime
+	// KindAuto is written by the panel/installer only; never user-set.
+	KindAuto
+	// KindSpecial is managed through a dedicated command (admin_pass_hash via
+	// `vps admin-passwd`).
+	KindSpecial
+)
+
+func (k FieldKind) String() string {
+	switch k {
+	case KindImmutable:
+		return "fixed at install"
+	case KindOperator:
+		return "operator"
+	case KindRuntime:
+		return "runtime toggle"
+	case KindAuto:
+		return "auto (panel-managed)"
+	case KindSpecial:
+		return "managed elsewhere"
+	}
+	return "?"
+}
+
+// Apply describes how a change to a field takes effect.
+type Apply int
+
+const (
+	ApplyRestart Apply = iota // systemctl restart vpsmgr-panel
+	ApplyInstall              // re-run vps install
+	ApplyImmediate            // applied by vps config set right now
+	ApplyNextAdd              // used on the next vps add / reinstall
+	ApplyNone                 // not settable
+)
+
+func (a Apply) String() string {
+	switch a {
+	case ApplyRestart:
+		return "systemctl restart vpsmgr-panel"
+	case ApplyInstall:
+		return "re-run vps install"
+	case ApplyImmediate:
+		return "applied immediately"
+	case ApplyNextAdd:
+		return "next vps add / reinstall"
+	case ApplyNone:
+		return "-"
+	}
+	return "?"
+}
+
+// Field describes one config key for the `vps config` command.
+type Field struct {
+	Key   string
+	Kind  FieldKind
+	Apply Apply
+	Desc  string
+	Get    func(c *Config) string
+	Assign func(c *Config, v string) error
+}
+
+// Fields is the registry backing `vps config list/set/help`.
+var Fields = []Field{
+	{"panel.listen", KindOperator, ApplyRestart,
+		"panel listen address, e.g. \":8443\"",
+		getStr(func(c *Config) string { return c.Panel.Listen }),
+		func(c *Config, v string) error {
+			if _, _, err := net.SplitHostPort(v); err != nil {
+				return fmt.Errorf("panel.listen must be host:port (e.g. \":8443\")")
+			}
+			c.Panel.Listen = v
+			return nil
+		}},
+	{"panel.cert", KindOperator, ApplyRestart, "panel TLS certificate path",
+		getStr(func(c *Config) string { return c.Panel.Cert }),
+		setStr(func(c *Config, v string) { c.Panel.Cert = v })},
+	{"panel.key", KindOperator, ApplyRestart, "panel TLS private key path",
+		getStr(func(c *Config) string { return c.Panel.Key }),
+		setStr(func(c *Config, v string) { c.Panel.Key = v })},
+	{"panel.db", KindOperator, ApplyRestart, "SQLite database path",
+		getStr(func(c *Config) string { return c.Panel.DB }),
+		setStr(func(c *Config, v string) { c.Panel.DB = v })},
+	{"panel.public_ip", KindOperator, ApplyInstall, "NIC IPv4 used by firewall/routing (cert is regenerated)",
+		getStr(func(c *Config) string { return c.Panel.PublicIP }),
+		setStr(func(c *Config, v string) { c.Panel.PublicIP = v })},
+	{"panel.display_ip", KindOperator, ApplyRestart, "public IPv4 shown to users (panel URL / SSH hints)",
+		getStr(func(c *Config) string { return c.Panel.DisplayIP }),
+		setStr(func(c *Config, v string) { c.Panel.DisplayIP = v })},
+	{"panel.session_days", KindOperator, ApplyRestart, "login session lifetime in days",
+		getStr(func(c *Config) string { return strconv.Itoa(c.Panel.SessionDays) }),
+		func(c *Config, v string) error {
+			n, err := strconv.Atoi(strings.TrimSpace(v))
+			if err != nil || n <= 0 {
+				return fmt.Errorf("panel.session_days must be a positive integer (days)")
+			}
+			c.Panel.SessionDays = n
+			return nil
+		}},
+	{"panel.url_path", KindImmutable, ApplyRestart,
+		"secret prefix of the user panel (immutable once set; settable only when currently empty = enable)",
+		getStr(func(c *Config) string { return c.Panel.URLPath }),
+		func(c *Config, v string) error { c.Panel.URLPath = v; return nil }},
+	{"panel.admin_url_path", KindImmutable, ApplyRestart,
+		"secret prefix of the admin panel (immutable once set; settable only when currently empty = enable)",
+		getStr(func(c *Config) string { return c.Panel.AdminPath }),
+		func(c *Config, v string) error { c.Panel.AdminPath = v; return nil }},
+	{"panel.admin_pass_hash", KindSpecial, ApplyNone,
+		"admin password bcrypt hash — set via `vps admin-passwd` (stored in the DB)",
+		func(c *Config) string { return "(in database, via `vps admin-passwd`)" },
+		func(c *Config, v string) error {
+			return fmt.Errorf("panel.admin_pass_hash is managed by `vps admin-passwd`, not `vps config set`")
+		}},
+	{"net.subnet", KindImmutable, ApplyNone,
+		"container subnet 10.<n>.0.0/24 — fixed at install, would break existing containers",
+		getStr(func(c *Config) string { return c.Net.Subnet }),
+		func(c *Config, v string) error {
+			return fmt.Errorf("net.subnet is fixed at install; changing it breaks existing containers")
+		}},
+	{"net.gateway", KindImmutable, ApplyNone,
+		"bridge gateway (derived from subnet) — fixed at install",
+		getStr(func(c *Config) string { return c.Net.Gateway }),
+		func(c *Config, v string) error {
+			return fmt.Errorf("net.gateway is fixed at install (derived from net.subnet)")
+		}},
+	{"net.v4_forward", KindRuntime, ApplyImmediate,
+		"IPv4 inbound policy: true = SSH/port-block DNAT + traefik, false = IPv6-only containers",
+		getStr(func(c *Config) string { return strconv.FormatBool(c.Net.V4Forward) }),
+		func(c *Config, v string) error {
+			b, ok := parseBool(v)
+			if !ok {
+				return fmt.Errorf("net.v4_forward must be true/false or 1/0")
+			}
+			c.Net.V4Forward = b
+			return nil
+		}},
+	{"net.ext_if", KindOperator, ApplyInstall, "external NIC (auto-detected from default route)",
+		getStr(func(c *Config) string { return c.Net.ExtIF }),
+		setStr(func(c *Config, v string) { c.Net.ExtIF = v })},
+	{"net.ipv6_subnet", KindOperator, ApplyInstall,
+		"global IPv6 prefix for pass-through (e.g. 2602:fada:6::/64); empty = disabled",
+		getStr(func(c *Config) string { return c.Net.IPv6Subnet }),
+		func(c *Config, v string) error {
+			v = strings.TrimSpace(v)
+			if v == "" {
+				c.Net.IPv6Subnet = ""
+				return nil
+			}
+			old := c.Net.IPv6Subnet
+			c.Net.IPv6Subnet = v
+			if _, err := c.IPv6Network(); err != nil {
+				c.Net.IPv6Subnet = old
+				return err
+			}
+			return nil
+		}},
+	{"lxd.image", KindOperator, ApplyNextAdd, "container image alias used on add/reinstall",
+		getStr(func(c *Config) string { return c.LXD.Image }),
+		setStr(func(c *Config, v string) { c.LXD.Image = v })},
+	{"lxd.image_fallback", KindOperator, ApplyNextAdd, "fallback remote image when the local one is missing",
+		getStr(func(c *Config) string { return c.LXD.ImageFallback }),
+		setStr(func(c *Config, v string) { c.LXD.ImageFallback = v })},
+	{"lxd.pool", KindImmutable, ApplyNone,
+		"storage pool — fixed at install",
+		getStr(func(c *Config) string { return c.LXD.Pool }),
+		func(c *Config, v string) error {
+			return fmt.Errorf("lxd.pool is fixed at install; changing it breaks existing containers")
+		}},
+	{"lxd.bridge", KindImmutable, ApplyNone,
+		"managed bridge — fixed at install",
+		getStr(func(c *Config) string { return c.LXD.Bridge }),
+		func(c *Config, v string) error {
+			return fmt.Errorf("lxd.bridge is fixed at install; changing it breaks existing containers")
+		}},
+	{"lxd.socket", KindOperator, ApplyRestart, "LXD daemon Unix socket path",
+		getStr(func(c *Config) string { return c.LXD.Socket }),
+		setStr(func(c *Config, v string) { c.LXD.Socket = v })},
+	{"installed_version", KindAuto, ApplyNone, "binary version that installed/adopted this config (auto)",
+		getStr(func(c *Config) string { return c.InstalledVersion }),
+		func(c *Config, v string) error {
+			return fmt.Errorf("installed_version is auto-written by `vps install`")
+		}},
+	{"uninstalled_version", KindAuto, ApplyNone, "binary version that a non-purging uninstall removed (auto)",
+		getStr(func(c *Config) string { return c.UninstalledVersion }),
+		func(c *Config, v string) error {
+			return fmt.Errorf("uninstalled_version is auto-written by `vps note-version`")
+		}},
+}
+
+func getStr(f func(c *Config) string) func(c *Config) string { return f }
+
+func setStr(f func(c *Config, v string)) func(c *Config, v string) error {
+	return func(c *Config, v string) error { f(c, v); return nil }
+}
+
+func parseBool(v string) (bool, bool) {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "1", "true", "yes", "on":
+		return true, true
+	case "0", "false", "no", "off":
+		return false, true
+	}
+	return false, false
+}
+
+// FieldFor returns the registry entry for a key, or nil.
+func FieldFor(key string) *Field {
+	for i := range Fields {
+		if Fields[i].Key == key {
+			return &Fields[i]
+		}
+	}
+	return nil
+}
+
+// FieldValue returns the current effective value of a registry key.
+func FieldValue(c *Config, key string) string {
+	if f := FieldFor(key); f != nil && f.Get != nil {
+		return f.Get(c)
+	}
+	return ""
+}
