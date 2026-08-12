@@ -22,6 +22,29 @@ GOARCH="${GOARCH:-$(go env GOARCH)}"
 VERSION="${1:-}"
 if [[ -n "$VERSION" ]]; then
   VERSION="${VERSION#v}"   # strip leading 'v' (v0.1.0 -> 0.1.0)
+else
+  # Local/dev build: identify the exact commit so bug reports are reproducible.
+  # Format = nearest tag + short sha + UTC timestamp, e.g.
+  #   0.2.4-a8934ba9-2608120952
+  #   0.2.4-a8934ba9-dirty-2608120952   (uncommitted changes present)
+  # Building exactly on a tag uses the tag (matches a release build). The
+  # timestamp sorts builds by time, which future upgrade logic can rely on.
+  TS=$(date -u +%y%m%d%H%M)
+  SHA="nosha"
+  DIRTY=""
+  NEAREST="0.0.0"
+  if git -C "$ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    SHA=$(git -C "$ROOT" rev-parse --short=8 HEAD 2>/dev/null || echo nosha)
+    git -C "$ROOT" diff --quiet 2>/dev/null || DIRTY="-dirty"
+    if TAG=$(git -C "$ROOT" describe --tags --exact-match HEAD 2>/dev/null); then
+      VERSION="${TAG#v}${DIRTY}"
+    else
+      NEAREST=$(git -C "$ROOT" describe --tags --abbrev=0 HEAD 2>/dev/null || echo "0.0.0")
+      VERSION="${NEAREST#v}-${SHA}${DIRTY}-${TS}"
+    fi
+  else
+    VERSION="${NEAREST}-${SHA}-${TS}"
+  fi
 fi
 
 log "go $( (cd src && go version) | awk '{print $3}') os=${GOOS} arch=${GOARCH} version=${VERSION:-<source default>}"
