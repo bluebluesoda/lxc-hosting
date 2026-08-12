@@ -39,7 +39,7 @@ import (
 //
 //   vpsmgr renders /etc/ndppd.conf (one rule per container) and restarts the
 //   daemon on add/del/reapply; RewireAllIPv6 rebuilds it from the DB at boot
-//   and on `vpsmgr install`, so rules survive reboots. No NAT, no nftables
+//   and on `vps install`, so rules survive reboots. No NAT, no nftables
 //   changes, no DB schema changes.
 
 // ipv6Suffix returns the low 48 host bits of a container's primary IPv6 (the
@@ -379,7 +379,7 @@ func (m *Manager) cleanLegacyKernelProxy() {
 
 // RewireAllIPv6 rebuilds the whole IPv6 pass-through: bridge config, the
 // ndppd rules for every container, and a sweep of the old kernel per-address
-// plumbing. Called at boot (after LXD is up) and by `vpsmgr install` so that
+// plumbing. Called at boot (after LXD is up) and by `vps install` so that
 // pass-through survives reboots. Idempotent.
 func (m *Manager) RewireAllIPv6() error {
 	if !m.cfg.IPv6Enabled() {

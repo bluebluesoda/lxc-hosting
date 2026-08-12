@@ -54,13 +54,22 @@ if [[ ! -f /etc/systemd/system/traefik.service ]]; then
   log "installed traefik.service (unprivileged)"
 fi
 
-systemctl enable --now traefik >/dev/null 2>&1 || die "cannot start traefik"
-sleep 1
-if systemctl is-active traefik >/dev/null 2>&1; then
-  log "traefik running"
+# v4 forwarding off (chosen at install, IPv6-only box): install traefik but
+# keep it DISABLED — the domain proxy is not offered. Config is kept so a later
+# `vps v4-forward on` re-enables it without re-asking anything.
+V4_FWD="${VPSMGR_V4_FORWARD:-1}"
+if [[ "$V4_FWD" == "1" ]]; then
+  systemctl enable --now traefik >/dev/null 2>&1 || die "cannot start traefik"
+  sleep 1
+  if systemctl is-active traefik >/dev/null 2>&1; then
+    log "traefik running"
+  else
+    systemctl status traefik --no-pager | tail -5
+    die "traefik failed to start"
+  fi
 else
-  systemctl status traefik --no-pager | tail -5
-  die "traefik failed to start"
+  systemctl disable traefik >/dev/null 2>&1 || true
+  log "v4 forwarding off — traefik installed but disabled (domains kept)"
 fi
 
 echo "[30] traefik ready"

@@ -157,20 +157,20 @@ func TestIPv6ContainerScript(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, want := range []string{
-		"2602:fada:6::2bd8:6c9:1",   // deterministic primary
-		"UseOnLinkPrefix=false",     // peers via the host, not L2
-		"UseRoutePrefix=false",      // parent prefix never a route
-		"UseAutonomousPrefix=false", // no SLAAC address outside the /112
-		"DHCPv6Client=no",           // RA Managed flag must not start DHCPv6
+		"2602:fada:6::2bd8:6c9:1",             // deterministic primary
+		"UseOnLinkPrefix=false",               // peers via the host, not L2
+		"UseRoutePrefix=false",                // parent prefix never a route
+		"UseAutonomousPrefix=false",           // no SLAAC address outside the /112
+		"DHCPv6Client=no",                     // RA Managed flag must not start DHCPv6
 		"Address=2602:fada:6::2bd8:6c9:1/128", // static bind, DHCPv6-independent
-		"DHCP=ipv4",                 // DHCPv6 off
-		"s/^DHCP=true$/DHCP=ipv4/",  // flips the baked DHCP=true
-		"n\\[IPv6AcceptRA\\]",          // heals mangled old configs (awk regex)
-		"2602:fada:6*",              // stale on-link route flush
+		"DHCP=ipv4",                           // DHCPv6 off
+		"s/^DHCP=true$/DHCP=ipv4/",            // flips the baked DHCP=true
+		"n\\[IPv6AcceptRA\\]",                 // heals mangled old configs (awk regex)
+		"2602:fada:6*",                        // stale on-link route flush
 		"ip -6 route flush cache",
 		"net.ipv6.conf.eth0.accept_ra_pinfo = 0", // RHEL: no on-link prefix
 		`ip -6 addr replace "$(cat /etc/vpsmgr-ipv6.conf)" dev eth0`, // RHEL boot helper
-		"ExecStart=/usr/local/sbin/vpsmgr-ipv6", // RHEL boot unit
+		"ExecStart=/usr/local/sbin/vpsmgr-ipv6",                      // RHEL boot unit
 	} {
 		if !strings.Contains(script, want) {
 			t.Errorf("script missing %q:\n%s", want, script)
@@ -207,7 +207,7 @@ func TestCheckIPv6BlockCollision(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer d.Close()
-	if _, err := d.CreateUser("alice", "x", "10.42.0.2", 1, 10000, 1, 1024, 10); err != nil {
+	if _, err := d.CreateUser("alice", "x", "10.42.0.2", 1, 30001, 10000, 1, 1024, 10); err != nil {
 		t.Fatal(err)
 	}
 	m := &Manager{cfg: c, db: d}

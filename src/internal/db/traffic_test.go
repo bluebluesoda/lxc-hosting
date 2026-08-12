@@ -16,7 +16,7 @@ func openTestDB(t *testing.T) *DB {
 
 func mkUser(t *testing.T, d *DB, name string, idx int) *User {
 	t.Helper()
-	u, err := d.CreateUser(name, "h", "10.42.0.2", idx, 10000, 1, 1024, 10)
+	u, err := d.CreateUser(name, "h", "10.42.0.2", idx, 30000+idx, 10000, 1, 1024, 10)
 	if err != nil {
 		t.Fatal(err)
 	}

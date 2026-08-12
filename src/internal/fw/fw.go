@@ -43,6 +43,17 @@ table inet vpsmgr {
     ip saddr %s oifname "%s" masquerade
   }
 
+  chain forward {
+    type filter hook forward priority filter; policy accept;
+    # Port 25 (SMTP) is blocked for ALL forwarded traffic, both directions,
+    # TCP and UDP — anti-spam. Permanent by design: no user toggle; it only
+    # goes away when the panel is uninstalled.
+    tcp dport 25 drop
+    tcp sport 25 drop
+    udp dport 25 drop
+    udp sport 25 drop
+  }
+
   chain redirect-drop {
     type filter hook output priority filter; policy accept;
     icmpv6 type nd-redirect drop
@@ -60,28 +71,35 @@ func (f *Firewall) WriteMain() error {
 
 // WriteUser writes the DNAT rules for a user. Two sets: prerouting (external
 // traffic) and output (connections originating on the host itself, e.g. the
-// acceptance test `ssh -p <base> root@<hostIP>`). Output rules are scoped to
-// the host's own IP so unrelated local connections are not hijacked.
-func (f *Firewall) WriteUser(name, ip string, portBase int) error {
-	last := portBase + f.cfg.Net.PortsPerUser - 1
+// acceptance test `ssh -p <sshPort> root@<hostIP>`). Output rules are scoped
+// to the host's own IP so unrelated local connections are not hijacked.
+// sshPort is the user's random SSH port (DNAT to container:22, TCP only);
+// startPort..startPort+perUser-1 is the user's whole-hundred block of ports
+// forwarded straight to the container (TCP and UDP).
+func (f *Firewall) WriteUser(name, ip string, sshPort, startPort, perUser int) error {
+	last := startPort + perUser - 1
 	daddr := f.cfg.Panel.PublicIP
 	if daddr == "" || daddr == "127.0.0.1" {
 		daddr = ""
 	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "add rule inet vpsmgr prerouting tcp dport %d dnat ip to %s:22\n", portBase, ip)
-	fmt.Fprintf(&b, "add rule inet vpsmgr prerouting tcp dport %d-%d dnat ip to %s\n", portBase+1, last, ip)
-	fmt.Fprintf(&b, "add rule inet vpsmgr prerouting udp dport %d-%d dnat ip to %s\n", portBase, last, ip)
+	fmt.Fprintf(&b, "add rule inet vpsmgr prerouting tcp dport %d dnat ip to %s:22\n", sshPort, ip)
+	fmt.Fprintf(&b, "add rule inet vpsmgr prerouting tcp dport %d-%d dnat ip to %s\n", startPort, last, ip)
+	fmt.Fprintf(&b, "add rule inet vpsmgr prerouting udp dport %d-%d dnat ip to %s\n", startPort, last, ip)
 	if daddr != "" {
-		fmt.Fprintf(&b, "add rule inet vpsmgr output ip daddr %s tcp dport %d dnat ip to %s:22\n", daddr, portBase, ip)
-		fmt.Fprintf(&b, "add rule inet vpsmgr output ip daddr %s tcp dport %d-%d dnat ip to %s\n", daddr, portBase+1, last, ip)
-		fmt.Fprintf(&b, "add rule inet vpsmgr output ip daddr %s udp dport %d-%d dnat ip to %s\n", daddr, portBase, last, ip)
+		fmt.Fprintf(&b, "add rule inet vpsmgr output ip daddr %s tcp dport %d dnat ip to %s:22\n", daddr, sshPort, ip)
+		fmt.Fprintf(&b, "add rule inet vpsmgr output ip daddr %s tcp dport %d-%d dnat ip to %s\n", daddr, startPort, last, ip)
+		fmt.Fprintf(&b, "add rule inet vpsmgr output ip daddr %s udp dport %d-%d dnat ip to %s\n", daddr, startPort, last, ip)
 	}
 	return os.WriteFile(f.userFile(name), []byte(b.String()), 0o600)
 }
 
 func (f *Firewall) RemoveUser(name string) error {
-	return os.Remove(f.userFile(name))
+	err := os.Remove(f.userFile(name))
+	if os.IsNotExist(err) {
+		return nil
+	}
+	return err
 }
 
 // Reload rebuilds the vpsmgr table as one atomic nft batch. nft rules do not

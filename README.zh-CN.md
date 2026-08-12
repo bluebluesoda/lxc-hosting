@@ -5,6 +5,8 @@
 
 面向小型机器（≤ 4G 内存、小型 VPS）的玩具级 LXC 托管面板：每用户一台 Debian 13，用户通过 Web 面板管理机器（开机/关机/重启/重装），自动 NAT4 端口转发，80/443 按域名由 Traefik 转发。可选 IPv6 直通（无 NAT）。面板是一个很小的 Go 单二进制，容器镜像保持精简——存储和内存都视作稀缺资源。
 
+安装提示：启用 IPv6 时会询问是否保留共享 IPv4 入站（默认保留；选否则容器仅 IPv6）。容器 25 端口（SMTP）双向永久封禁（反垃圾邮件，无开关）。
+
 ## 安装
 
 **最低要求：Ubuntu 24.04（物理机或 KVM）1 核心 1.5G 内存 10G 磁盘空闲 root**
@@ -24,7 +26,7 @@ bash check-ipv6-support.sh #v6测试脚本
 ```
 
 
-装完运行 `vpsmgr panel-url` 查看完整面板地址——`https://<IP>:8443/<随机路径>`。该随机路径是面板唯一入口。
+装完运行 `vps panel-url` 查看完整面板地址——`https://<IP>:<端口>/<随机路径>`(端口为 2000-9999 中随机选取的空闲端口)。该随机路径是面板唯一入口。
 
 ## 可选：额外系统镜像
 
@@ -40,14 +42,15 @@ sudo bash scripts/60-rhel-image.sh rocky     # Rocky 9
 ## 使用
 
 ```
-vpsmgr add <name> [--cpu N] [--mem NG] [--disk NG]   # 默认 1核/1G/10G；cpu 可为整数核（≥1）或 0.1~0.9 小数；密码自动生成，仅显示一次
-vpsmgr update <name> [--cpu N] [--mem N] [--disk NG] # 磁盘只许扩
-vpsmgr reset-passwd <name>
-vpsmgr list
-vpsmgr show <name>
-vpsmgr start|stop|restart <name>
-vpsmgr del <name>
-vpsmgr panel-url
+vps add <name> [--cpu N] [--mem NG] [--disk NG]   # 默认 1核/1G/10G；cpu 可为整数核（≥1）或 0.1~0.9 小数；密码自动生成，仅显示一次
+vps update <name> [--cpu N] [--mem N] [--disk NG] # 磁盘只许扩
+vps reset-passwd <name>
+vps list
+vps show <name>
+vps start|stop|restart <name>
+vps del <name>
+vps panel-url
+vps v4-forward on|off   # 共享 IPv4 入站开关：off = 容器仅 IPv6
 ```
 
 ## 配置

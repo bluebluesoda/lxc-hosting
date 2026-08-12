@@ -20,7 +20,8 @@ func TestMigrateCPUToTenths(t *testing.T) {
 		pass_hash TEXT NOT NULL,
 		idx INTEGER UNIQUE NOT NULL,
 		ip TEXT NOT NULL,
-		port_base INTEGER NOT NULL,
+		ssh_port INTEGER NOT NULL,
+		start_port INTEGER NOT NULL,
 		cpu INTEGER NOT NULL DEFAULT 1,
 		mem_mb INTEGER NOT NULL DEFAULT 1024,
 		disk_gb INTEGER NOT NULL DEFAULT 10,
@@ -30,13 +31,13 @@ func TestMigrateCPUToTenths(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := raw.Exec(
-		`INSERT INTO users(name, pass_hash, idx, ip, port_base, cpu, mem_mb, disk_gb, created_at)
-		 VALUES('alice','h','1','10.42.0.2',10000,2,1024,10,'t')`); err != nil {
+		`INSERT INTO users(name, pass_hash, idx, ip, ssh_port, start_port, cpu, mem_mb, disk_gb, created_at)
+		 VALUES('alice','h','1','10.42.0.2',30001,10000,2,1024,10,'t')`); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := raw.Exec(
-		`INSERT INTO users(name, pass_hash, idx, ip, port_base, cpu, mem_mb, disk_gb, created_at)
-		 VALUES('bob','h','2','10.42.0.3',10050,4,2048,20,'t')`); err != nil {
+		`INSERT INTO users(name, pass_hash, idx, ip, ssh_port, start_port, cpu, mem_mb, disk_gb, created_at)
+		 VALUES('bob','h','2','10.42.0.3',30002,10100,4,2048,20,'t')`); err != nil {
 		t.Fatal(err)
 	}
 	raw.Close()
@@ -87,7 +88,7 @@ func TestFreshDBUsesTenthsDefault(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer d.Close()
-	if _, err := d.CreateUser("carol", "h", "10.42.0.4", 3, 10100, 0, 512, 5); err != nil {
+	if _, err := d.CreateUser("carol", "h", "10.42.0.4", 3, 30003, 10200, 0, 512, 5); err != nil {
 		t.Fatal(err)
 	}
 	u, err := d.GetUserByName("carol")

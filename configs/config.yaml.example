@@ -4,7 +4,8 @@
 # removed, so future releases with breaking changes can detect the origin
 # version. Do not edit by hand.
 panel:
-  listen: ":8443"
+  listen: ":8443"           # a FRESH install picks a random free port in 2000-9999;
+                            # this line is where it lands (change it only if you know why)
   cert: /etc/vpsmgr/panel.crt
   key: /etc/vpsmgr/panel.key
   db: /etc/vpsmgr/vpsmgr.db
@@ -18,10 +19,17 @@ panel:
                            # reset via `vpsmgr admin-passwd`. No admin username — password only.
 
 net:
-  subnet: "10.42.0.0/24"
-  gateway: "10.42.0.1"
-  port_base: 10000
-  ports_per_user: 50
+  # Container subnet 10.<n>.0.0/24, chosen ONCE at install (second octet n,
+  # default 115). Immutable: changing it after install breaks existing
+  # containers. The port scheme is fixed too: each container gets a random SSH
+  # port from 30000-31999 plus a whole-hundred block of 100 user ports
+  # (10000-29999), up to 200 containers.
+  subnet: "10.115.0.0/24"
+  gateway: "10.115.0.1"
+  v4_forward: true            # IPv4 inbound policy. false (only meaningful with
+                              # ipv6_subnet set) = containers are IPv6-only: no
+                              # SSH/port-block DNAT and traefik/domains disabled
+                              # (NAT4 outbound kept). Toggle at runtime: vps v4-forward on|off
   ext_if: AUTO             # detected from default route
   ipv6_subnet: ""          # optional: global prefix for IPv6 pass-through, e.g. "2602:fada:6::/64".
                            # /64 or shorter works (e.g. /56); a provider /80 slice like

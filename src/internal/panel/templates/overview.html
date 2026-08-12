@@ -108,9 +108,9 @@ footer a{color:var(--muted);text-decoration:underline}
 <div class="card">
 <h2>{{if eq .Lang "zh"}}概览{{else}}Overview{{end}}<span> · {{.User.Name}}</span></h2>
 <table>
-<tr><th>{{if eq .Lang "zh"}}可用端口{{else}}Ports{{end}}</th><td colspan="3">{{if .PublicPorts}}<code>{{.PublicPorts}}</code>{{end}}<span class="muted">{{if .PublicPorts}}&nbsp;{{end}}SSH: {{.PortBase}}</span></td></tr>
+<tr><th>{{if eq .Lang "zh"}}可用端口{{else}}Ports{{end}}</th><td colspan="3">{{if .V4Forward}}<span title="{{.Ports}}"><code>{{.PortsShort}}</code></span><span class="muted">&nbsp;{{if eq .Lang "zh"}}即 {{.Ports}};SSH 独立端口 {{.SSHPort}}{{else}}i.e. {{.Ports}}; separate SSH port {{.SSHPort}}{{end}}</span>{{else}}<span class="muted">{{if eq .Lang "zh"}}IPv4 入站已关闭 — 仅 IPv6 可连入{{else}}IPv4 inbound disabled — IPv6 only{{end}}</span>{{end}}</td></tr>
 {{if .IPv6}}<tr><th>IPv6</th><td colspan="3"><code>{{.IPv6}}</code>{{if .IPv6Block}}<div class="muted" style="margin-top:4px">{{if eq .Lang "zh"}}本机拥有完整地址块 {{.IPv6Block}},块内任意地址均可绑定使用。{{else}}You own the whole block {{.IPv6Block}} — any address inside it can be bound.{{end}}</div>{{end}}</td></tr>{{end}}
-<tr><th>{{if eq .Lang "zh"}}SSH 登录{{else}}SSH access{{end}}</th><td colspan="3"><code>{{.SSH}}</code></td></tr>
+{{if .V4Forward}}<tr><th>{{if eq .Lang "zh"}}SSH 登录{{else}}SSH access{{end}}</th><td colspan="3"><code>{{.SSH}}</code></td></tr>{{else}}<tr><th>{{if eq .Lang "zh"}}SSH 登录{{else}}SSH access{{end}}</th><td colspan="3" class="muted">{{if eq .Lang "zh"}}通过 IPv4 连接 SSH 不可用,请使用 IPv6 地址:{{else}}v4 SSH unavailable — use the IPv6 address:{{end}} <code>{{.IPv6}}</code></td></tr>{{end}}
 <tr><th>{{if eq .Lang "zh"}}本月流量{{else}}Traffic (this month){{end}}</th><td colspan="3">↑ {{.UpGB}} GB / ↓ {{.DownGB}} GB</td></tr>
 </table>
 </div>

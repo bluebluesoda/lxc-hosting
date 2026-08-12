@@ -150,3 +150,83 @@ func TestEnsurePaths(t *testing.T) {
 		t.Fatalf("EnsurePaths changed a deliberate admin-only config: %q / %q", adminOnly.Panel.URLPath, adminOnly.Panel.AdminPath)
 	}
 }
+
+func TestPanelPort(t *testing.T) {
+	c := Default()
+	c.Panel.Listen = ":12345"
+	if got := c.PanelPort(); got != 12345 {
+		t.Errorf("PanelPort(:12345) = %d, want 12345", got)
+	}
+	c.Panel.Listen = "127.0.0.1:8443"
+	if got := c.PanelPort(); got != 8443 {
+		t.Errorf("PanelPort(127.0.0.1:8443) = %d, want 8443", got)
+	}
+	c.Panel.Listen = ""
+	if got := c.PanelPort(); got != DefaultPanelPort {
+		t.Errorf("PanelPort(empty) = %d, want %d", got, DefaultPanelPort)
+	}
+}
+
+func TestPanelURLUsesListenPort(t *testing.T) {
+	c := Default()
+	c.Panel.Listen = ":5231"
+	c.Panel.PublicIP = "203.0.113.10"
+	if got := c.PanelURL("/abc"); got != "https://203.0.113.10:5231/abc" {
+		t.Errorf("PanelURL = %q, want port from listen", got)
+	}
+}
+
+func TestGatewayFromSubnet(t *testing.T) {
+	cases := []struct{ subnet, want string }{
+		{"10.115.0.0/24", "10.115.0.1"},
+		{"10.42.0.0/24", "10.42.0.1"},
+		{"10.115.0.0/16", "10.115.0.1"}, // /16 still gets .1 (not used by scheme)
+		{"garbage", ""},
+		{"2001:db8::/64", ""},
+	}
+	for _, c := range cases {
+		if got := GatewayFromSubnet(c.subnet); got != c.want {
+			t.Errorf("GatewayFromSubnet(%q) = %q, want %q", c.subnet, got, c.want)
+		}
+	}
+}
+
+func TestRandomPanelPort(t *testing.T) {
+	p, err := RandomPanelPort()
+	if err != nil {
+		t.Fatalf("RandomPanelPort: %v", err)
+	}
+	if p < PanelPortMin || p > PanelPortMax {
+		t.Errorf("RandomPanelPort = %d, want in [%d, %d]", p, PanelPortMin, PanelPortMax)
+	}
+}
+
+func TestFillAutoIPv4SubnetEnv(t *testing.T) {
+	t.Setenv("VPSMGR_IPV4_SUBNET", "10.115.0.0/24")
+	c := Default()
+	// Pre-set the auto-detected fields so the test does no network detection.
+	c.Net.ExtIF = "eth0"
+	c.Panel.PublicIP = "203.0.113.10"
+	if err := c.FillAuto(); err != nil {
+		t.Fatalf("FillAuto: %v", err)
+	}
+	if c.Net.Subnet != "10.115.0.0/24" {
+		t.Errorf("subnet = %q, want 10.115.0.0/24", c.Net.Subnet)
+	}
+	if c.Net.Gateway != "10.115.0.1" {
+		t.Errorf("gateway = %q, want 10.115.0.1", c.Net.Gateway)
+	}
+}
+
+func TestFillAutoV4ForwardEnv(t *testing.T) {
+	c := Default()
+	c.Net.ExtIF = "eth0"
+	c.Panel.PublicIP = "203.0.113.10"
+	t.Setenv("VPSMGR_V4_FORWARD", "0")
+	if err := c.FillAuto(); err != nil {
+		t.Fatalf("FillAuto: %v", err)
+	}
+	if c.Net.V4Forward {
+		t.Error("V4Forward should be false when VPSMGR_V4_FORWARD=0")
+	}
+}

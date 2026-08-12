@@ -126,7 +126,7 @@ func TestLoginFlowAndCookiePath(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := d.CreateUser("alice", hash, "10.42.0.2", 1, 10000, 1, 1024, 10); err != nil {
+	if _, err := d.CreateUser("alice", hash, "10.42.0.2", 1, 30001, 10000, 1, 1024, 10); err != nil {
 		t.Fatal(err)
 	}
 
@@ -237,7 +237,7 @@ func TestFlashViaAPI(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := d.CreateUser("alice", hash, "10.42.0.2", 1, 10000, 1, 1024, 10); err != nil {
+	if _, err := d.CreateUser("alice", hash, "10.42.0.2", 1, 30001, 10000, 1, 1024, 10); err != nil {
 		t.Fatal(err)
 	}
 
@@ -296,7 +296,7 @@ func TestPasswordModalFlash(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := d.CreateUser("alice", hash, "10.42.0.2", 1, 10000, 1, 1024, 10); err != nil {
+	if _, err := d.CreateUser("alice", hash, "10.42.0.2", 1, 30001, 10000, 1, 1024, 10); err != nil {
 		t.Fatal(err)
 	}
 
@@ -441,7 +441,7 @@ func TestImagesEndpoint(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := d.CreateUser("alice", hash, "10.42.0.2", 1, 10000, 10, 1024, 10); err != nil {
+	if _, err := d.CreateUser("alice", hash, "10.42.0.2", 1, 30001, 10000, 10, 1024, 10); err != nil {
 		t.Fatal(err)
 	}
 	rr := doReq(t, h, http.MethodPost, prefix+"/login", url.Values{"username": {"alice"}, "password": {"correct-horse-battery"}}, nil)
@@ -485,7 +485,7 @@ func TestWrongMethodOnPostOnlyRouteIsBare404(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := d.CreateUser("alice", hash, "10.42.0.2", 1, 10000, 10, 1024, 10); err != nil {
+	if _, err := d.CreateUser("alice", hash, "10.42.0.2", 1, 30001, 10000, 10, 1024, 10); err != nil {
 		t.Fatal(err)
 	}
 	rr := doReq(t, h, http.MethodPost, prefix+"/login", url.Values{"username": {"alice"}, "password": {"correct-horse-battery"}}, nil)

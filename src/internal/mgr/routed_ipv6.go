@@ -12,7 +12,7 @@ import (
 //
 //   - Debian (systemd-networkd): rebuild [IPv6AcceptRA] with
 //     UseOnLinkPrefix=false + UseRoutePrefix=false + UseAutonomousPrefix=false
-//     + DHCPv6Client=no so the parent prefix is not on-link, no SLAAC address
+//   - DHCPv6Client=no so the parent prefix is not on-link, no SLAAC address
 //     is generated, and the RA's Managed flag never starts a DHCPv6 client,
 //     bind the deterministic /128 with an [Address] section, and set
 //     DHCP=ipv4. Idempotent and self-healing: a mangled config from an older
@@ -123,8 +123,8 @@ func (m *Manager) ConfigureContainerIPv6(name string) error {
 // EnsureRoutedIPv6 applies the host-routed IPv6 setup to every running
 // container, so inter-container IPv6 goes through the host with L2 between
 // containers staying isolated (no broadcast/NDP plane, no MITM, only
-// address-addressed routed traffic). Runs on `vpsmgr install` and
-// `vpsmgr ipv6-reapply`; idempotent. Stopped or not-yet-created containers
+// address-addressed routed traffic). Runs on `vps install` and
+// `vps ipv6-reapply`; idempotent. Stopped or not-yet-created containers
 // are skipped, not errors.
 func (m *Manager) EnsureRoutedIPv6() error {
 	if !m.cfg.IPv6Enabled() {

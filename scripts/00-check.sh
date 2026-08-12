@@ -116,7 +116,9 @@ fi
 if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q "Status: active"; then
   # Already handled from a previous install? Never disable again silently —
   # the user may have re-enabled it on purpose.
-  if ufw status verbose 2>/dev/null | grep -qE "lxdbr0|10\.42\.0\.0"; then
+  V4_NET="${VPSMGR_IPV4_SUBNET:-10.115.0.0/24}"
+  V4_MATCH="$(printf '%s' "${V4_NET%/*}" | sed 's/\./\\./g')"
+  if ufw status verbose 2>/dev/null | grep -qE "lxdbr0|$V4_MATCH"; then
     log "ufw active but already has LXD/lxdbr0 allow rules — leaving it as-is"
   else
     log "ufw is ACTIVE with default-DROP policy — this breaks LXD container IPv4"
@@ -133,6 +135,41 @@ if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q "Status: a
 else
   log "ufw: not active (or not installed) — no conflict"
 fi
+
+# --- port occupancy ---
+# Ports reserved for vpsmgr must be free on a fresh install. On adoption the
+# panel and traefik are already running and owned by vpsmgr — those listeners
+# are excluded by process name. Checks TCP and UDP (the user port block is
+# DNAT-ed for both).
+port_reserved(){
+  local p="$1"
+  [[ "$p" == "80" || "$p" == "443" ]] && return 0
+  (( p >= 10000 && p <= 29999 )) && return 0
+  (( p >= 30000 && p <= 31999 )) && return 0
+  return 1
+}
+log "checking reserved ports (80/443, 10000-29999, 30000-31999)..."
+CONFLICTS=""
+while IFS= read -r line; do
+  [[ -z "$line" ]] && continue
+  ADDR=$(awk '{print $4}' <<<"$line")
+  [[ -z "$ADDR" ]] && continue
+  PORT="${ADDR##*:}"
+  [[ "$PORT" =~ ^[0-9]+$ ]] || continue
+  PROC=$(sed -n 's/.*users:(("\([^"]*\)".*/\1/p' <<<"$line")
+  case "${PROC##*/}" in
+    vpsmgr|traefik) continue ;;
+  esac
+  if port_reserved "$PORT"; then
+    CONFLICTS+="  $PORT (${ADDR}) — bound by ${PROC:-unknown process}"$'\n'
+  fi
+done < <(ss -H -tlnp 2>/dev/null; ss -H -ulnp 2>/dev/null)
+if [[ -n "$CONFLICTS" ]]; then
+  die "ports reserved for vpsmgr are already in use:
+$CONFLICTS
+Free these ports (or remove the programs above) and re-run install."
+fi
+log "reserved ports are free"
 
 # --- detect public ip / ext iface ---
 EXT_IF=$(ip route show default | awk '{print $5; exit}')

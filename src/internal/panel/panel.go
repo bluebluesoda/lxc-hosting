@@ -103,27 +103,29 @@ func (s *Server) prefix() string { return "/" + s.cfg.Panel.URLPath }
 func (s *Server) p(route string) string { return s.prefix() + route }
 
 type pageData struct {
-	Title       string
-	User        *db.User
-	State       string
-	IP          string
-	PortBase    int
-	Ports       string
-	PublicPorts string
-	SSH         string
-	QuotaCPU    string
-	QuotaMem    string
-	QuotaDisk   string
-	Domains     []string
-	Msg         string
-	Err         string
-	PublicIP    string
-	Prefix      string
-	Lang        string
-	UpGB        string
-	DownGB      string
-	IPv6        string // primary global address (the one to connect to)
-	IPv6Block   string // the /112 block the container owns (informational)
+	Title      string
+	User       *db.User
+	State      string
+	IP         string
+	SSHPort    int
+	StartPort  int
+	Ports      string // full user-port block, e.g. 10700-10799 (tooltip)
+	PortsShort string // compact form, e.g. 107xx
+	SSH        string
+	V4Forward  bool // false = IPv6-only box: v4 ssh/ports not offered
+	QuotaCPU   string
+	QuotaMem   string
+	QuotaDisk  string
+	Domains    []string
+	Msg        string
+	Err        string
+	PublicIP   string
+	Prefix     string
+	Lang       string
+	UpGB       string
+	DownGB     string
+	IPv6       string // primary global address (the one to connect to)
+	IPv6Block  string // the /112 block the container owns (informational)
 }
 
 func (s *Server) Handler() http.Handler {
@@ -236,19 +238,21 @@ func (s *Server) redirectModal(w http.ResponseWriter, r *http.Request, path, msg
 
 func (s *Server) buildData(u *db.User, msg, errMsg string) pageData {
 	d := pageData{
-		Title:       "VPS Manager",
-		User:        u,
-		PublicIP:    s.cfg.DisplayIP(),
-		Prefix:      s.prefix(),
-		PortBase:    u.PortBase,
-		Ports:       mgr.ServicePorts(u.PortBase, s.cfg.Net.PortsPerUser),
-		PublicPorts: s.cfg.DisplayIP() + ":" + mgr.ServicePorts(u.PortBase, s.cfg.Net.PortsPerUser),
-		SSH:         "ssh -p " + itoa(u.PortBase) + " root@" + s.cfg.DisplayIP(),
-		QuotaCPU:    mgr.FormatCPU(u.CPU),
-		QuotaMem:    itoa(u.MemMB) + " MiB",
-		QuotaDisk:   itoa(u.DiskGB) + " GiB",
-		Msg:         msg,
-		Err:         errMsg,
+		Title:      "VPS Manager",
+		User:       u,
+		PublicIP:   s.cfg.DisplayIP(),
+		Prefix:     s.prefix(),
+		SSHPort:    u.SSHPort,
+		StartPort:  u.StartPort,
+		Ports:      mgr.UserPorts(u.StartPort, cfg.PortsPerUser),
+		PortsShort: mgr.UserPortsShort(u.StartPort),
+		SSH:        "ssh -p " + itoa(u.SSHPort) + " root@" + s.cfg.DisplayIP(),
+		V4Forward:  s.cfg.Net.V4Forward,
+		QuotaCPU:   mgr.FormatCPU(u.CPU),
+		QuotaMem:   itoa(u.MemMB) + " MiB",
+		QuotaDisk:  itoa(u.DiskGB) + " GiB",
+		Msg:        msg,
+		Err:        errMsg,
 	}
 	// One `lxc list` call only for the container status (must be live).
 	// Traffic is read from the DB — the background sampler writes it every 60s.

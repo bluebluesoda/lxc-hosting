@@ -10,6 +10,10 @@ with automatic NAT4 port forwarding and 80/443 per-domain proxying by Traefik.
 Optional IPv6 pass-through (no NAT). The panel is a single small Go binary and
 the container image stays slim — storage and memory are treated as scarce.
 
+Install notes: with IPv6 enabled, the installer asks whether to keep shared IPv4
+inbound (default yes; `no` makes containers IPv6-only). Port 25 (SMTP) is always
+blocked for containers, both directions — anti-spam, no toggle.
+
 ## Install
 
 **Minimum: Ubuntu 24.04 (bare metal or KVM), 1 core, 1.5G RAM, 10G free disk, and root access**
@@ -32,9 +36,9 @@ for an informal test.
 bash check-ipv6-support.sh # IPv6 test script
 ```
 
-Run `vpsmgr panel-url` after installation to get the full panel address —
-`https://<IP>:8443/<random-path>`. This random path is the panel's only entry
-point.
+Run `vps panel-url` after installation to get the full panel address —
+`https://<IP>:<port>/<random-path>` (the port is a random free one in
+2000-9999). This random path is the panel's only entry point.
 
 ## Optional: extra OS images
 
@@ -54,14 +58,15 @@ one.
 ## Usage
 
 ```
-vpsmgr add <name> [--cpu N] [--mem NG] [--disk NG]   # default 1 core / 1G / 10G; cpu = whole cores (>=1) or a decimal 0.1..0.9; password is auto-generated and shown once
-vpsmgr update <name> [--cpu N] [--mem N] [--disk NG] # disk can only grow
-vpsmgr reset-passwd <name>
-vpsmgr list
-vpsmgr show <name>
-vpsmgr start|stop|restart <name>
-vpsmgr del <name>
-vpsmgr panel-url
+vps add <name> [--cpu N] [--mem NG] [--disk NG]   # default 1 core / 1G / 10G; cpu = whole cores (>=1) or a decimal 0.1..0.9; password is auto-generated and shown once
+vps update <name> [--cpu N] [--mem N] [--disk NG] # disk can only grow
+vps reset-passwd <name>
+vps list
+vps show <name>
+vps start|stop|restart <name>
+vps del <name>
+vps panel-url
+vps v4-forward on|off   # shared IPv4 inbound: off = IPv6-only containers
 ```
 
 ## Config

@@ -1,13 +1,16 @@
 package cfg
 
 import (
+	"crypto/rand"
 	"fmt"
 	"io"
+	"math/big"
 	"net"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -17,23 +20,39 @@ import (
 )
 
 const (
-	DefaultDataDir      = "/etc/vpsmgr"
-	DefaultNftDir       = "/etc/vpsmgr/nftables.d"
-	DefaultNftMain      = "/etc/vpsmgr/nftables.conf"
-	DefaultTraefikDir   = "/etc/traefik/dynamic"
-	DefaultDB           = "/etc/vpsmgr/vpsmgr.db"
-	DefaultListen       = ":8443"
-	DefaultSubnet       = "10.42.0.0/24"
-	DefaultGateway      = "10.42.0.1"
-	DefaultPortBase     = 10000
-	DefaultPortsPerUser = 50
-	DefaultBridge       = "lxdbr0"
-	DefaultPool         = "vpsmgr"
-	DefaultImage        = "vpsmgr/debian-sshd"
-	DefaultImageFB      = "images:debian/13"
+	DefaultDataDir    = "/etc/vpsmgr"
+	DefaultNftDir     = "/etc/vpsmgr/nftables.d"
+	DefaultNftMain    = "/etc/vpsmgr/nftables.conf"
+	DefaultTraefikDir = "/etc/traefik/dynamic"
+	DefaultDB         = "/etc/vpsmgr/vpsmgr.db"
+	DefaultListen     = ":8443"
+	DefaultSubnet     = "10.115.0.0/24"
+	DefaultGateway    = "10.115.0.1"
+	DefaultBridge     = "lxdbr0"
+	DefaultPool       = "vpsmgr"
+	DefaultImage      = "vpsmgr/debian-sshd"
+	DefaultImageFB    = "images:debian/13"
 	// DefaultSocket is the snap LXD daemon's Unix socket; the REST client
 	// talks to it directly (no `lxc` process spawn per call).
 	DefaultSocket = "/var/snap/lxd/common/lxd/unix.socket"
+
+	// Panel listen port: a FRESH install picks a random free port in
+	// PanelPortMin..PanelPortMax (written to panel.listen). DefaultListen
+	// (8443) is only a code-level fallback, never the fresh-install default.
+	PanelPortMin     = 2000
+	PanelPortMax     = 9999
+	DefaultPanelPort = 8443
+
+	// Port scheme (fixed at install, immutable): each container gets one
+	// random SSH port from SSHPortBase..SSHPortBase+SSHPortCount-1, plus a
+	// whole-hundred block of PortsPerUser user ports starting at
+	// UserPortBase+(idx-1)*PortsPerUser. 10000..29999 holds exactly
+	// 200 blocks x 100 ports = 20000, so the range is fully packed.
+	SSHPortBase  = 30000
+	SSHPortCount = 2000
+	UserPortBase = 10000
+	PortsPerUser = 100
+	MaxUsers     = 200
 )
 
 type Config struct {
@@ -41,9 +60,9 @@ type Config struct {
 	Net   NetCfg   `yaml:"net"`
 	LXD   LXDCfg   `yaml:"lxd"`
 	// InstalledVersion is the binary version that installed (or adopted/upgraded)
-	// this config, written by `vpsmgr install`. UninstalledVersion is the version
+	// this config, written by `vps install`. UninstalledVersion is the version
 	// of the binary that a NON-purging uninstall removed, written by
-	// `vpsmgr note-version` (called from uninstall.sh before the binary is
+	// `vps note-version` (called from uninstall.sh before the binary is
 	// deleted). Both survive a reinstall because /etc/vpsmgr is kept, so a future
 	// release that makes breaking changes can detect which version a config/db
 	// came from and migrate or warn instead of corrupting user data.
@@ -77,11 +96,16 @@ type PanelCfg struct {
 }
 
 type NetCfg struct {
-	Subnet       string `yaml:"subnet"`
-	Gateway      string `yaml:"gateway"`
-	PortBase     int    `yaml:"port_base"`
-	PortsPerUser int    `yaml:"ports_per_user"`
-	ExtIF        string `yaml:"ext_if"`
+	Subnet  string `yaml:"subnet"`
+	Gateway string `yaml:"gateway"`
+	ExtIF   string `yaml:"ext_if"`
+	// V4Forward controls IPv4 inbound forwarding to containers. When false
+	// (only meaningful with IPv6 pass-through enabled) containers become
+	// IPv6-only: no SSH DNAT, no user-port-block DNAT, and traefik (domains)
+	// is disabled — containers still reach IPv4 out via the NAT4 masquerade.
+	// Set once at install, changeable at runtime with `vps v4-forward on|off`.
+	// Deliberately NOT omitempty: false must round-trip through the config.
+	V4Forward bool `yaml:"v4_forward"`
 	// IPv6Subnet is the global prefix handed out to containers (e.g.
 	// "2602:fada:6::/64", or a /80 slice the provider assigned the host).
 	// Empty means IPv6 pass-through is disabled.
@@ -104,7 +128,7 @@ type LXDCfg struct {
 func Default() *Config {
 	c := &Config{}
 	c.Panel = PanelCfg{Listen: DefaultListen, Cert: DefaultDataDir + "/panel.crt", Key: DefaultDataDir + "/panel.key", DB: DefaultDB, SessionDays: 3}
-	c.Net = NetCfg{Subnet: DefaultSubnet, Gateway: DefaultGateway, PortBase: DefaultPortBase, PortsPerUser: DefaultPortsPerUser}
+	c.Net = NetCfg{Subnet: DefaultSubnet, Gateway: DefaultGateway, V4Forward: true}
 	c.LXD = LXDCfg{Image: DefaultImage, ImageFallback: DefaultImageFB, Pool: DefaultPool, Bridge: DefaultBridge, Socket: DefaultSocket}
 	return c
 }
@@ -184,13 +208,27 @@ func (c *Config) FillAuto() error {
 	if v := os.Getenv("VPSMGR_IPV6_SUBNET"); v != "" {
 		c.Net.IPv6Subnet = v
 	}
+	// VPSMGR_IPV4_SUBNET carries the container subnet chosen at install time
+	// (e.g. 10.115.0.0/24); the gateway is derived from it.
+	if v := os.Getenv("VPSMGR_IPV4_SUBNET"); v != "" {
+		c.Net.Subnet = v
+		if g := GatewayFromSubnet(v); g != "" {
+			c.Net.Gateway = g
+		}
+	}
+	// VPSMGR_V4_FORWARD (1/0/true/false) carries the IPv4 inbound policy chosen
+	// at install time; on adoption the config value is re-exported by the ask
+	// script, so this just mirrors it.
+	if v := os.Getenv("VPSMGR_V4_FORWARD"); v != "" {
+		c.Net.V4Forward = v == "1" || strings.EqualFold(v, "true")
+	}
 	return nil
 }
 
 // EnsurePaths generates both secret panel paths when NEITHER is configured.
 // This is the fresh-install case: a user panel without admin (or vice versa)
 // is a deliberate choice to disable one side, so it is respected. When both
-// are empty the whole panel service is off — only `vpsmgr install` calls this,
+// are empty the whole panel service is off — only `vps install` calls this,
 // and only when creating a brand-new config.
 func (c *Config) EnsurePaths() {
 	if c.Panel.URLPath == "" && c.Panel.AdminPath == "" {
@@ -200,13 +238,82 @@ func (c *Config) EnsurePaths() {
 }
 
 // DisplayIP returns the address shown to users (panel URL, SSH hints,
-// "vpsmgr add/show" output): the configured display_ip when set, otherwise
+// "vps add/show" output): the configured display_ip when set, otherwise
 // public_ip. Purely cosmetic — the firewall and routing keep using PublicIP.
 func (c *Config) DisplayIP() string {
 	if c.Panel.DisplayIP != "" {
 		return c.Panel.DisplayIP
 	}
 	return c.Panel.PublicIP
+}
+
+// PanelPort returns the TCP port the panel listens on, parsed from
+// panel.listen (e.g. ":8443" or "127.0.0.1:8443"). Falls back to the
+// code-level default when the value is empty or unparseable.
+func (c *Config) PanelPort() int {
+	if _, p, err := net.SplitHostPort(c.Panel.Listen); err == nil {
+		if n, err := strconv.Atoi(p); err == nil && n > 0 {
+			return n
+		}
+	}
+	return DefaultPanelPort
+}
+
+// PanelURL renders the user/admin panel URL from display_ip and the actual
+// listen port (the port is NOT hardcoded 8443 — a fresh install picks a random
+// one in 2000-9999).
+func (c *Config) PanelURL(prefix string) string {
+	return "https://" + c.DisplayIP() + ":" + strconv.Itoa(c.PanelPort()) + prefix
+}
+
+// GatewayFromSubnet returns the .1 gateway of an IPv4 CIDR, or "" when the
+// subnet is not a parseable IPv4 network.
+func GatewayFromSubnet(subnet string) string {
+	_, ipnet, err := net.ParseCIDR(subnet)
+	if err != nil {
+		return ""
+	}
+	gw := ipnet.IP.To4()
+	if gw == nil {
+		return ""
+	}
+	gw[3] = 1
+	return gw.String()
+}
+
+// RandomPanelPort returns a random port in PanelPortMin..PanelPortMax that is
+// currently free to bind (tries 64 random picks, then the lowest free one).
+// It is only a best-effort check at install time — nothing else on a fresh
+// host binds the range, so a collision afterwards is not expected.
+func RandomPanelPort() (int, error) {
+	n, err := rand.Int(rand.Reader, big.NewInt(PanelPortMax-PanelPortMin+1))
+	if err == nil {
+		for i := 0; i < 64; i++ {
+			p := PanelPortMin + int(n.Int64())
+			if panelPortFree(p) {
+				return p, nil
+			}
+			n, err = rand.Int(rand.Reader, big.NewInt(PanelPortMax-PanelPortMin+1))
+			if err != nil {
+				break
+			}
+		}
+	}
+	for p := PanelPortMin; p <= PanelPortMax; p++ {
+		if panelPortFree(p) {
+			return p, nil
+		}
+	}
+	return 0, fmt.Errorf("no free panel port in %d-%d", PanelPortMin, PanelPortMax)
+}
+
+func panelPortFree(p int) bool {
+	ln, err := net.Listen("tcp", fmt.Sprintf(":%d", p))
+	if err != nil {
+		return false
+	}
+	ln.Close()
+	return true
 }
 
 // ValidatePaths checks the secret panel paths that are ENABLED (non-empty):

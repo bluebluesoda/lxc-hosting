@@ -21,3 +21,16 @@ func TestMainContentStartsWithDeleteTable(t *testing.T) {
 		t.Fatalf("mainContent missing the per-user include:\n%s", content)
 	}
 }
+
+// TestMainContentBlocksPort25: port 25 (SMTP) must be dropped for ALL
+// forwarded traffic, both directions, TCP and UDP — a permanent anti-spam
+// rule that only a full uninstall removes.
+func TestMainContentBlocksPort25(t *testing.T) {
+	c := cfg.Default()
+	content := mainContent(c)
+	for _, want := range []string{"tcp dport 25 drop", "tcp sport 25 drop", "udp dport 25 drop", "udp sport 25 drop"} {
+		if !strings.Contains(content, want) {
+			t.Errorf("mainContent missing %q:\n%s", want, content)
+		}
+	}
+}

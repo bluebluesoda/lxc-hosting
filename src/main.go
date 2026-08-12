@@ -33,7 +33,7 @@ After=network-online.target
 Wants=network-online.target
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/vpsmgr serve
+ExecStart=/usr/local/bin/vps serve
 Restart=always
 RestartSec=3
 [Install]
@@ -60,7 +60,7 @@ Wants=network-online.target
 Before=vpsmgr-panel.service
 [Service]
 Type=oneshot
-ExecStart=/usr/local/bin/vpsmgr ipv6-reapply
+ExecStart=/usr/local/bin/vps ipv6-reapply
 RemainAfterExit=yes
 [Install]
 WantedBy=multi-user.target
@@ -84,7 +84,7 @@ func main() {
 		err = userAdd(os.Args[2:])
 	case "del":
 		if len(os.Args) != 3 {
-			err = fmt.Errorf("usage: vpsmgr del <name>")
+			err = fmt.Errorf("usage: vps del <name>")
 			break
 		}
 		err = userDel(os.Args[2])
@@ -94,31 +94,37 @@ func main() {
 		err = userUpdate(os.Args[2:])
 	case "start", "stop", "restart":
 		if len(os.Args) != 3 {
-			err = fmt.Errorf("usage: vpsmgr %s <name>", os.Args[1])
+			err = fmt.Errorf("usage: vps %s <name>", os.Args[1])
 			break
 		}
 		err = userPower(os.Args[1], os.Args[2])
 	case "reset-passwd":
 		if len(os.Args) != 3 {
-			err = fmt.Errorf("usage: vpsmgr reset-passwd <name>")
+			err = fmt.Errorf("usage: vps reset-passwd <name>")
 			break
 		}
 		err = userResetPasswd(os.Args[2])
 	case "admin-passwd":
 		err = cmdAdminPasswd()
+	case "v4-forward":
+		if len(os.Args) != 3 {
+			err = fmt.Errorf("usage: vps v4-forward on|off")
+			break
+		}
+		err = cmdV4Forward(os.Args[2])
 	case "show":
 		if len(os.Args) != 3 {
-			err = fmt.Errorf("usage: vpsmgr show <name>")
+			err = fmt.Errorf("usage: vps show <name>")
 			break
 		}
 		err = userShow(os.Args[2])
 	case "ipv6-reapply":
 		// Re-attach IPv6 routes/proxy_ndp for all existing containers.
-		// Run by the vpsmgr-ipv6.service boot unit and `vpsmgr install`.
+		// Run by the vpsmgr-ipv6.service boot unit and `vps install`.
 		err = cmdIPv6Reapply()
 	case "note-version":
 		if len(os.Args) != 3 {
-			err = fmt.Errorf("usage: vpsmgr note-version <version>")
+			err = fmt.Errorf("usage: vps note-version <version>")
 			break
 		}
 		err = cmdNoteVersion(os.Args[2])
@@ -136,19 +142,20 @@ func main() {
 }
 
 func usage() {
-	fmt.Print(`vpsmgr ` + ver.Version + `
+	fmt.Print(`vps ` + ver.Version + `
 usage:
-  vpsmgr add <name> [--cpu 1] [--mem 1G] [--disk 10G]
-  vpsmgr update <name> [--cpu 2] [--mem 2G] [--disk 20G]
-  vpsmgr reset-passwd <name>    # reissue panel password (shown once)
-  vpsmgr admin-passwd           # reset admin panel password (shown once)
-  vpsmgr start|stop|restart <name>
-  vpsmgr del <name>
-  vpsmgr list
-  vpsmgr show <name>
-  vpsmgr panel-url              print panel address
-  vpsmgr note-version <ver>     record binary version that left this config (used by uninstall.sh)
-  vpsmgr version
+  vps add <name> [--cpu 1] [--mem 1G] [--disk 10G]
+  vps update <name> [--cpu 2] [--mem 2G] [--disk 20G]
+  vps reset-passwd <name>    # reissue panel password (shown once)
+  vps admin-passwd           # reset admin panel password (shown once)
+  vps start|stop|restart <name>
+  vps del <name>
+  vps list
+  vps show <name>
+  vps panel-url              print panel address
+  vps v4-forward on|off      enable/disable IPv4 inbound (ssh/ports/domains); rules refresh
+  vps note-version <ver>     record binary version that left this config (used by uninstall.sh)
+  vps version
 cpu:  whole cores >= 1 (e.g. --cpu 2), or a fraction of one core in 0.1..0.9
       (e.g. --cpu 0.5 — the container is pinned to one core with a time slice)
 `)
@@ -173,7 +180,7 @@ func panelPath(c *cfg.Config) string {
 // blockUnadoptable refuses to run against a config/db that records an origin
 // older than this binary can adopt. v0.3 makes breaking changes, so a config
 // whose origin is 0.2.x (or older, or not recorded) must not be adopted:
-// `vpsmgr install` would migrate it, and `vpsmgr serve` runs the db migration
+// `vps install` would migrate it, and `vps serve` runs the db migration
 // on open — either would corrupt 0.2.x data. Guard both entry points.
 //
 // The origin is installed_version when set (the last binary to adopt the
@@ -219,6 +226,12 @@ func cmdInstall() error {
 		// Fresh install: generate both secret paths (user 10 / admin 12).
 		// After this, an empty path is a deliberate "panel disabled" choice.
 		c.EnsurePaths()
+		// Fresh install: pick a random free panel port in 2000-9999 instead of
+		// the fixed 8443. Best-effort — if every random pick is busy (very
+		// unlikely on a fresh host) the code-level default is kept.
+		if p, err := cfg.RandomPanelPort(); err == nil {
+			c.Panel.Listen = fmt.Sprintf(":%d", p)
+		}
 	}
 	// Adopting an existing config: refuse to touch one that came from a release
 	// too old to migrate. Check BEFORE overwriting installed_version below.
@@ -335,6 +348,18 @@ func cmdInstall() error {
 	if out, err := exec.Command("systemctl", "enable", "--now", "vpsmgr-panel.service").CombinedOutput(); err != nil {
 		return fmt.Errorf("enable vpsmgr-panel: %s", strings.TrimSpace(string(out)))
 	}
+	// Enforce the IPv4 inbound policy: per-user DNAT rules + traefik state
+	// (v4_forward off = IPv6-only, traefik disabled). Idempotent.
+	d2, err := db.Open(c.Panel.DB)
+	if err != nil {
+		return err
+	}
+	m2 := mgr.New(c, d2)
+	if err := m2.ApplyV4State(); err != nil {
+		d2.Close()
+		return fmt.Errorf("apply v4 policy: %w", err)
+	}
+	d2.Close()
 	// Admin panel: on a FRESH install (admin enabled and no password yet)
 	// generate a random admin password and show it once. On adoption/upgrade
 	// the existing hash is kept — never reprint a password the admin may not
@@ -349,11 +374,11 @@ func cmdInstall() error {
 		if err := cfg.Save(c); err != nil {
 			return err
 		}
-		fmt.Printf("admin panel initialized: https://%s:8443/%s\n", c.DisplayIP(), c.Panel.AdminPath)
+		fmt.Printf("admin panel initialized: %s\n", c.PanelURL("/"+c.Panel.AdminPath))
 		fmt.Printf("admin password (shown once): %s\n", pass)
 	}
 	if c.Panel.URLPath != "" {
-		fmt.Printf("panel initialized: https://%s:8443%s\n", c.DisplayIP(), panelPath(c))
+		fmt.Printf("panel initialized: %s\n", c.PanelURL(panelPath(c)))
 	}
 	return nil
 }
@@ -376,7 +401,7 @@ func cmdIPv6Reapply() error {
 		return err
 	}
 	// Also re-apply the per-container routed-IPv6 config, so the boot unit and
-	// a manual `vpsmgr ipv6-reapply` heal containers that were created before
+	// a manual `vps ipv6-reapply` heal containers that were created before
 	// the host-routed scheme existed or whose networkd config got corrupted.
 	return m.EnsureRoutedIPv6()
 }
@@ -497,13 +522,50 @@ func cmdPanelURL() error {
 		return err
 	}
 	if c.Panel.URLPath != "" {
-		fmt.Printf("user panel:  https://%s:8443%s\n", c.DisplayIP(), panelPath(c))
+		fmt.Printf("user panel:  %s\n", c.PanelURL(panelPath(c)))
 	}
 	if c.Panel.AdminPath != "" {
-		fmt.Printf("admin panel: https://%s:8443/%s\n", c.DisplayIP(), c.Panel.AdminPath)
+		fmt.Printf("admin panel: %s\n", c.PanelURL("/"+c.Panel.AdminPath))
 	}
 	if c.Panel.URLPath == "" && c.Panel.AdminPath == "" {
 		fmt.Println("both panels are disabled (url_path and admin_url_path are empty)")
+	}
+	return nil
+}
+
+// cmdV4Forward toggles the shared IPv4 inbound policy. Turning it off makes
+// every container IPv6-only (no SSH DNAT, no user-port-block DNAT, traefik
+// disabled); turning it on restores everything from the recorded ports/domains.
+func cmdV4Forward(state string) error {
+	on := state == "on"
+	if state != "on" && state != "off" {
+		return fmt.Errorf("usage: vps v4-forward on|off")
+	}
+	c, err := cfg.Load()
+	if err != nil {
+		return err
+	}
+	if c.Net.V4Forward == on {
+		fmt.Printf("v4 forwarding already %s\n", state)
+		return nil
+	}
+	c.Net.V4Forward = on
+	if err := cfg.Save(c); err != nil {
+		return err
+	}
+	d, err := db.Open(c.Panel.DB)
+	if err != nil {
+		return err
+	}
+	defer d.Close()
+	m := mgr.New(c, d)
+	if err := m.ApplyV4State(); err != nil {
+		return err
+	}
+	if on {
+		fmt.Println("v4 forwarding enabled: ssh/port-block DNAT restored, traefik re-enabled (domains re-synced)")
+	} else {
+		fmt.Println("v4 forwarding disabled: ssh/port-block DNAT removed, traefik disabled (domains kept)")
 	}
 	return nil
 }
@@ -528,13 +590,13 @@ func cmdAdminPasswd() error {
 		return err
 	}
 	fmt.Printf("admin password reset: %s\n", pass)
-	fmt.Printf("admin panel: https://%s:8443/%s\n", c.DisplayIP(), c.Panel.AdminPath)
+	fmt.Printf("admin panel: %s\n", c.PanelURL("/"+c.Panel.AdminPath))
 	return nil
 }
 
 func userAdd(args []string) error {
 	if len(args) < 1 {
-		return fmt.Errorf("usage: vpsmgr add <name> [--cpu 1] [--mem 1G] [--disk 10G]")
+		return fmt.Errorf("usage: vps add <name> [--cpu 1] [--mem 1G] [--disk 10G]")
 	}
 	name := args[0]
 	fs := flag.NewFlagSet("add", flag.ContinueOnError)
@@ -634,7 +696,7 @@ func userDel(name string) error {
 
 func userUpdate(args []string) error {
 	if len(args) < 1 {
-		return fmt.Errorf("usage: vpsmgr update <name> [--cpu 2] [--mem 2G] [--disk 20G]")
+		return fmt.Errorf("usage: vps update <name> [--cpu 2] [--mem 2G] [--disk 20G]")
 	}
 	name := args[0]
 	fs := flag.NewFlagSet("update", flag.ContinueOnError)
@@ -789,8 +851,12 @@ func userList() error {
 	}
 	fmt.Printf("%-16s %-14s %-14s %-10s %-6s %-8s %-7s %-8s %-8s %-6s %-10s\n", "NAME", "IP", "PORTS", "STATE", "CPU", "MEM", "DISK", "UP_GB", "DOWN_GB", "CPU%", "MEMUSE")
 	for _, r := range results {
+		ports := mgr.UserPorts(r.User.StartPort, r.PortsPerUser)
+		if !r.V4Forward {
+			ports = "v4-off"
+		}
 		fmt.Printf("%-16s %-14s %-14s %-10s %-6s %-8d %-7d %-8s %-8s %-6s %-10s\n",
-			r.User.Name, r.User.IP, mgr.ServicePorts(r.User.PortBase, r.PortsPerUser),
+			r.User.Name, r.User.IP, ports,
 			r.State, mgr.FormatCPU(r.User.CPU), r.User.MemMB, r.User.DiskGB, r.UpGB, r.DownGB, r.CPUUse, r.MemUse)
 	}
 	return nil
@@ -822,10 +888,12 @@ func printAdded(r *mgr.Result) {
 	u := r.User
 	fmt.Printf("name:     %s\n", u.Name)
 	fmt.Printf("state:    %s\n", r.State)
-	if sr := mgr.ServicePorts(u.PortBase, r.PortsPerUser); sr != "" {
-		fmt.Printf("ports:    %s (ssh: %d)\n", sr, u.PortBase)
+	if r.V4Forward {
+		fmt.Printf("ssh:      %d\n", u.SSHPort)
+		fmt.Printf("ports:    %s\n", mgr.UserPorts(u.StartPort, r.PortsPerUser))
 	} else {
-		fmt.Printf("ssh:      %d\n", u.PortBase)
+		fmt.Printf("ssh:      %d (v4 inbound disabled — connect over IPv6)\n", u.SSHPort)
+		fmt.Printf("ports:    %s (v4 inbound disabled)\n", mgr.UserPorts(u.StartPort, r.PortsPerUser))
 	}
 	fmt.Printf("quotas:   %s cpu / %d MiB / %d GiB\n", mgr.FormatCPU(u.CPU), u.MemMB, u.DiskGB)
 	if r.IPv6 != "" {
@@ -833,9 +901,13 @@ func printAdded(r *mgr.Result) {
 	}
 	if r.Password != "" {
 		fmt.Printf("password: %s  (panel + root)\n", r.Password)
-		fmt.Printf("ssh:      ssh -p %d root@%s\n", u.PortBase, r.PublicIP)
+		if r.V4Forward {
+			fmt.Printf("ssh:      ssh -p %d root@%s\n", u.SSHPort, r.PublicIP)
+		} else {
+			fmt.Printf("ssh:      v4 ssh unavailable (v6-only box) — ssh root@%s\n", r.IPv6)
+		}
 		c, _ := cfg.Load()
-		fmt.Printf("panel:    https://%s:8443%s\n", r.PublicIP, panelPath(c))
+		fmt.Printf("panel:    %s\n", c.PanelURL(panelPath(c)))
 	}
 }
 
@@ -847,10 +919,12 @@ func printResult(r *mgr.Result) {
 	if r.IPv6 != "" {
 		fmt.Printf("ipv6:     %s\n", r.IPv6)
 	}
-	if sr := mgr.ServicePorts(u.PortBase, r.PortsPerUser); sr != "" {
-		fmt.Printf("ports:    %s (ssh: %d)\n", sr, u.PortBase)
+	if r.V4Forward {
+		fmt.Printf("ssh:      %d\n", u.SSHPort)
+		fmt.Printf("ports:    %s\n", mgr.UserPorts(u.StartPort, r.PortsPerUser))
 	} else {
-		fmt.Printf("ssh:      %d\n", u.PortBase)
+		fmt.Printf("ssh:      %d (v4 inbound disabled — connect over IPv6)\n", u.SSHPort)
+		fmt.Printf("ports:    %s (v4 inbound disabled)\n", mgr.UserPorts(u.StartPort, r.PortsPerUser))
 	}
 	fmt.Printf("quotas:   %s cpu / %d MiB / %d GiB\n", mgr.FormatCPU(u.CPU), u.MemMB, u.DiskGB)
 	fmt.Printf("cpu use:  %s\n", r.CPUUse)
@@ -860,8 +934,12 @@ func printResult(r *mgr.Result) {
 	if r.Password != "" {
 		c, _ := cfg.Load()
 		fmt.Printf("password: %s  (panel + root)\n", r.Password)
-		fmt.Printf("ssh:      ssh -p %d root@%s\n", u.PortBase, r.PublicIP)
-		fmt.Printf("panel:    https://%s:8443%s\n", r.PublicIP, panelPath(c))
+		if r.V4Forward {
+			fmt.Printf("ssh:      ssh -p %d root@%s\n", u.SSHPort, r.PublicIP)
+		} else {
+			fmt.Printf("ssh:      v4 ssh unavailable (v6-only box) — ssh root@%s\n", r.IPv6)
+		}
+		fmt.Printf("panel:    %s\n", c.PanelURL(panelPath(c)))
 	}
 }
 

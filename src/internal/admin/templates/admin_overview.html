@@ -125,6 +125,15 @@ a.copy.copied { border-color: #86efac; background: #dcfce7; color: #15803d; }
         <div class="value">{{.Host.Uptime}}</div>
         <div class="detail"></div>
       </div>
+      <div class="stat">
+        <div class="label">{{if eq .Lang "zh"}}容器容量{{else}}Capacity{{end}}</div>
+        <div class="value">{{.UserCount}} / {{.MaxUsers}}</div>
+        <div class="detail">
+          <div style="height:6px;background:#e5e7eb;border-radius:4px;margin-top:6px;overflow:hidden">
+            <div style="height:100%;width:{{.CapacityPct}}%;background:#2563eb"></div>
+          </div>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -163,7 +172,7 @@ a.copy.copied { border-color: #86efac; background: #dcfce7; color: #15803d; }
         <tr>
           <td>{{.Name}}</td>
           <td class="{{if eq .State "Running"}}up{{else}}down{{end}}">{{.State}}</td>
-          <td>{{.Ports}}<br><small>ssh -p {{.SSHPort}}</small></td>
+          <td>{{if $.V4Forward}}<span title="{{.Ports}}">{{.PortsShort}}</span><br><small>ssh -p {{.SSHPort}}</small>{{else}}<span title="{{.Ports}}">{{.PortsShort}}</span><br><small>v4 off</small>{{end}}</td>
           <td>{{.QuotaCPU}} / {{.QuotaMem}} / {{.QuotaDisk}}</td>
           <td>{{.CPUUse}}</td>
           <td>{{.MemUse}}</td>

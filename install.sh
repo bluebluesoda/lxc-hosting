@@ -23,7 +23,7 @@ fi
 # v0.3 makes breaking changes; a 0.1.x/0.2.x install must NOT be upgraded yet.
 # Abort before any script runs so the box cannot end up half-upgraded (v0.3
 # scripts over a v0.2.x binary). A box that already uninstalled is still caught
-# later by `vpsmgr install`, which refuses to adopt an old config.
+# later by `vps install`, which refuses to adopt an old config.
 if [[ -x /usr/local/bin/vpsmgr ]]; then
   OLD_VER="$(/usr/local/bin/vpsmgr version 2>/dev/null || true)"
   case "$OLD_VER" in
@@ -59,6 +59,12 @@ echo "===== 00-ipv6-ask ====="
 source "$ROOT/scripts/00-ipv6-ask.sh"
 export VPSMGR_IPV6_SUBNET="${VPSMGR_IPV6_SUBNET:-}"
 
+echo
+echo "===== 00-ipv4-ask ====="
+# shellcheck disable=SC1090
+source "$ROOT/scripts/00-ipv4-ask.sh"
+export VPSMGR_IPV4_SUBNET="${VPSMGR_IPV4_SUBNET:-}"
+
 # NDP proxy for IPv6 pass-through: each container owns a /112 block and ndppd
 # relays neighbor discovery on the upstream interface for it, so every address
 # a container binds is reachable from the internet. Only needed when IPv6 is
@@ -84,10 +90,10 @@ rm -rf /var/lib/apt/lists/* 2>/dev/null || true
 
 echo
 echo "===== install complete ====="
-if command -v vpsmgr >/dev/null 2>&1; then
+if command -v vps >/dev/null 2>&1; then
   echo "panel address:"
-  vpsmgr panel-url
-  # On a FRESH install `vpsmgr install` printed the one-time admin password
+  vps panel-url
+  # On a FRESH install `vps install` printed the one-time admin password
   # mid-install (captured by 40-panel.sh); re-show it here so it cannot be
   # missed. On adoption/upgrade nothing is printed (no new password exists).
   INSTALL_OUT="${TMPDIR:-/tmp}/vpsmgr-install.out"
@@ -96,7 +102,7 @@ if command -v vpsmgr >/dev/null 2>&1; then
     grep -E "admin password|admin panel initialized" "$INSTALL_OUT" || true
     rm -f "$INSTALL_OUT"
   fi
-  echo "forgot the admin password? run: vpsmgr admin-passwd"
+  echo "forgot the admin password? run: vps admin-passwd"
 fi
-echo "try: vpsmgr add alice"
+echo "try: vps add alice"
 echo "     ssh -p <base> root@<public-ip>"

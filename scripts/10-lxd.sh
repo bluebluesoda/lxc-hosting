@@ -80,20 +80,23 @@ if [[ -n "${VPSMGR_IPV6_SUBNET:-}" ]]; then
   # gateway = prefix + 1. Bridge prefix is clamped to >= /64: LXD's dnsmasq
   # refuses non-/64 networks, and every container address lives in the first
   # /64 of the configured prefix anyway (the Go side re-asserts this at
-  # `vpsmgr install`).
+  # `vps install`).
   V6_LEN=$(echo "$VPSMGR_IPV6_SUBNET" | cut -d/ -f2)
   V6_LEN="${V6_LEN:-64}"
   [[ "$V6_LEN" -lt 64 ]] && V6_LEN=64
   V6_IP="$(echo "$VPSMGR_IPV6_SUBNET" | cut -d/ -f1)1/$V6_LEN"
   log "IPv6 pass-through enabled: lxdbr0 will use global prefix $VPSMGR_IPV6_SUBNET"
 fi
+# Container IPv4 subnet (10.<n>.0.0/24): the bridge gateway is .1. Defaults to
+# 10.115.0.1/24; 00-ipv4-ask.sh exports the chosen subnet before this step.
+V4_GW="$(echo "${VPSMGR_IPV4_SUBNET:-10.115.0.0/24}" | cut -d. -f1-3).1/24"
 if [[ $POOL_EXISTS -eq 0 ]] || ! lxc network show lxdbr0 >/dev/null 2>&1; then
   PRESEED=/tmp/vpsmgr-preseed.yaml
   cat > "$PRESEED" <<EOF
 config: {}
 networks:
 - config:
-    ipv4.address: 10.42.0.1/24
+    ipv4.address: $V4_GW
     ipv4.nat: "true"
     ipv6.address: $V6_IP
     ipv6.nat: "$V6_NAT"
@@ -130,13 +133,13 @@ profiles:
   name: default
 cluster: null
 EOF
-  log "running lxd init --preseed (driver=$DRIVER, subnet 10.42.0.1/24, ipv6=$V6_IP)"
+  log "running lxd init --preseed (driver=$DRIVER, subnet $V4_GW, ipv6=$V6_IP)"
   if ! lxd init --preseed < "$PRESEED"; then
     log "preseed failed — creating missing pieces"
     if [[ "$V6_IP" == "none" ]]; then
-      lxc network show lxdbr0 >/dev/null 2>&1 || lxc network create lxdbr0 ipv4.address=10.42.0.1/24 ipv4.nat=true ipv6.address=none dns.mode=none
+      lxc network show lxdbr0 >/dev/null 2>&1 || lxc network create lxdbr0 ipv4.address=$V4_GW ipv4.nat=true ipv6.address=none dns.mode=none
     else
-      lxc network show lxdbr0 >/dev/null 2>&1 || lxc network create lxdbr0 ipv4.address=10.42.0.1/24 ipv4.nat=true ipv6.address="$V6_IP" ipv6.nat=false ipv6.dhcp.stateful=true ipv6.routing=true dns.mode=none
+      lxc network show lxdbr0 >/dev/null 2>&1 || lxc network create lxdbr0 ipv4.address=$V4_GW ipv4.nat=true ipv6.address="$V6_IP" ipv6.nat=false ipv6.dhcp.stateful=true ipv6.routing=true dns.mode=none
     fi
     if ! lxc storage show "$POOL" >/dev/null 2>&1; then
       if [[ -n "$SPARE" ]]; then

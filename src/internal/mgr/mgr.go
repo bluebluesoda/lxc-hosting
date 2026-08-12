@@ -4,8 +4,11 @@ import (
 	"crypto/rand"
 	"errors"
 	"fmt"
+	"math/big"
 	"net"
+	"os/exec"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -48,20 +51,78 @@ func ValidateName(name string) error {
 	return nil
 }
 
-// ServicePorts returns the range of ports a user can bind for their own
-// services: base+1 .. base+perUser-1. The first port (base) is DNAT-ed to the
-// container's SSH (port 22), so it is NOT available for user services even
-// though it is part of the user's port block. Returns "" when there are no
-// service ports (perUser < 2).
-func ServicePorts(base, perUser int) string {
-	start, end := base+1, base+perUser-1
-	if start > end {
+// UserPorts returns the whole-hundred block of ports a user can bind for
+// their own services: start .. start+perUser-1. The SSH port is a separate
+// random port (30000-31999), so the entire block is usable. Returns "" when
+// perUser < 1.
+func UserPorts(start, perUser int) string {
+	if perUser < 1 {
 		return ""
 	}
+	end := start + perUser - 1
 	if start == end {
 		return fmt.Sprintf("%d", start)
 	}
 	return fmt.Sprintf("%d-%d", start, end)
+}
+
+// UserPortsShort renders the user port block in the compact "107xx" form
+// (blocks are always whole-hundred aligned) for tight table columns. The full
+// range is available via UserPorts.
+func UserPortsShort(start int) string {
+	return strconv.Itoa(start/100) + "xx"
+}
+
+// ContainerIP returns a container's static IPv4 for index idx (1-based) inside
+// subnet: the host part is idx+1 (idx=1 -> .2; the gateway is .1). The scheme
+// is fixed at /24, so subnets of any other length are rejected.
+func ContainerIP(subnet string, idx int) (string, error) {
+	_, ipnet, err := net.ParseCIDR(subnet)
+	if err != nil {
+		return "", err
+	}
+	ip := ipnet.IP.To4()
+	if ip == nil {
+		return "", fmt.Errorf("subnet %s is not IPv4", subnet)
+	}
+	if ones, bits := ipnet.Mask.Size(); ones != 24 || bits != 32 {
+		return "", fmt.Errorf("subnet %s is not a /24", subnet)
+	}
+	if idx < 1 || idx > cfg.MaxUsers {
+		return "", fmt.Errorf("idx %d out of range 1..%d", idx, cfg.MaxUsers)
+	}
+	ip[3] = byte(idx + 1)
+	return ip.String(), nil
+}
+
+// allocSSHPort picks a random free port from the SSH range. It tries random
+// picks first, then falls back to the lowest free one; the ssh_port UNIQUE
+// constraint in the DB is the backstop against a cross-process race (the
+// in-process opMu already serializes adds).
+func (m *Manager) allocSSHPort() (int, error) {
+	used, err := m.db.UsedSSHPorts()
+	if err != nil {
+		return 0, err
+	}
+	if len(used) >= cfg.SSHPortCount {
+		return 0, errors.New("no free ssh port (pool exhausted)")
+	}
+	for i := 0; i < 32; i++ {
+		n, err := rand.Int(rand.Reader, big.NewInt(cfg.SSHPortCount))
+		if err != nil {
+			break
+		}
+		p := cfg.SSHPortBase + int(n.Int64())
+		if !used[p] {
+			return p, nil
+		}
+	}
+	for p := cfg.SSHPortBase; p < cfg.SSHPortBase+cfg.SSHPortCount; p++ {
+		if !used[p] {
+			return p, nil
+		}
+	}
+	return 0, errors.New("no free ssh port")
 }
 
 // PoolUsage returns the used ratio (0..1) of the storage pool as reported by
@@ -201,8 +262,15 @@ func (m *Manager) Add(name string, opt AddOptions) (*Result, error) {
 	if err != nil {
 		return nil, err
 	}
-	ip := fmt.Sprintf("10.42.0.%d", idx+1)
-	portBase := m.cfg.Net.PortBase + (idx-1)*m.cfg.Net.PortsPerUser
+	ip, err := ContainerIP(m.cfg.Net.Subnet, idx)
+	if err != nil {
+		return nil, err
+	}
+	sshPort, err := m.allocSSHPort()
+	if err != nil {
+		return nil, err
+	}
+	startPort := cfg.UserPortBase + (idx-1)*cfg.PortsPerUser
 	ipv6, _ := m.IPv6Addr(name)
 	block, _ := m.IPv6Block(name)
 	if err := m.checkIPv6BlockCollision(name, block); err != nil {
@@ -249,15 +317,17 @@ func (m *Manager) Add(name string, opt AddOptions) (*Result, error) {
 		cleanup()
 		return nil, fmt.Errorf("config container ipv6: %w", err)
 	}
-	u, err := m.db.CreateUser(name, hash, ip, idx, portBase, opt.CPU, opt.MemMB, opt.DiskGB)
+	u, err := m.db.CreateUser(name, hash, ip, idx, sshPort, startPort, opt.CPU, opt.MemMB, opt.DiskGB)
 	if err != nil {
 		cleanup()
 		return nil, fmt.Errorf("db: %w", err)
 	}
 	createdID = u.ID
-	if err := m.fw.WriteUser(name, u.IP, u.PortBase); err != nil {
-		cleanup()
-		return nil, fmt.Errorf("write nft rules: %w", err)
+	if m.cfg.Net.V4Forward {
+		if err := m.fw.WriteUser(name, u.IP, u.SSHPort, u.StartPort, cfg.PortsPerUser); err != nil {
+			cleanup()
+			return nil, fmt.Errorf("write nft rules: %w", err)
+		}
 	}
 	if err := m.fw.Reload(); err != nil {
 		cleanup()
@@ -334,6 +404,7 @@ type Result struct {
 	DownGB       string
 	IPv6         string // primary global address (the one to connect to)
 	IPv6Block    string // the /112 block the container owns (informational)
+	V4Forward    bool   // whether IPv4 inbound (ssh/ports/domains) is live
 }
 
 // sampleUsage reads CPU/memory usage twice ~1s apart to derive CPU percentage.
@@ -385,8 +456,9 @@ func (m *Manager) ResultFor(u *db.User, pass string) *Result {
 		block = b.String()
 	}
 	return &Result{User: u, Password: pass, PublicIP: m.cfg.DisplayIP(),
-		State: st, Domains: ds, PortsPerUser: m.cfg.Net.PortsPerUser,
-		UpGB: FormatGB(up), DownGB: FormatGB(down), IPv6: ipv6, IPv6Block: block}
+		State: st, Domains: ds, PortsPerUser: cfg.PortsPerUser,
+		UpGB: FormatGB(up), DownGB: FormatGB(down), IPv6: ipv6, IPv6Block: block,
+		V4Forward: m.cfg.Net.V4Forward}
 }
 
 func (m *Manager) Del(name string) error {
@@ -422,6 +494,60 @@ func (m *Manager) Del(name string) error {
 		return err
 	}
 	return m.db.DeleteSessionsForUser(u.ID)
+}
+
+// ApplyV4State enforces the current v4_forward policy: it rewrites (when on)
+// or removes (when off) every user's DNAT rules, reloads the ruleset, and
+// starts/stops the traefik service to match. Called by `vps v4-forward` and
+// at the end of `vps install`.
+func (m *Manager) ApplyV4State() error {
+	users, err := m.db.ListUsers()
+	if err != nil {
+		return err
+	}
+	for _, u := range users {
+		if m.cfg.Net.V4Forward {
+			if err := m.fw.WriteUser(u.Name, u.IP, u.SSHPort, u.StartPort, cfg.PortsPerUser); err != nil {
+				return err
+			}
+		} else {
+			if err := m.fw.RemoveUser(u.Name); err != nil {
+				return err
+			}
+		}
+	}
+	if err := m.fw.Reload(); err != nil {
+		return err
+	}
+	return m.ApplyTraefikState()
+}
+
+// ApplyTraefikState starts/stops the traefik service to match v4_forward: with
+// IPv4 inbound off, the domain proxy is not offered, so traefik is stopped to
+// free memory. Domain config files are KEPT, so re-enabling restores them; a
+// full re-sync runs when enabling.
+func (m *Manager) ApplyTraefikState() error {
+	if m.cfg.Net.V4Forward {
+		_ = exec.Command("systemctl", "enable", "--now", "traefik.service").Run()
+		return m.SyncAllTraefik()
+	}
+	_ = exec.Command("systemctl", "disable", "--now", "traefik.service").Run()
+	return nil
+}
+
+// SyncAllTraefik regenerates the dynamic config of every user's domains
+// (writes those that have domains, removes those that do not).
+func (m *Manager) SyncAllTraefik() error {
+	users, err := m.db.ListUsers()
+	if err != nil {
+		return err
+	}
+	for _, u := range users {
+		if err := m.syncTraefik(u); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (m *Manager) List() ([]*Result, error) {
@@ -620,6 +746,9 @@ func (m *Manager) Reinstall(name, image string) (string, error) {
 }
 
 func (m *Manager) AddDomain(name, domain string) error {
+	if !m.cfg.Net.V4Forward {
+		return errors.New("v4 forwarding is disabled (v4_forward: false) — domains are not available; re-enable with `vps v4-forward on`")
+	}
 	u, err := m.db.GetUserByName(name)
 	if err != nil {
 		return err
@@ -655,7 +784,7 @@ func (m *Manager) DelDomain(name, domain string) error {
 }
 
 // HardenAll applies the NIC isolation options to every existing container.
-// Called by `vpsmgr install` so an upgrade to an isolated build hardens the
+// Called by `vps install` so an upgrade to an isolated build hardens the
 // previously-created containers in place. Idempotent; containers that were
 // already isolated (or exist in the DB but not in LXD) are skipped. Skips and
 // non-fatal errors are collected, not returned — one stale row must not break

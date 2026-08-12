@@ -22,14 +22,18 @@ var loginDummyHash = func() string { h, _ := pw.Hash("vpsmgr-admin-timing-pad");
 
 // pageData is the data handed to the admin templates.
 type pageData struct {
-	Title  string
-	Prefix string
-	Msg    string
-	Err    string
-	Host   hostView
-	Reboot bool
-	Users  []userView
-	Lang   string
+	Title       string
+	Prefix      string
+	Msg         string
+	Err         string
+	Host        hostView
+	Reboot      bool
+	Users       []userView
+	UserCount   int
+	MaxUsers    int
+	CapacityPct int
+	V4Forward   bool
+	Lang        string
 }
 
 // hostView carries host memory/swap/pool/uptime numbers for the overview cards.
@@ -49,27 +53,29 @@ type hostView struct {
 
 // userView is one row of the admin user table.
 type userView struct {
-	Name      string
-	State     string
-	Ports     string
-	SSHPort   string
-	QuotaCPU  string
-	QuotaMem  string
-	QuotaDisk string
-	CPUUse    string
-	MemUse    string
-	DiskUsed  string
-	UpGB      string
-	DownGB    string
-	IPv6      string
+	Name       string
+	State      string
+	Ports      string // full user-port block, e.g. 10700-10799 (tooltip)
+	PortsShort string // compact form, e.g. 107xx
+	SSHPort    string
+	QuotaCPU   string
+	QuotaMem   string
+	QuotaDisk  string
+	CPUUse     string
+	MemUse     string
+	DiskUsed   string
+	UpGB       string
+	DownGB     string
+	IPv6       string
 }
 
 func (s *Server) buildPageData(msg, errMsg string) pageData {
 	d := pageData{
-		Title:  "VPS Manager Admin",
-		Prefix: s.prefix(),
-		Msg:    msg,
-		Err:    errMsg,
+		Title:     "VPS Manager Admin",
+		Prefix:    s.prefix(),
+		Msg:       msg,
+		Err:       errMsg,
+		V4Forward: s.cfg.Net.V4Forward,
 	}
 	hs := s.mgr.HostStats()
 	d.Reboot = hs.RebootNeeded
@@ -105,22 +111,28 @@ func (s *Server) loadUsers(d *pageData) {
 	for _, st := range statuses {
 		u := st.User
 		vs = append(vs, userView{
-			Name:      u.Name,
-			State:     st.State,
-			Ports:     mgr.ServicePorts(u.PortBase, s.cfg.Net.PortsPerUser),
-			SSHPort:   strconv.Itoa(u.PortBase),
-			QuotaCPU:  mgr.FormatCPU(u.CPU),
-			QuotaMem:  strconv.Itoa(u.MemMB) + " MiB",
-			QuotaDisk: strconv.Itoa(u.DiskGB) + " GiB",
-			CPUUse:    st.CPUUse,
-			MemUse:    st.MemUse,
-			DiskUsed:  st.DiskUsed,
-			UpGB:      st.UpGB,
-			DownGB:    st.DownGB,
-			IPv6:      st.IPv6,
+			Name:       u.Name,
+			State:      st.State,
+			Ports:      mgr.UserPorts(u.StartPort, cfg.PortsPerUser),
+			PortsShort: mgr.UserPortsShort(u.StartPort),
+			SSHPort:    strconv.Itoa(u.SSHPort),
+			QuotaCPU:   mgr.FormatCPU(u.CPU),
+			QuotaMem:   strconv.Itoa(u.MemMB) + " MiB",
+			QuotaDisk:  strconv.Itoa(u.DiskGB) + " GiB",
+			CPUUse:     st.CPUUse,
+			MemUse:     st.MemUse,
+			DiskUsed:   st.DiskUsed,
+			UpGB:       st.UpGB,
+			DownGB:     st.DownGB,
+			IPv6:       st.IPv6,
 		})
 	}
 	d.Users = vs
+	d.UserCount = len(vs)
+	d.MaxUsers = cfg.MaxUsers
+	if d.MaxUsers > 0 {
+		d.CapacityPct = d.UserCount * 100 / d.MaxUsers
+	}
 }
 
 // formatUptime renders a duration as a static non-ticking string like
@@ -170,7 +182,7 @@ func (s *Server) storeFlash(r *http.Request, msg, kind string) {
 }
 
 // currentAdminHash reads the admin password hash fresh from the config file on
-// every login. The CLI (`vpsmgr admin-passwd`) and the web UI both write the
+// every login. The CLI (`vps admin-passwd`) and the web UI both write the
 // hash to the config, so this makes a CLI reset effective immediately without
 // restarting the panel service. Login is low-frequency, so the extra read is
 // negligible.
@@ -282,7 +294,7 @@ func (s *Server) handleUserAdd(w http.ResponseWriter, r *http.Request) {
 	// The password is always auto-generated and shown once.
 	cred := "user:      " + res.User.Name +
 		"\npassword:  " + res.Password +
-		"\npanel:     https://" + s.cfg.DisplayIP() + ":8443/" + s.cfg.Panel.URLPath
+		"\npanel:     " + s.cfg.PanelURL("/"+s.cfg.Panel.URLPath)
 	s.redirectModal(w, r, s.p(""), cred)
 }
 
@@ -357,7 +369,7 @@ func (s *Server) handleResetPanelPass(w http.ResponseWriter, r *http.Request) {
 		s.redirect(w, r, s.p(""), "error: "+err.Error())
 		return
 	}
-	panel := "https://" + s.cfg.DisplayIP() + ":8443/" + s.cfg.Panel.URLPath
+	panel := s.cfg.PanelURL("/" + s.cfg.Panel.URLPath)
 	s.redirectModal(w, r, s.p(""), s.t(r, "new_panel_password", name, pass, panel))
 }
 

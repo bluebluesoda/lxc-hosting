@@ -33,10 +33,10 @@ configs/  reference configs (traefik / systemd)
 src/      Go source (single binary: CLI + panel)
 ```
 
-- **Go binary** — CLI commands (`vpsmgr add/show/del/...`) and the HTTPS panel
+- **Go binary** — CLI commands (`vps add/show/del/...`) and the HTTPS panel
   (`vpsmgr-panel.service`). The web templates are embedded (`//go:embed`).
 - **LXD** (snap) — runs the containers. Storage pool `vpsmgr` (ZFS), bridge
-  `lxdbr0` (10.42.0.0/24). The panel talks to the daemon over its **Unix-socket
+  `lxdbr0` (10.<n>.0.0/24, octet chosen at install, default 115). The panel talks to the daemon over its **Unix-socket
   REST API** (`internal/lx`, one reusable HTTP connection, no `lxc` process
   spawn per call); only `lxc exec` (provisioning scripts, the readiness probe,
   the per-container `df` probe) still shells out to the CLI. Fractional CPU
@@ -60,7 +60,7 @@ src/      Go source (single binary: CLI + panel)
   ```sh
   ufw allow in on lxdbr0 to any port 67 proto udp   # DHCP
   ufw allow in on lxdbr0 to any port 53             # DNS
-  ufw route allow in on lxdbr0 from 10.42.0.0/24    # container forwarding
+  ufw route allow in on lxdbr0 from 10.<n>.0.0/24    # container forwarding
   ```
 - **Traefik** — file provider, hot-reloads `/etc/traefik/dynamic`. Port 80
   proxies per domain; 443 SNI passthrough (TLS is managed inside the container).
@@ -69,8 +69,18 @@ src/      Go source (single binary: CLI + panel)
 
 ## Users and resources
 
-- User `i` (1..253): container IP `10.42.0.(i+1)`, port range
-  `10000 + (i-1)*50`, 50 ports, the first maps to container SSH port 22.
+- User `i` (1..200, capacity cap): container IP `10.<n>.0.(i+1)` (subnet
+  `10.<n>.0.0/24`, second octet chosen at install, default 115), a random SSH
+  port in `30000-31999` (DNAT to container 22), and a whole-hundred block of
+  100 user ports `10000 + (i-1)*100 .. +99` (DNAT to the container, TCP+UDP).
+- **IPv4 inbound policy (`v4_forward`)**: the SSH/port-block DNAT above only
+  exists while `net.v4_forward` is true. When false (IPv6-only box), no DNAT
+  rules are written and traefik is stopped (domains kept but not served); the
+  NAT4 masquerade stays so containers still reach IPv4 outbound. Toggle:
+  `vps v4-forward on|off`. The SSH/port values stay recorded in the DB.
+- **Port 25 is always blocked**: the ruleset's forward chain drops port 25
+  (TCP+UDP, both directions) for all forwarded traffic — permanent anti-spam,
+  only a full uninstall clears it.
 - Add/Del/Reinstall are serialized by a per-process mutex, and `mgr.Add` rolls
   back the container, IPv6 route, nft rules and DB record on any post-launch
   failure. `mgr.Del` refuses to drop the DB row when the container cannot
@@ -134,7 +144,8 @@ sshd enabled — the service is `sshd` on RHEL and `ssh` on Debian).
 
 ## Container isolation on the bridge
 
-All containers share the single `lxdbr0` L2 segment (10.42.0.0/24). To make
+All containers share the single `lxdbr0` L2 segment `10.<n>.0.0/24` (the second
+octet is chosen at install; default `10.115.0.0/24`). To make
 sure a scan does **not** reveal usernames:
 
 - LXD's dnsmasq must NOT serve instance-name DNS: by default it publishes
@@ -181,7 +192,7 @@ Side effects (verified empirically against the flat-bridge baseline):
 `security.ipv6_filtering` only works while the `br_netfilter` kernel module is
 loaded, and LXD does **not** load it itself — a container with the option
 **refuses to boot** without it (verified: `lxc start` fails, so after a host
-reboot every isolated container would fail to start). `vpsmgr install`
+reboot every isolated container would fail to start). `vps install`
 therefore writes `/etc/modules-load.d/br_netfilter.conf` and loads the module,
 so it is present before LXD starts any container. Harmless no-op where the
 module is built into the kernel.
