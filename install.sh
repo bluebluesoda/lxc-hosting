@@ -46,14 +46,13 @@ export VPSMGR_IPV6_SUBNET="${VPSMGR_IPV6_SUBNET:-}"
 # NDP proxy for IPv6 pass-through: each container owns a /112 block and ndppd
 # relays neighbor discovery on the upstream interface for it, so every address
 # a container binds is reachable from the internet. Only needed when IPv6 is
-# enabled; small, no data-plane involvement. The panel runs its own instance as
-# the vpsmgr user, so only the binary is installed here (the distro service is
-# disabled by `vpsmgr install` to avoid two daemons on the interface).
+# enabled; small, no data-plane involvement.
 if [[ -n "${VPSMGR_IPV6_SUBNET:-}" ]]; then
   echo
   echo "===== installing ndppd (IPv6 NDP proxy) ====="
   apt-get update -qq 2>/dev/null || true
   DEBIAN_FRONTEND=noninteractive apt-get install -y -qq ndppd
+  systemctl enable ndppd.service >/dev/null 2>&1 || true
 fi
 
 for step in 00-check 10-lxd 20-network 30-traefik 40-panel 50-image; do

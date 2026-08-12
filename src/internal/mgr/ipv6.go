@@ -10,7 +10,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"time"
 )
 
 // IPv6 pass-through support (verified empirically):
@@ -231,14 +230,8 @@ func (m *Manager) enableForwarding() error {
 	return nil
 }
 
-// ndppdConfPath is where vpsmgr renders the ndppd rules — inside /etc/vpsmgr
-// so it is covered by the service-user ownership. The pidfile lives under
-// /run/vpsmgr, created by the panel / boot units via RuntimeDirectory.
-const (
-	ndppdConfPath = "/etc/vpsmgr/ndppd.conf"
-	ndppdRunDir   = "/run/vpsmgr"
-	ndppdPidPath  = "/run/vpsmgr/ndppd.pid"
-)
+// ndppdConfPath is where vpsmgr renders the ndppd rules.
+const ndppdConfPath = "/etc/ndppd.conf"
 
 // ndppdConf renders /etc/ndppd.conf: one `rule <block>::/112` per container
 // under a `proxy <ext_if>` section, so upstream neighbor solicitations for any
@@ -290,47 +283,29 @@ func (m *Manager) ndppdConf(add, drop string) (string, error) {
 }
 
 // restartNDPPD (re)starts the ndppd daemon after a config write. ndppd 0.2.x
-// has no live reload (SIGHUP terminates it), so a restart is required. The
-// daemon always runs as the unprivileged vpsmgr user: from the panel it
-// inherits the service's ambient capabilities, and from root (CLI/install) it
-// is re-spawned via setpriv, which re-grants the network capabilities across
-// the uid drop (ambient caps do not survive a uid change).
+// has no live reload (SIGHUP terminates it), so a restart is required and its
+// liveness is verified afterwards. The distro init script can wedge in a stale
+// "active (exited)" state, so a failed start falls back to launching the
+// daemon directly.
 func (m *Manager) restartNDPPD() error {
 	if _, err := exec.LookPath("ndppd"); err != nil {
 		return fmt.Errorf("ndppd is not installed (install.sh installs it when IPv6 is enabled)")
 	}
-	if err := os.MkdirAll(ndppdRunDir, 0o755); err != nil {
-		return err
+	_ = exec.Command("service", "ndppd", "restart").Run()
+	if m.ndppdAlive() {
+		return nil
 	}
+	_ = exec.Command("service", "ndppd", "start").Run()
+	if m.ndppdAlive() {
+		return nil
+	}
+	// Last resort: start the daemon directly, bypassing the init script.
 	_ = exec.Command("pkill", "-x", "ndppd").Run()
-	// Give the old daemon a moment to release the raw sockets it bound.
-	for i := 0; i < 20 && m.ndppdAlive(); i++ {
-		time.Sleep(100 * time.Millisecond)
-	}
-	_ = os.Remove(ndppdPidPath)
-	if out, err := ndppdStartCmd().CombinedOutput(); err != nil {
+	_ = os.Remove("/var/run/ndppd.pid")
+	if out, err := exec.Command("ndppd", "-d", "-p", "/var/run/ndppd.pid").CombinedOutput(); err != nil {
 		return fmt.Errorf("start ndppd: %s", strings.TrimSpace(string(out)))
 	}
-	if !m.ndppdAlive() {
-		return fmt.Errorf("ndppd did not start")
-	}
 	return nil
-}
-
-// ndppdStartCmd builds the ndppd invocation. When running as root the daemon
-// is launched via setpriv so it lands on the vpsmgr user with CAP_NET_ADMIN +
-// CAP_NET_RAW in its ambient set (needed to bind the raw NDP sockets); the
-// panel already carries those as ambient capabilities and spawns directly.
-func ndppdStartCmd() *exec.Cmd {
-	if os.Geteuid() == 0 {
-		return exec.Command("setpriv",
-			"--reuid=vpsmgr", "--regid=vpsmgr", "--init-groups",
-			"--bounding-set=+net_admin,+net_raw",
-			"--inh-caps=+net_admin,+net_raw",
-			"--ambient-caps=+net_admin,+net_raw",
-			"ndppd", "-d", "-p", ndppdPidPath)
-	}
-	return exec.Command("ndppd", "-d", "-p", ndppdPidPath)
 }
 
 // ndppdAlive reports whether an ndppd process is running.
@@ -348,8 +323,7 @@ func (m *Manager) writeNDPPD(add, drop string) error {
 		return err
 	}
 	if conf == "" {
-		_ = exec.Command("pkill", "-x", "ndppd").Run()
-		_ = os.Remove(ndppdPidPath)
+		_ = exec.Command("service", "ndppd", "stop").Run()
 		_ = os.Remove(ndppdConfPath)
 		return nil
 	}

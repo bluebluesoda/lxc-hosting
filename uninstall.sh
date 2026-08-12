@@ -24,8 +24,7 @@ if [[ -n "$V6SUBNET" ]]; then
   log "cleaning IPv6 pass-through ($V6SUBNET)..."
   # stop and disable the NDP proxy (ndppd) and drop its generated config
   systemctl disable --now ndppd.service >/dev/null 2>&1 || service ndppd stop >/dev/null 2>&1 || true
-  pkill -x ndppd >/dev/null 2>&1 || true
-  rm -f /etc/vpsmgr/ndppd.conf
+  rm -f /etc/ndppd.conf
   # remove proxy_ndp entries on the ext iface for the prefix
   EXT_IF=$(ip route show default 2>/dev/null | awk '{print $5; exit}')
   if [[ -n "$EXT_IF" ]]; then
@@ -79,7 +78,6 @@ log "  kept /etc/vpsmgr and /etc/traefik (reinstall will adopt them)"
 if [[ $PURGE -eq 1 ]]; then
   log "purging vpsmgr config/db/certs and traefik config..."
   rm -rf /etc/vpsmgr /etc/traefik
-  userdel -r vpsmgr >/dev/null 2>&1 || true
   log "purging LXD instances..."
   for c in $(lxc list --format=csv -c n 2>/dev/null); do
     log "  deleting container $c"
