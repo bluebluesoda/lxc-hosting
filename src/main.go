@@ -247,6 +247,12 @@ func cmdInstall() error {
 		d.Close()
 		return fmt.Errorf("add ipv6 routes: %w", err)
 	}
+	// Repair containers sharing a baked-in machine-id (shared DHCPv6 DUID
+	// breaks lease renewals and drops the global IPv6 at the 1h mark).
+	if err := m.EnsureUniqueMachineID(); err != nil {
+		d.Close()
+		return fmt.Errorf("unique machine-id: %w", err)
+	}
 	d.Close()
 	f := fw.New(c)
 	if err := f.WriteMain(); err != nil {

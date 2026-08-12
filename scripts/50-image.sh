@@ -56,7 +56,13 @@ systemctl enable ssh
 apt-get clean 2>/dev/null || true
 rm -rf /var/lib/apt/lists/* 2>/dev/null || true
 rm -rf /var/log/* 2>/dev/null || true
-rm -rf /tmp/* /var/tmp/* 2>/dev/null || true'; then
+rm -rf /tmp/* /var/tmp/* 2>/dev/null || true
+# A machine-id baked into the image would be shared by every container:
+# systemd-networkd derives its DHCPv6 DUID from it, so two containers look
+# like the same DHCPv6 client and dnsmasq lease renewals break (the global
+# IPv6 drops at the 1h lease mark). Drop it so each container generates its
+# own on first boot.
+rm -f /etc/machine-id /var/lib/dbus/machine-id 2>/dev/null || true'; then
     lxc stop "$NAME" --timeout=30 || true
     lxc publish "$NAME" --alias vpsmgr/debian-sshd
     lxc delete --force "$NAME" || true
