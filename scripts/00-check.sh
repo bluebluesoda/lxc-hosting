@@ -48,6 +48,42 @@ FREE_KB=$(df -k --output=avail / | tail -1 | tr -d ' ')
 log "free disk on /: $(( FREE_KB / 1024 )) MiB"
 [[ $FREE_KB -lt 5*1024*1024 ]] && die "need at least 5 GiB free on /"
 
+# --- swap (recommend a swap file when absent) ---
+# Containers can spike memory; a small box without swap OOMs the host instead
+# of throttling. If any swap exists, leave it alone. Otherwise ask (default
+# yes) to create and permanently enable a swap file of half the RAM.
+SWAP_KB=$(awk '/SwapTotal/{print $2}' /proc/meminfo)
+if [[ ${SWAP_KB:-0} -gt 0 ]]; then
+  log "swap: $(awk '/SwapTotal/{printf "%.1f GiB", $2/1024/1024}' /proc/meminfo)"
+else
+  SWAP_MB=$(( MEM_KB / 2 / 1024 ))
+  [[ $SWAP_MB -lt 64 ]] && SWAP_MB=64
+  if [[ $SWAP_MB -ge 1024 ]]; then SIZE_HUMAN="$(( SWAP_MB / 1024 )) GiB"; else SIZE_HUMAN="${SWAP_MB} MiB"; fi
+  log "no swap found (recommended: a swap file of half the RAM, ~${SIZE_HUMAN})"
+  read -r -p "[00] create and permanently enable a ${SIZE_HUMAN} swap file now? [Y/n] " ANS
+  case "${ANS:-y}" in
+    y|Y|"")
+      if [[ ! -e /swapfile ]]; then
+        log "creating ${SIZE_HUMAN} swap file (this can take a moment)..."
+        if ! fallocate -l "${SWAP_MB}M" /swapfile 2>/dev/null; then
+          dd if=/dev/zero of=/swapfile bs=1M count="$SWAP_MB" status=none 2>/dev/null
+        fi
+        chmod 600 /swapfile
+        mkswap /swapfile >/dev/null 2>&1
+      fi
+      if swapon /swapfile 2>/dev/null; then
+        grep -q '^/swapfile' /etc/fstab 2>/dev/null || echo '/swapfile none swap sw 0 0' >> /etc/fstab
+        log "swap enabled (${SIZE_HUMAN}, persisted in /etc/fstab)"
+      else
+        log "  warn: could not enable /swapfile (filesystem may not support swap files)"
+      fi
+      ;;
+    *)
+      log "skipping swap setup (warn: no swap may OOM the host under load)"
+      ;;
+  esac
+fi
+
 # --- packages ---
 for p in snapd nftables zstd curl; do
   if ! dpkg -s "$p" >/dev/null 2>&1; then
