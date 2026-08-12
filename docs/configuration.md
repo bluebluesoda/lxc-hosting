@@ -50,3 +50,10 @@ lxd:
 - `net.ipv6_subnet` must be a **global** (non-ULA) IPv6 CIDR with an explicit
   prefix length — a bare address is rejected, never silently assumed `/64`.
   Valid range is `/48`..`/80` (see [ipv6.md](ipv6.md)).
+- `installed_version` / `uninstalled_version` are **auto-written** metadata,
+  not to be edited by hand. `vpsmgr install` writes the binary version that
+  installed (or adopted/upgraded) the config to `installed_version`; a
+  non-purging `uninstall.sh` records the version being removed in
+  `uninstalled_version` before deleting the binary. Both survive reinstall
+  (`/etc/vpsmgr` is kept), so a future release that makes breaking changes can
+  detect which version a config/db came from and migrate or warn.

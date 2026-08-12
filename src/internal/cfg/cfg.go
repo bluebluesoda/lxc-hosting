@@ -40,6 +40,15 @@ type Config struct {
 	Panel PanelCfg `yaml:"panel"`
 	Net   NetCfg   `yaml:"net"`
 	LXD   LXDCfg   `yaml:"lxd"`
+	// InstalledVersion is the binary version that installed (or adopted/upgraded)
+	// this config, written by `vpsmgr install`. UninstalledVersion is the version
+	// of the binary that a NON-purging uninstall removed, written by
+	// `vpsmgr note-version` (called from uninstall.sh before the binary is
+	// deleted). Both survive a reinstall because /etc/vpsmgr is kept, so a future
+	// release that makes breaking changes can detect which version a config/db
+	// came from and migrate or warn instead of corrupting user data.
+	InstalledVersion   string `yaml:"installed_version,omitempty"`
+	UninstalledVersion string `yaml:"uninstalled_version,omitempty"`
 }
 
 type PanelCfg struct {

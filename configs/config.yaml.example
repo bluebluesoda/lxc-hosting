@@ -1,4 +1,8 @@
 # vpsmgr config example — generated at /etc/vpsmgr/config.yaml on install
+# installed_version / uninstalled_version are auto-written metadata: install
+# records the binary version, a non-purging uninstall records the version being
+# removed, so future releases with breaking changes can detect the origin
+# version. Do not edit by hand.
 panel:
   listen: ":8443"
   cert: /etc/vpsmgr/panel.crt

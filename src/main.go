@@ -116,6 +116,12 @@ func main() {
 		// Re-attach IPv6 routes/proxy_ndp for all existing containers.
 		// Run by the vpsmgr-ipv6.service boot unit and `vpsmgr install`.
 		err = cmdIPv6Reapply()
+	case "note-version":
+		if len(os.Args) != 3 {
+			err = fmt.Errorf("usage: vpsmgr note-version <version>")
+			break
+		}
+		err = cmdNoteVersion(os.Args[2])
 	case "version":
 		fmt.Println(ver.Version)
 		return
@@ -141,6 +147,7 @@ usage:
   vpsmgr list
   vpsmgr show <name>
   vpsmgr panel-url              print panel address
+  vpsmgr note-version <ver>     record binary version that left this config (used by uninstall.sh)
   vpsmgr version
 `)
 }
@@ -175,9 +182,13 @@ func cmdInstall() error {
 		// Fresh install: generate both secret paths (user 10 / admin 12).
 		// After this, an empty path is a deliberate "panel disabled" choice.
 		c.EnsurePaths()
-		if err := cfg.Save(c); err != nil {
-			return err
-		}
+	}
+	// Record which binary version installed (or adopted/upgraded) this config so
+	// a future release that makes breaking changes can detect the version the
+	// config/db came from and migrate or warn instead of corrupting user data.
+	c.InstalledVersion = ver.Version
+	if err := cfg.Save(c); err != nil {
+		return err
 	}
 	if err := c.ValidatePaths(); err != nil {
 		return err
@@ -366,6 +377,27 @@ func sampleTrafficLoop(m *mgr.Manager) {
 func startTLS(c *cfg.Config, h http.Handler, tlsCfg *tls.Config) error {
 	srv := &http.Server{Addr: c.Panel.Listen, Handler: h, TLSConfig: tlsCfg}
 	return srv.ListenAndServeTLS(c.Panel.Cert, c.Panel.Key)
+}
+
+// cmdNoteVersion records the version of the binary that is being uninstalled.
+// uninstall.sh calls it with the running binary's version BEFORE removing the
+// binary, so a config kept by a non-purging uninstall remembers which version it
+// came from. A future release that makes breaking changes can use this to warn
+// or migrate instead of failing on incompatible data.
+func cmdNoteVersion(v string) error {
+	if v == "" {
+		return fmt.Errorf("version is empty")
+	}
+	c, err := cfg.Load()
+	if err != nil {
+		return fmt.Errorf("load config: %w", err)
+	}
+	c.UninstalledVersion = v
+	if err := cfg.Save(c); err != nil {
+		return err
+	}
+	fmt.Printf("recorded version %s (last uninstalled)\n", v)
+	return nil
 }
 
 func cmdPanelURL() error {

@@ -2,3 +2,4 @@ bin/
 *.tar.gz
 *.img
 .commandcode/
+.tasks/
