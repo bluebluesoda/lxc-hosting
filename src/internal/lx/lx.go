@@ -382,6 +382,12 @@ func (c *Client) Restart(name string) error {
 	return c.WaitReady(name, 90*time.Second)
 }
 
+// DefaultProcessesLimit is the per-container process (pids.max) cap applied to
+// every new container. It stops one container's fork storm from exhausting the
+// host's PID space (kernel.threads-max) and DoSing every tenant. Hardcoded for
+// now — no config knob; the admin panel renders it as "<used> / 4096".
+const DefaultProcessesLimit = "4096"
+
 // cpuLimitConfig maps a CPU quota in tenths of a core onto LXD config keys.
 // Whole cores set `limits.cpu=<n>`. Fractional quotas (0.1..0.9) pin the
 // container to a single core and add a time allowance
@@ -641,6 +647,7 @@ func (c *Client) Launch(pool, bridge, name, image, ip, ipv6, block string, cpu, 
 	}
 	config := cpuLimitConfig(cpu)
 	config["limits.memory"] = strconv.Itoa(memMB) + "MiB"
+	config["limits.processes"] = DefaultProcessesLimit
 	config["boot.autostart"] = "true"
 	config["security.nesting"] = "true"
 	req := createReq{
