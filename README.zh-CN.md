@@ -1,4 +1,5 @@
 # Vpsmgr Lite
+**警告⚠️ 仍在开发中，可能会有破坏性变更**
 
 [English](README.md) · [文档](docs/README.md)
 
