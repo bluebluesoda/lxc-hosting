@@ -104,10 +104,51 @@ func TestBridgePrefixLen(t *testing.T) {
 	}
 }
 
-// checkIPv6Collision must refuse a new container whose deterministic address
-// is already taken by another user, skip the user itself, and be a no-op when
-// IPv6 is disabled.
-func TestCheckIPv6Collision(t *testing.T) {
+// The primary address is byte-identical across the old single-/128 scheme and
+// the /112 block scheme: the 32-bit username hash at bits 80-111 plus a fixed
+// 0001 host block. This is what lets the upgrade keep every existing container
+// address.
+func TestIPv6Block(t *testing.T) {
+	c := cfg.Default()
+	c.Net.IPv6Subnet = "2602:fada:6::/64"
+	m := &Manager{cfg: c}
+	b, err := m.IPv6Block("alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b == nil {
+		t.Fatal("nil block")
+	}
+	ones, _ := b.Mask.Size()
+	if ones != 112 {
+		t.Errorf("block mask = %d, want 112", ones)
+	}
+	// Host bits are zero — the block is a network address, not a host one.
+	if b.IP.To16()[14] != 0 || b.IP.To16()[15] != 0 {
+		t.Errorf("block host bits not zero: %s", b.IP)
+	}
+	// primary = block + 1, which is exactly what IPv6Addr reports.
+	if got := addHostOffset(b.IP, 1).String(); got != "2602:fada:6::2bd8:6c9:1" {
+		t.Errorf("block+1 = %s, want 2602:fada:6::2bd8:6c9:1", got)
+	}
+	// The block must live inside the configured subnet.
+	_, ipnet, err := net.ParseCIDR(c.Net.IPv6Subnet)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ipnet.Contains(b.IP) {
+		t.Errorf("block %s outside subnet", b.String())
+	}
+	// Two distinct names must not share a block.
+	if b2, _ := m.IPv6Block("bob"); b2 != nil && b2.IP.String() == b.IP.String() {
+		t.Errorf("alice and bob share block %s", b)
+	}
+}
+
+// checkIPv6BlockCollision must refuse a new container whose deterministic
+// block is already taken by another user, skip the user itself, and be a no-op
+// for a nil block (IPv6 disabled).
+func TestCheckIPv6BlockCollision(t *testing.T) {
 	c := cfg.Default()
 	c.Net.IPv6Subnet = "2602:fada:6::/64"
 	d, err := db.Open(filepath.Join(t.TempDir(), "test.db"))
@@ -119,22 +160,25 @@ func TestCheckIPv6Collision(t *testing.T) {
 		t.Fatal(err)
 	}
 	m := &Manager{cfg: c, db: d}
-	aAddr, err := m.IPv6Addr("alice")
+	aliceBlock, err := m.IPv6Block("alice")
 	if err != nil {
 		t.Fatal(err)
 	}
-	// A different name colliding with alice's address must be refused.
-	err = m.checkIPv6Collision("bob", aAddr)
-	if err == nil || !strings.Contains(err.Error(), "alice") {
+	// A different name claiming alice's block must be refused.
+	if err := m.checkIPv6BlockCollision("bob", aliceBlock); err == nil || !strings.Contains(err.Error(), "alice") {
 		t.Errorf("expected collision error naming alice, got %v", err)
 	}
 	// Re-adding the same name is always fine (self is skipped).
-	if err := m.checkIPv6Collision("alice", aAddr); err != nil {
+	if err := m.checkIPv6BlockCollision("alice", aliceBlock); err != nil {
 		t.Errorf("self should be skipped: %v", err)
 	}
-	// IPv6 disabled -> no-op.
-	c.Net.IPv6Subnet = ""
-	if err := m.checkIPv6Collision("bob", aAddr); err != nil {
-		t.Errorf("disabled ipv6 should be a no-op: %v", err)
+	// A fresh name with its own block passes.
+	bobBlock, _ := m.IPv6Block("bob")
+	if err := m.checkIPv6BlockCollision("bob", bobBlock); err != nil {
+		t.Errorf("fresh block should pass: %v", err)
+	}
+	// nil block (IPv6 disabled) -> no-op.
+	if err := m.checkIPv6BlockCollision("bob", nil); err != nil {
+		t.Errorf("nil block should be a no-op: %v", err)
 	}
 }

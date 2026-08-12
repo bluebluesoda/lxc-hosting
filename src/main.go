@@ -241,6 +241,12 @@ func cmdInstall() error {
 		d.Close()
 		return fmt.Errorf("harden containers: %w", err)
 	}
+	// /112 blocks: add ipv6.routes to containers created before the /112
+	// scheme, so each container's whole block is routed to it.
+	if err := m.EnsureBlockRoutes(); err != nil {
+		d.Close()
+		return fmt.Errorf("add ipv6 routes: %w", err)
+	}
 	d.Close()
 	f := fw.New(c)
 	if err := f.WriteMain(); err != nil {

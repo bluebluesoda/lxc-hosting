@@ -440,13 +440,12 @@ func (c *Client) SetDisk(name string, gb int) error {
 	return c.patch("/1.0/instances/"+url.PathEscape(name), body, nil)
 }
 
-// HardenIsolation ensures a container's eth0 carries the NIC isolation options
-// (nicIsolation). Idempotent: returns false when nothing changed. When the
-// options were missing, the container is stopped, the device patched, and the
-// container started again (preserving a stopped state) — patching a running
+// EnsureEth0Options ensures eth0 carries the given options, patching the
+// device and restarting the container when any are missing (preserving a
+// stopped state). Returns true when a change was made. Patching a running
 // container hot-removes eth0, which trips an LXD netprio bug and can leave the
-// container without the option applied.
-func (c *Client) HardenIsolation(name string) (bool, error) {
+// option unapplied, so the container is stopped first.
+func (c *Client) EnsureEth0Options(name string, opts map[string]string) (bool, error) {
 	var it instance
 	if err := c.get("/1.0/instances/"+url.PathEscape(name)+"?recursion=1", &it); err != nil {
 		return false, err
@@ -456,7 +455,7 @@ func (c *Client) HardenIsolation(name string) (bool, error) {
 		return false, fmt.Errorf("lxd: instance %s has no eth0 device", name)
 	}
 	changed := false
-	for k, v := range nicIsolation {
+	for k, v := range opts {
 		if eth0[k] != v {
 			eth0[k] = v
 			changed = true
@@ -479,6 +478,12 @@ func (c *Client) HardenIsolation(name string) (bool, error) {
 		return true, c.Start(name)
 	}
 	return true, nil
+}
+
+// HardenIsolation ensures a container's eth0 carries the NIC isolation options
+// (nicIsolation). Idempotent.
+func (c *Client) HardenIsolation(name string) (bool, error) {
+	return c.EnsureEth0Options(name, nicIsolation)
 }
 
 // Delete force-stops the container if needed and removes it. Already-gone
@@ -583,13 +588,14 @@ var nicIsolation = map[string]string{
 }
 
 // Launch creates a container with limits, static IPv4 (and optional static
-// IPv6), root size and autostart enabled, then starts it and waits until it is
-// ready. security.nesting allows running Docker / nested containers inside.
+// IPv6 primary address + routed /112 block), root size and autostart enabled,
+// then starts it and waits until it is ready. security.nesting allows running
+// Docker / nested containers inside.
 // pool and bridge name the storage pool and managed bridge (from config).
 // cpu is a quota in tenths of a core (see cpuLimitConfig).
 // Everything is submitted in ONE create request — the config, the eth0 static
 // addresses and the root size — so no follow-up device overrides are needed.
-func (c *Client) Launch(pool, bridge, name, image, ip, ipv6 string, cpu, memMB, diskGB int) error {
+func (c *Client) Launch(pool, bridge, name, image, ip, ipv6, block string, cpu, memMB, diskGB int) error {
 	eth0 := device{
 		"type":         "nic",
 		"nictype":      "bridged",
@@ -599,6 +605,9 @@ func (c *Client) Launch(pool, bridge, name, image, ip, ipv6 string, cpu, memMB, 
 	}
 	if ipv6 != "" {
 		eth0["ipv6.address"] = ipv6
+	}
+	if block != "" {
+		eth0["ipv6.routes"] = block
 	}
 	for k, v := range nicIsolation {
 		eth0[k] = v

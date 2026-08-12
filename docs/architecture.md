@@ -173,7 +173,8 @@ Side effects (verified empirically against the flat-bridge baseline):
   router-announcement attacks are all blocked both against other containers
   and against the host.
 - Outbound (IPv4/IPv6), host→container, DNAT port forwards, DHCP lease and
-  IPv6 pass-through (`/128` route + `proxy_ndp`) are unaffected.
+  IPv6 pass-through (`/112` block routed to the container + ndppd on the
+  external interface) are unaffected.
 
 ### `br_netfilter` requirement
 

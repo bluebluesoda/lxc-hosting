@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"errors"
 	"fmt"
+	"net"
 	"regexp"
 	"strings"
 	"sync"
@@ -203,7 +204,8 @@ func (m *Manager) Add(name string, opt AddOptions) (*Result, error) {
 	ip := fmt.Sprintf("10.42.0.%d", idx+1)
 	portBase := m.cfg.Net.PortBase + (idx-1)*m.cfg.Net.PortsPerUser
 	ipv6, _ := m.IPv6Addr(name)
-	if err := m.checkIPv6Collision(name, ipv6); err != nil {
+	block, _ := m.IPv6Block(name)
+	if err := m.checkIPv6BlockCollision(name, block); err != nil {
 		return nil, err
 	}
 	// Defend against orphan containers: a crashed create (or an out-of-band
@@ -212,7 +214,11 @@ func (m *Manager) Add(name string, opt AddOptions) (*Result, error) {
 	if err := m.checkLXDConflict(name, ip); err != nil {
 		return nil, err
 	}
-	if err := m.lx.Launch(m.cfg.LXD.Pool, m.cfg.LXD.Bridge, name, image, ip, ipv6, opt.CPU, opt.MemMB, opt.DiskGB); err != nil {
+	blockStr := ""
+	if block != nil {
+		blockStr = block.String()
+	}
+	if err := m.lx.Launch(m.cfg.LXD.Pool, m.cfg.LXD.Bridge, name, image, ip, ipv6, blockStr, opt.CPU, opt.MemMB, opt.DiskGB); err != nil {
 		return nil, fmt.Errorf("launch container: %w", err)
 	}
 	// From here on any failure must roll the container and its host-side
@@ -255,28 +261,36 @@ func (m *Manager) Add(name string, opt AddOptions) (*Result, error) {
 	return m.ResultFor(u, pass), nil
 }
 
-// checkIPv6Collision refuses a new container if its deterministic IPv6 address
-// already belongs to another user (32-bit hash space; ~1 in 135k for 253
-// users, but a silent routing clash would be nasty to debug). No-op when IPv6
-// is disabled.
-func (m *Manager) checkIPv6Collision(name, addr string) error {
-	if !m.cfg.IPv6Enabled() || addr == "" {
+// checkIPv6BlockCollision refuses a new container if its deterministic /112
+// block already belongs to another user, or if the block would contain the
+// bridge gateway address (the container could then bind the gateway and break
+// routing for everyone). No-op when IPv6 is disabled.
+func (m *Manager) checkIPv6BlockCollision(name string, block *net.IPNet) error {
+	if block == nil {
 		return nil
 	}
 	users, err := m.db.ListUsers()
 	if err != nil {
 		return err
 	}
+	blockStr := block.IP.String()
 	for _, u := range users {
 		if u.Name == name {
 			continue
 		}
-		v6, err := m.IPv6Addr(u.Name)
+		b, err := m.IPv6Block(u.Name)
 		if err != nil {
 			return err
 		}
-		if v6 == addr {
-			return fmt.Errorf("ipv6 address %s already assigned to user %q (hash collision); choose another name", addr, u.Name)
+		if b != nil && b.IP.String() == blockStr {
+			return fmt.Errorf("ipv6 block %s already assigned to user %q (hash collision); choose another name", block.String(), u.Name)
+		}
+	}
+	if n, err := m.cfg.IPv6Network(); err == nil {
+		if gw, err := m.bridgeGateway(n); err == nil {
+			if gwIP := net.ParseIP(gw); gwIP != nil && block.Contains(gwIP) {
+				return fmt.Errorf("ipv6 block %s would contain the bridge gateway %s; choose another name", block.String(), gw)
+			}
 		}
 	}
 	return nil
@@ -359,7 +373,10 @@ func (m *Manager) ResultFor(u *db.User, pass string) *Result {
 		ds[i] = d.Domain
 	}
 	up, down := m.TrafficFor(u.ID)
-	v6, _ := m.IPv6Addr(u.Name)
+	v6 := ""
+	if b, _ := m.IPv6Block(u.Name); b != nil {
+		v6 = b.String()
+	}
 	return &Result{User: u, Password: pass, PublicIP: m.cfg.DisplayIP(),
 		State: st, Domains: ds, PortsPerUser: m.cfg.Net.PortsPerUser,
 		UpGB: FormatGB(up), DownGB: FormatGB(down), IPv6: v6}
@@ -574,7 +591,12 @@ func (m *Manager) Reinstall(name, image string) (string, error) {
 		return "", fmt.Errorf("image %s is not available on this host (run the image build script)", image)
 	}
 	ipv6, _ := m.IPv6Addr(u.Name)
-	if err := m.lx.Launch(m.cfg.LXD.Pool, m.cfg.LXD.Bridge, u.Name, image, u.IP, ipv6, u.CPU, u.MemMB, u.DiskGB); err != nil {
+	block, _ := m.IPv6Block(u.Name)
+	blockStr := ""
+	if block != nil {
+		blockStr = block.String()
+	}
+	if err := m.lx.Launch(m.cfg.LXD.Pool, m.cfg.LXD.Bridge, u.Name, image, u.IP, ipv6, blockStr, u.CPU, u.MemMB, u.DiskGB); err != nil {
 		return "", fmt.Errorf("recreate container: %w", err)
 	}
 	pass := pw.Generate(20)
@@ -636,6 +658,31 @@ func (m *Manager) HardenAll() error {
 	var firstErr error
 	for _, u := range users {
 		if _, err := m.lx.HardenIsolation(u.Name); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
+}
+
+// EnsureBlockRoutes adds the deterministic /112 block (ipv6.routes) to every
+// existing container's eth0, so an upgrade to the /112 scheme routes each
+// container's whole block. Idempotent; a container without IPv6 (or not in
+// LXD) is skipped. Restarts containers that needed the change.
+func (m *Manager) EnsureBlockRoutes() error {
+	if !m.cfg.IPv6Enabled() {
+		return nil
+	}
+	users, err := m.db.ListUsers()
+	if err != nil {
+		return err
+	}
+	var firstErr error
+	for _, u := range users {
+		b, err := m.IPv6Block(u.Name)
+		if err != nil || b == nil {
+			continue
+		}
+		if _, err := m.lx.EnsureEth0Options(u.Name, map[string]string{"ipv6.routes": b.String()}); err != nil && firstErr == nil {
 			firstErr = err
 		}
 	}

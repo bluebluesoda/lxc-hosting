@@ -1,24 +1,26 @@
 # IPv6 pass-through
 
-Optional, **no NAT**: each container gets a global IPv6 address and the
-outside can reach it directly. Enabled by setting `net.ipv6_subnet` (asked at
-install; see [configuration.md](configuration.md)).
+Optional, **no NAT**: each container owns a global /112 block and the outside
+can reach any address it binds directly. Enabled by setting
+`net.ipv6_subnet` (asked at install; see [configuration.md](configuration.md)).
 
-## Deterministic per-container address
+## Deterministic per-container /112 block
 
-An address is **computed on the fly from the username** — never stored, never
+A block is **computed on the fly from the username** — never stored, never
 queried, stable across reinstalls:
 
 ```
-address = [configured prefix][32-bit sha256(username)][0001]
-                       bits 80-111            bits 112-127
+block = [configured prefix][32-bit sha256(username)][16 host bits]
+                            bits 80-111            bits 112-127
 ```
 
-- Example (`2602:fada:6::/64`, user `alice`): `2602:fada:6::2bd8:6c9:1`
-- The fixed `0001` last block keeps every address off the all-zero
-  subnet-router anycast.
+- Example (`2602:fada:6::/64`, user `alice`): block
+  `2602:fada:6::2bd8:6c9:0/112`, primary address `2602:fada:6::2bd8:6c9:1`.
+- The primary address is **byte-identical to the pre-/112 scheme**, so
+  upgrading never changes an existing container's address.
 - Because the 32-bit hash space is small, `vpsmgr add` refuses a name whose
-  address collides with an existing user (hash collision).
+  block collides with an existing user (hash collision) or would contain the
+  bridge gateway address.
 
 ## Supported prefixes
 
@@ -26,7 +28,7 @@ address = [configured prefix][32-bit sha256(username)][0001]
 
 | Prefix | Bridge uses | Notes |
 |---|---|---|
-| `/48` `/56` `/60` | **first /64 of the prefix** | LXD's dnsmasq rejects non-/64 networks, and every deterministic address falls inside the first /64 anyway (bits `[prefixlen:79]` are zero-filled). |
+| `/48` `/56` `/60` | **first /64 of the prefix** | LXD's dnsmasq rejects non-/64 networks, and every deterministic block falls inside the first /64 anyway (bits `[prefixlen:79]` are zero-filled). |
 | `/64` | the /64 itself | |
 | `/80` | the /80 itself | Common provider slice (e.g. AWS ENI /80). |
 
@@ -48,11 +50,8 @@ ipv6.dhcp.stateful = true
 The gateway is the first free address in the prefix (`net+1`, `net+2`, ...)
 that the host can see is already taken:
 
-1. addresses assigned to the host's external interface (e.g. the host itself
-   holds `::1` on a /80 slice),
-2. the upstream default gateway(s) (a global gateway inside the prefix, e.g.
-   an ISP's `::1`, must never be claimed — the host would answer for it and
-   break its own outbound routing),
+1. addresses assigned to the host's external interface,
+2. the upstream default gateway(s),
 3. any address in the NDP neighbor table on the external interface.
 
 The conflicting prefix route LXD auto-creates on the bridge is deleted (eth0
@@ -62,21 +61,27 @@ keeps the authoritative route), and IPv6 forwarding is enabled.
 
 For each container:
 
-- `lxc config device override eth0` sets a static `ipv6.address` (IPv4 and
-  IPv6 in one override call).
-- The host adds an exact `/128` route via `lxdbr0` and a `proxy_ndp` entry for
-  the address on the external interface, so upstream neighbor solicitations
-  are answered by the host and traffic reaches the container.
+- The `eth0` device sets `ipv6.address=<block>::1` (primary, DHCPv6) and
+  `ipv6.routes=<block>::/112`, so LXD routes the whole block to the container.
+  Any address inside the /112 that the container binds is delivered to it.
+- `ndppd` proxies Neighbor Discovery on the **external** interface for every
+  /112: an upstream neighbor solicitation for an address in a block is relayed
+  to the bridge, the container answers, and ndppd relays the NA back. Kernel
+  `proxy_ndp` is not used for prefixes — it only answers single addresses
+  (verified: it ignores route-covered / prefix queries).
 
-Wiring is applied on `add`/`reinstall`, and re-applied for all containers at
-boot by `vpsmgr-ipv6.service` / `vpsmgr ipv6-reapply` and by
-`vpsmgr install`. Deleted with the container on `del`.
+vpsmgr renders `/etc/ndppd.conf` (one `rule <block>::/112` per container) and
+restarts the daemon on `add`/`del`; the config is rebuilt from the DB at boot
+by `vpsmgr-ipv6.service` / `vpsmgr ipv6-reapply` and by `vpsmgr install`, so
+rules survive reboots.
 
 ## Installer flow
 
 - `00-ipv6-ask.sh` — asks whether to enable IPv6 and captures the prefix.
   The prefix length is **required** (no silent `/64` default). On reinstall it
   reuses an existing config's `ipv6_subnet` instead of re-asking.
+- `install.sh` — installs `ndppd` (only when IPv6 is enabled; it is not part
+  of the default small install otherwise).
 - `10-lxd.sh` — puts the (clamped) prefix on `lxdbr0` at `lxd init` time.
 - `20-network.sh` — enables IPv6 forwarding.
 - `50-image.sh` / `vpsmgr install` — nothing IPv6-specific.
@@ -86,16 +91,25 @@ boot by `vpsmgr-ipv6.service` / `vpsmgr ipv6-reapply` and by
   the outside (Globalping, free) that the provider actually routes the whole
   prefix to the host.
 
+## Isolation interplay
+
+Container isolation (see [architecture.md](architecture.md)) is unaffected:
+`security.ipv6_filtering` whitelists the whole routed /112 (verified on LXD
+5.21), so a container may source packets from any address in its block, and
+nothing else. Containers cannot reach each other on the private bridge —
+v6 included — so inter-container traffic must go via public addresses; the
+host does not proxy the private subnet.
+
 ## Uninstall cleanup
 
-`uninstall.sh` reads the prefix from the config before removal, then: removes
-`proxy_ndp` entries and `/128` routes matching the prefix, resets `lxdbr0`
-IPv6 to disabled, and restores forwarding sysctls.
+`uninstall.sh` reads the prefix from the config before removal, then: stops
+and disables `ndppd` and removes `/etc/ndppd.conf`, removes any leftover
+kernel `proxy_ndp` entries and `/128` routes matching the prefix, resets
+`lxdbr0` IPv6 to disabled, and restores forwarding sysctls.
 
-## Future: per-container /112 blocks (`lab` branch)
+## Future: per-container /112 blocks (`lab` branch, merged)
 
-The `lab` branch (`80a2dd0`) experiments with giving each container a whole
-`/112` block (16 host bits) via `ipv6.routes` + `ndppd`, so a container can
-bind arbitrary addresses in its block. The primary address is byte-identical
-to the current scheme, so it could be merged later without changing existing
-container addresses. Not planned for the mainline yet.
+The `lab` branch experiment (`80a2dd0`, per-container `/112` via `ndppd`) is
+the current scheme; the primary address is byte-identical to the old
+single-address scheme, so existing container addresses were unchanged on
+merge.

@@ -259,8 +259,9 @@ func (s *Server) buildData(u *db.User, msg, errMsg string) pageData {
 		d.IP = u.IP
 	}
 	if s.cfg.IPv6Enabled() {
-		v6, _ := s.mgr.IPv6Addr(u.Name) // pure computation, no lxc call
-		d.IPv6 = v6
+		if b, _ := s.mgr.IPv6Block(u.Name); b != nil { // pure computation, no lxc call
+			d.IPv6 = b.String()
+		}
 	}
 	up, down := s.mgr.TrafficFor(u.ID) // pure DB read
 	d.UpGB = mgr.FormatGB(up)
