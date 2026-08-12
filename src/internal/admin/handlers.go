@@ -370,6 +370,7 @@ func (s *Server) handlePower(w http.ResponseWriter, r *http.Request) {
 		s.redirect(w, r, s.p(""), "error: "+err.Error())
 		return
 	}
+	_ = s.db.AddAuditLog("000+admin", "power."+action, name)
 	s.redirect(w, r, s.p(""), s.t(r, "power_ok", name, action))
 }
 
@@ -513,6 +514,7 @@ func (s *Server) handleDomainDel(w http.ResponseWriter, r *http.Request) {
 		s.redirect(w, r, s.p("/domains"), "error: "+err.Error())
 		return
 	}
+	_ = s.db.AddAuditLog("000+admin", "domain_update", "")
 	s.redirect(w, r, s.p("/domains"), s.t(r, "domain_deleted", domain))
 }
 
@@ -547,5 +549,75 @@ func (s *Server) handleDomainUpdate(w http.ResponseWriter, r *http.Request) {
 		s.redirect(w, r, s.p("/domains"), "ok: no changes")
 		return
 	}
+	_ = s.db.AddAuditLog("000+admin", "domain_update", "")
 	s.redirect(w, r, s.p("/domains"), s.t(r, "domains_updated"))
+}
+
+// ---- audit log ----
+
+type auditPageData struct {
+	Title  string
+	Prefix string
+	Lang   string
+}
+
+func (s *Server) renderAudit(w http.ResponseWriter, r *http.Request, d auditPageData) {
+	t, err := s.templates()
+	if err != nil {
+		http.Error(w, "template error: "+err.Error(), 500)
+		return
+	}
+	if d.Lang == "" {
+		d.Lang = langEn
+		if l, ok := r.Context().Value(langCtxKey).(string); ok && l != "" {
+			d.Lang = l
+		}
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	if err := t.ExecuteTemplate(w, "admin_audit.html", d); err != nil {
+		http.Error(w, err.Error(), 500)
+	}
+}
+
+// handleAudit renders the audit page shell; rows are fetched chunk-by-chunk by
+// the browser from /audit/api so the page never renders thousands of rows.
+func (s *Server) handleAudit(w http.ResponseWriter, r *http.Request) {
+	s.renderAudit(w, r, auditPageData{Title: "VPS Manager Admin — Audit", Prefix: s.prefix()})
+}
+
+// handleAuditAPI returns one chunk of audit rows as JSON for client-side
+// rendering (500 per chunk, newest first).
+func (s *Server) handleAuditAPI(w http.ResponseWriter, r *http.Request) {
+	offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
+	if offset < 0 {
+		offset = 0
+	}
+	limit := 500
+	if l, err := strconv.Atoi(r.URL.Query().Get("limit")); err == nil && l > 0 && l <= 1000 {
+		limit = l
+	}
+	rows, err := s.db.ListAuditLog(offset, limit)
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	total, _ := s.db.AuditCount()
+	type auditRowJSON struct {
+		ID        int64  `json:"id"`
+		Actor     string `json:"actor"`
+		Action    string `json:"action"`
+		Target    string `json:"target"`
+		CreatedAt string `json:"created_at"`
+	}
+	out := make([]auditRowJSON, 0, len(rows))
+	for _, a := range rows {
+		out = append(out, auditRowJSON{a.ID, a.Actor, a.Action, a.Target, a.CreatedAt})
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(struct {
+		Rows  []auditRowJSON `json:"rows"`
+		More  bool           `json:"more"`
+		Total int            `json:"total"`
+	}{out, offset+len(rows) < total, total})
 }

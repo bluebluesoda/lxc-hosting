@@ -113,6 +113,14 @@ src/      Go source (single binary: CLI + panel)
   `vps v4-forward on`) regenerates everything from the DB and deletes orphan
   files, fixing any crash drift. All timestamps are stored as UTC; the admin
   domain page renders them in the browser's timezone.
+- **Audit log**: resource-heavy user actions (power start/stop/restart,
+  reinstall, reset root password, domain config changes) are recorded in the
+  `audit_log` table (actor / action / target / UTC timestamp). The user panel
+  logs under the username; admin-panel actions log as `000+admin` (usernames
+  can't contain `+` or start with a digit, so the marker never collides). The
+  admin audit page renders **client-side in 500-row chunks** fetched from
+  `/audit/api` with infinite scroll, so the page never renders thousands of
+  rows at once; the latest 5000 rows are kept (pruned on insert, ~1 MB).
 - **Init script**: each user can store a custom shell script (≤ 64 KiB) in
   their panel. On a successful `reinstall` it is written to the container over
   exec stdin (never the host command line — no injection surface) and run

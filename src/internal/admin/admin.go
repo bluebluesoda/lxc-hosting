@@ -62,6 +62,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/domains", s.requireAuth(s.handleDomains))
 	mux.HandleFunc("/domain-del", s.requireAuth(s.requirePost(s.handleDomainDel)))
 	mux.HandleFunc("/domain-update", s.requireAuth(s.requirePost(s.handleDomainUpdate)))
+	mux.HandleFunc("/audit", s.requireAuth(s.handleAudit))
+	mux.HandleFunc("/audit/api", s.requireAuth(s.handleAuditAPI))
 	mux.HandleFunc("/user-add", s.requireAuth(s.requirePost(s.handleUserAdd)))
 	mux.HandleFunc("/user-del", s.requireAuth(s.requirePost(s.handleUserDel)))
 	mux.HandleFunc("/user-quota", s.requireAuth(s.requirePost(s.handleUserQuota)))

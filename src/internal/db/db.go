@@ -69,6 +69,13 @@ func (d *DB) migrate() error {
 			last_rx INTEGER NOT NULL DEFAULT 0,
 			last_tx INTEGER NOT NULL DEFAULT 0
 		)`,
+		`CREATE TABLE IF NOT EXISTS audit_log(
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			actor TEXT NOT NULL,
+			action TEXT NOT NULL,
+			target TEXT NOT NULL DEFAULT '',
+			created_at TEXT NOT NULL
+		)`,
 		`CREATE INDEX IF NOT EXISTS idx_domains_user ON domains(user_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id)`,
 	}

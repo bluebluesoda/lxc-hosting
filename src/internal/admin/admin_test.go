@@ -376,3 +376,38 @@ func TestDomainsPageAndToggle(t *testing.T) {
 		t.Error("domain still present after admin delete")
 	}
 }
+
+func TestAuditPageAndAPI(t *testing.T) {
+	srv, d := newTestServer(t)
+	setAdminPass(t, srv, "correct-horse-battery")
+	h := srv.Handler()
+	prefix := "/" + testAdminSecret
+	if err := d.AddAuditLog("alice", "reinstall", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.AddAuditLog("000+admin", "power.stop", "alice"); err != nil {
+		t.Fatal(err)
+	}
+	cookie := adminLogin(t, h, prefix, "correct-horse-battery")
+
+	// The page is a shell — no rows server-rendered.
+	rr := doReq(t, h, http.MethodGet, prefix+"/audit", nil, cookie)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET /audit = %d", rr.Code)
+	}
+	if !strings.Contains(rr.Body.String(), "auditBody") {
+		t.Error("audit page missing the client-rendered table body")
+	}
+
+	// The API returns the rows newest first, with total/more.
+	rr = doReq(t, h, http.MethodGet, prefix+"/audit/api?offset=0&limit=10", nil, cookie)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET /audit/api = %d", rr.Code)
+	}
+	b := rr.Body.String()
+	for _, want := range []string{`"actor":"000+admin"`, `"action":"power.stop"`, `"target":"alice"`, `"total":2`, `"more":false`} {
+		if !strings.Contains(b, want) {
+			t.Errorf("audit api missing %s:\n%s", want, b)
+		}
+	}
+}

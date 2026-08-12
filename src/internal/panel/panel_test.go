@@ -708,3 +708,26 @@ func TestDomainUpdateBatch(t *testing.T) {
 		t.Error("batch update did not disable proxy protocol")
 	}
 }
+
+func TestDomainAddLogsAudit(t *testing.T) {
+	srv, d := newTestServer(t)
+	h := srv.Handler()
+	prefix := "/" + testSecret
+	hash, _ := pw.Hash("pw")
+	if _, err := d.CreateUser("alice", hash, "10.42.0.2", 1, 30001, 10000, 1, 1024, 10); err != nil {
+		t.Fatal(err)
+	}
+	cookie := loginAndCookie(t, h, prefix, "alice", "pw")
+	rr := doReq(t, h, http.MethodPost, prefix+"/domain-add",
+		url.Values{"domain": {"example.com"}}, cookie)
+	if rr.Code != http.StatusFound {
+		t.Fatalf("add = %d, want 302", rr.Code)
+	}
+	rows, err := d.ListAuditLog(0, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || rows[0].Actor != "alice" || rows[0].Action != "domain_update" {
+		t.Errorf("audit rows = %+v", rows)
+	}
+}
