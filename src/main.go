@@ -290,6 +290,26 @@ func cmdInstall() error {
 	if err != nil {
 		return err
 	}
+	// Immutable fields are enforced from the DB snapshot: refuse a config that
+	// drifted from install (first install / pre-snapshot upgrade freezes the
+	// current values as the baseline). Done before any LXD/nft mutation.
+	snap, ok, err := d.GetSetting(db.SettingImmutableSnapshot)
+	if err != nil {
+		d.Close()
+		return err
+	}
+	if ok {
+		if err := c.VerifyImmutable(snap); err != nil {
+			d.Close()
+			return err
+		}
+	} else if snap, err := c.ImmutableSnapshot(); err != nil {
+		d.Close()
+		return err
+	} else if err := d.SetSetting(db.SettingImmutableSnapshot, snap); err != nil {
+		d.Close()
+		return err
+	}
 	m := mgr.New(c, d)
 	if err := m.RewireAllIPv6(); err != nil {
 		d.Close()
@@ -664,12 +684,22 @@ func configSet(key, value string) error {
 	case cfg.ApplyNextAdd:
 		fmt.Printf("%s updated. Applies on the next vps add / reinstall\n", key)
 	case cfg.ApplyImmediate:
-		d, err := db.Open(c.Panel.DB)
-		if err != nil {
+	d, err := db.Open(c.Panel.DB)
+	if err != nil {
+		return err
+	}
+	defer d.Close()
+	// Enforce immutable fields against the DB snapshot: refuse to serve when
+	// the config drifted from install (a box without a snapshot yet — a
+	// pre-feature install that never re-ran `vps install` — is allowed).
+	if snap, ok, err := d.GetSetting(db.SettingImmutableSnapshot); err != nil {
+		return err
+	} else if ok {
+		if err := c.VerifyImmutable(snap); err != nil {
 			return err
 		}
-		defer d.Close()
-		m := mgr.New(c, d)
+	}
+	m := mgr.New(c, d)
 		if err := m.ApplyV4State(); err != nil {
 			return err
 		}
