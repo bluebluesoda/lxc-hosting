@@ -816,7 +816,7 @@ func (m *Manager) Reinstall(name, image string) (string, error) {
 // write fails roll the DB row back so the two never disagree.
 func (m *Manager) AddDomain(name, domain string, proxyProtocol bool) error {
 	if !m.cfg.Net.V4Forward {
-		return errors.New("v4 forwarding is disabled (v4_forward: false) — domains are not available; re-enable with `vps v4-forward on`")
+		return errors.New("v4 forwarding is disabled (v4_forward: false) — domains are not available; re-enable with `vps config set net.v4_forward true`")
 	}
 	u, err := m.db.GetUserByName(name)
 	if err != nil {

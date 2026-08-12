@@ -97,35 +97,30 @@ func main() {
 		}
 		err = userDel(os.Args[2])
 	case "list":
-		err = userList()
-	case "update":
-		err = userUpdate(os.Args[2:])
-	case "start", "stop", "restart":
-		if len(os.Args) != 3 {
-			err = fmt.Errorf("usage: vps %s <name>", os.Args[1])
+		// `vps list` = table of all users; `vps list <name>` = one user's detail.
+		if len(os.Args) == 2 {
+			err = userList()
+		} else if len(os.Args) == 3 {
+			err = userShow(os.Args[2])
+		} else {
+			err = fmt.Errorf("usage: vps list [name]")
+		}
+	case "quota":
+		err = userQuota(os.Args[2:])
+	case "power":
+		if len(os.Args) != 4 {
+			err = fmt.Errorf("usage: vps power <name> start|stop|restart")
 			break
 		}
-		err = userPower(os.Args[1], os.Args[2])
-	case "reset-passwd":
+		err = userPower(os.Args[3], os.Args[2])
+	case "passwd":
 		if len(os.Args) != 3 {
-			err = fmt.Errorf("usage: vps reset-passwd <name>")
+			err = fmt.Errorf("usage: vps passwd <name>")
 			break
 		}
-		err = userResetPasswd(os.Args[2])
+		err = userPasswd(os.Args[2])
 	case "admin-passwd":
 		err = cmdAdminPasswd()
-	case "v4-forward":
-		if len(os.Args) != 3 {
-			err = fmt.Errorf("usage: vps v4-forward on|off")
-			break
-		}
-		err = cmdV4Forward(os.Args[2])
-	case "show":
-		if len(os.Args) != 3 {
-			err = fmt.Errorf("usage: vps show <name>")
-			break
-		}
-		err = userShow(os.Args[2])
 	case "ipv6-reapply":
 		// Re-attach IPv6 routes/proxy_ndp for all existing containers.
 		// Run by the vpsmgr-ipv6.service boot unit and `vps install`.
@@ -154,19 +149,18 @@ func main() {
 func usage() {
 	fmt.Print(`vps ` + ver.Version + `
 usage:
+  vps list [name]                  all users, or one user's detail
   vps add <name> [--cpu 1] [--mem 1G] [--disk 10G] [--traffic 100]
-  vps update <name> [--cpu 2] [--mem 2G] [--disk 20G] [--traffic 200]
-  vps reset-passwd <name>    # reissue panel password (shown once)
-  vps admin-passwd           # reset admin panel password (shown once)
-  vps start|stop|restart <name>
+  vps quota <name> [--cpu 2] [--mem 2G] [--disk 20G] [--traffic 200]
+  vps power <name> start|stop|restart
+  vps passwd <name>                reissue user panel password (shown once)
+  vps admin-passwd                 reset admin panel password (shown once)
   vps del <name>
-  vps list
-  vps show <name>
-  vps panel-url              print panel address
-  vps v4-forward on|off      enable/disable IPv4 inbound (ssh/ports/domains); rules refresh
-  vps config list|set|help   inspect/change config.yaml with per-field kind+apply
-  vps note-version <ver>     record binary version that left this config (used by uninstall.sh)
+  vps panel-url                    print panel address
+  vps config list|set|help         inspect/change config.yaml (per-field editable+apply)
   vps version
+system:
+  vps install | serve | ipv6-reapply | note-version <ver>
 cpu:  whole cores >= 1 (e.g. --cpu 2), or a fraction of one core in 0.1..0.9
       (e.g. --cpu 0.5 — the container is pinned to one core with a time slice)
 traffic: monthly quota in GiB (upload + download combined); 0 or empty = unlimited
@@ -809,43 +803,6 @@ func applyV4State(c *cfg.Config) error {
 	return mgr.New(c, d).ApplyV4State()
 }
 
-// cmdV4Forward toggles the shared IPv4 inbound policy. Turning it off makes
-// every container IPv6-only (no SSH DNAT, no user-port-block DNAT, traefik
-// disabled); turning it on restores everything from the recorded ports/domains.
-func cmdV4Forward(state string) error {
-	on := state == "on"
-	if state != "on" && state != "off" {
-		return fmt.Errorf("usage: vps v4-forward on|off")
-	}
-	c, err := cfg.Load()
-	if err != nil {
-		return err
-	}
-	if c.Net.V4Forward == on {
-		fmt.Printf("v4 forwarding already %s\n", state)
-		return nil
-	}
-	c.Net.V4Forward = on
-	if err := cfg.Save(c); err != nil {
-		return err
-	}
-	d, err := db.Open(c.Panel.DB)
-	if err != nil {
-		return err
-	}
-	defer d.Close()
-	m := mgr.New(c, d)
-	if err := m.ApplyV4State(); err != nil {
-		return err
-	}
-	if on {
-		fmt.Println("v4 forwarding enabled: ssh/port-block DNAT restored, traefik re-enabled (domains re-synced)")
-	} else {
-		fmt.Println("v4 forwarding disabled: ssh/port-block DNAT removed, traefik disabled (domains kept)")
-	}
-	return nil
-}
-
 // cmdAdminPasswd resets the admin panel password to a new random 20-char value
 // and prints it once. The password is stored as a bcrypt hash in the config.
 func cmdAdminPasswd() error {
@@ -989,7 +946,7 @@ func userDel(name string) error {
 	return nil
 }
 
-func userUpdate(args []string) error {
+func userQuota(args []string) error {
 	if len(args) < 1 {
 		return fmt.Errorf("usage: vps update <name> [--cpu 2] [--mem 2G] [--disk 20G]")
 	}
@@ -1113,9 +1070,9 @@ func userUpdate(args []string) error {
 	return nil
 }
 
-// userResetPasswd resets a user's panel login password to a random 20-char
+// userPasswd resets a user's panel login password to a random 20-char
 // value and prints it once. The container root password is not touched.
-func userResetPasswd(name string) error {
+func userPasswd(name string) error {
 	if err := mgr.ValidateName(name); err != nil {
 		return err
 	}
