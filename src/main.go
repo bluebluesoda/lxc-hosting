@@ -253,6 +253,12 @@ func cmdInstall() error {
 		d.Close()
 		return fmt.Errorf("unique machine-id: %w", err)
 	}
+	// Route inter-container IPv6 through the host (no L2 discovery / MITM),
+	// so a container can reach a peer whose address it knows.
+	if err := m.EnsureRoutedIPv6(); err != nil {
+		d.Close()
+		return fmt.Errorf("routed ipv6: %w", err)
+	}
 	d.Close()
 	f := fw.New(c)
 	if err := f.WriteMain(); err != nil {

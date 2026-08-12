@@ -51,6 +51,12 @@ apt-get update -qq && apt-get install -y -qq openssh-server ca-certificates curl
 mkdir -p /etc/ssh/sshd_config.d
 printf "PermitRootLogin yes\nPasswordAuthentication yes\n" > /etc/ssh/sshd_config.d/99-vpsmgr.conf
 systemctl enable ssh
+# Containers route peer IPv6 through the host, so they must not treat the
+# parent prefix as on-link. Tell systemd-networkd to skip RA on-link and route
+# prefixes; peer traffic then always goes to the default gateway.
+if [ -f /etc/systemd/network/eth0.network ]; then
+  printf '\n[IPv6AcceptRA]\nUseOnLinkPrefix=false\nUseRoutePrefix=false\n' >> /etc/systemd/network/eth0.network
+fi
 # slim the published image: drop apt lists/archives and logs. Without this the
 # image balloons ~70MiB beyond just openssh (apt lists alone are ~50MiB).
 apt-get clean 2>/dev/null || true

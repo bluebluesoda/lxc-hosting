@@ -59,7 +59,7 @@ dnf clean all 2>/dev/null || true
 rm -rf /var/cache/dnf /var/log/* /tmp/* /var/tmp/* 2>/dev/null || true
 # Drop the baked-in machine-id so every container boots its own: a shared
 # machine-id means a shared DHCPv6 DUID, which breaks dnsmasq lease renewals
-# and drops the container's global IPv6 at the 1h lease mark.
+# and drops the container global IPv6 at the 1h lease mark.
 rm -f /etc/machine-id /var/lib/dbus/machine-id 2>/dev/null || true'; then
     lxc stop "$NAME" --timeout=30 || true
     lxc publish "$NAME" --alias "$IMAGE"

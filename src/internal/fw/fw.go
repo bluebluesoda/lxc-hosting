@@ -42,6 +42,11 @@ table inet vpsmgr {
     type nat hook postrouting priority srcnat; policy accept;
     ip saddr %s oifname "%s" masquerade
   }
+
+  chain redirect-drop {
+    type filter hook output priority filter; policy accept;
+    icmpv6 type nd-redirect drop
+  }
 }
 include "%s"
 `, sub, ext, filepath.Join(c.NftDir(), "*.nft"))
