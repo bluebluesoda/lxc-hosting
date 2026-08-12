@@ -133,7 +133,7 @@ a.copy.copied { border-color: #86efac; background: #dcfce7; color: #15803d; }
     <form action="{{.Prefix}}/user-add" method="post" class="form-grid" id="createForm">
       <div class="field"><label>{{if eq .Lang "zh"}}用户名{{else}}Username{{end}}</label><input name="name" pattern="[a-z]([a-z0-9-]*[a-z0-9])?" maxlength="63" required title="{{if eq .Lang "zh"}}以小写字母开头，只能含小写字母、数字、连字符（63 位内）{{else}}starts with a lowercase letter; letters, digits and hyphens only (max 63){{end}}"></div>
       <div class="field"><label>CPU</label>
-        <div class="cpu-row"><input name="cpu" id="cfCpu" type="number" min="0.1" step="0.1" value="1" required title="{{if eq .Lang "zh"}}整数核心（≥1）或 0.1~0.9 小数（单核的时间片占比）{{else}}whole cores (>= 1) or a decimal 0.1..0.9 (a fraction of one core){{end}}"><span class="step"><button type="button" onclick="stepCpu('cfCpu',1)" title="+">▲</button><button type="button" onclick="stepCpu('cfCpu',-1)" title="−">▼</button></span></div>
+        <div class="cpu-row"><input name="cpu" id="cfCpu" type="number" min="0.1" step="any" value="1" required title="{{if eq .Lang "zh"}}整数核心（≥1）或 0.1~0.9 小数（单核的时间片占比）{{else}}whole cores (>= 1) or a decimal 0.1..0.9 (a fraction of one core){{end}}"><span class="step"><button type="button" onclick="stepCpu('cfCpu',1)" title="+">▲</button><button type="button" onclick="stepCpu('cfCpu',-1)" title="−">▼</button></span></div>
       </div>
       <div class="field"><label>{{if eq .Lang "zh"}}内存 MiB{{else}}Memory MiB{{end}}</label><input name="mem" id="cfMem" value="1024" required></div>
       <div class="field"><label>{{if eq .Lang "zh"}}磁盘 GiB{{else}}Disk GiB{{end}}</label><input name="disk" id="cfDisk" type="number" min="1" value="10" required></div>
@@ -220,7 +220,7 @@ a.copy.copied { border-color: #86efac; background: #dcfce7; color: #15803d; }
     <form action="{{.Prefix}}/user-quota" method="post" class="form-grid" id="quotaForm">
       <input type="hidden" name="name" id="quotaNameHidden">
       <div class="field"><label>CPU</label>
-        <div class="cpu-row"><input name="cpu" id="quotaCpu" type="number" min="0.1" step="0.1" required title="{{if eq .Lang "zh"}}整数核心（≥1）或 0.1~0.9 小数（单核的时间片占比）{{else}}whole cores (>= 1) or a decimal 0.1..0.9 (a fraction of one core){{end}}"><span class="step"><button type="button" onclick="stepCpu('quotaCpu',1)" title="+">▲</button><button type="button" onclick="stepCpu('quotaCpu',-1)" title="−">▼</button></span></div>
+        <div class="cpu-row"><input name="cpu" id="quotaCpu" type="number" min="0.1" step="any" required title="{{if eq .Lang "zh"}}整数核心（≥1）或 0.1~0.9 小数（单核的时间片占比）{{else}}whole cores (>= 1) or a decimal 0.1..0.9 (a fraction of one core){{end}}"><span class="step"><button type="button" onclick="stepCpu('quotaCpu',1)" title="+">▲</button><button type="button" onclick="stepCpu('quotaCpu',-1)" title="−">▼</button></span></div>
       </div>
       <div class="field"><label>{{if eq .Lang "zh"}}内存 MiB{{else}}Memory MiB{{end}}</label><input name="mem" id="quotaMem" required></div>
       <div class="field"><label>{{if eq .Lang "zh"}}磁盘 GiB{{else}}Disk GiB{{end}}</label><input name="disk" id="quotaDisk" type="number" min="1" required></div>
@@ -271,9 +271,15 @@ function stepCpu(id, dir){
   el.value = nv;
   el.dispatchEvent(new Event('input'));
 }
+{{if eq .Lang "zh"}}var CPU_ERR = 'CPU 请输入整数核心（≥1）或 0.1~0.9 的小数';{{else}}var CPU_ERR = 'CPU: enter whole cores (>= 1) or a decimal 0.1..0.9';{{end}}
 function syncCpuStep(el){
-  var v = parseFloat(el.value);
-  if (!isNaN(v)) el.step = (v < 1) ? 0.1 : 1;
+  // Mirror the backend rule (mgr.ParseCPU): whole cores >= 1, or a one-decimal
+  // value in 0.1..0.9. HTML5 number-step validation cannot express this and its
+  // float arithmetic falsely rejects valid values, so step is 'any' and the
+  // rule is enforced here via setCustomValidity (min still floors at 0.1).
+  var v = el.value.trim();
+  var ok = /^\d+$/.test(v) ? parseInt(v, 10) >= 1 : /^0?\.([1-9])$/.test(v);
+  el.setCustomValidity((v !== '' && !ok) ? CPU_ERR : '');
 }
 function del(name){
   if (!confirm("{{if eq .Lang "zh"}}删除用户 " + name + "？此操作将删除容器和所有数据，不可恢复。{{else}}Delete user " + name + "? This deletes the container and all data. This cannot be undone.{{end}}")) return;
