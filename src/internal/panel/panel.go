@@ -103,28 +103,26 @@ func (s *Server) prefix() string { return "/" + s.cfg.Panel.URLPath }
 func (s *Server) p(route string) string { return s.prefix() + route }
 
 type pageData struct {
-	Title        string
-	User         *db.User
-	State        string
-	IP           string
-	PortBase     int
-	Ports        string
-	PublicPorts  string
-	SSH          string
-	QuotaCPU     string
-	QuotaMem     string
-	QuotaDisk    string
-	Domains      []string
-	Images       []mgr.ManagedImage
-	DefaultImage string
-	Msg          string
-	Err          string
-	PublicIP     string
-	Prefix       string
-	Lang         string
-	UpGB         string
-	DownGB       string
-	IPv6         string
+	Title       string
+	User        *db.User
+	State       string
+	IP          string
+	PortBase    int
+	Ports       string
+	PublicPorts string
+	SSH         string
+	QuotaCPU    string
+	QuotaMem    string
+	QuotaDisk   string
+	Domains     []string
+	Msg         string
+	Err         string
+	PublicIP    string
+	Prefix      string
+	Lang        string
+	UpGB        string
+	DownGB      string
+	IPv6        string
 }
 
 func (s *Server) Handler() http.Handler {
@@ -138,6 +136,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/root-reset", s.requireAuth(s.requirePost(s.handleRootReset)))
 	mux.HandleFunc("/domain-add", s.requireAuth(s.requirePost(s.handleDomainAdd)))
 	mux.HandleFunc("/domain-del", s.requireAuth(s.requirePost(s.handleDomainDel)))
+	mux.HandleFunc("/images", s.requireAuth(s.requirePost(s.handleImages)))
 	mux.HandleFunc("/flash", s.requireAuth(s.requirePost(s.handleFlash)))
 	prefix := s.prefix()
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -236,21 +235,19 @@ func (s *Server) redirectModal(w http.ResponseWriter, r *http.Request, path, msg
 
 func (s *Server) buildData(u *db.User, msg, errMsg string) pageData {
 	d := pageData{
-		Title:        "VPS Manager",
-		User:         u,
-		PublicIP:     s.cfg.DisplayIP(),
-		Prefix:       s.prefix(),
-		PortBase:     u.PortBase,
-		Ports:        mgr.ServicePorts(u.PortBase, s.cfg.Net.PortsPerUser),
-		PublicPorts:  s.cfg.DisplayIP() + ":" + mgr.ServicePorts(u.PortBase, s.cfg.Net.PortsPerUser),
-		SSH:          "ssh -p " + itoa(u.PortBase) + " root@" + s.cfg.DisplayIP(),
-		QuotaCPU:     mgr.FormatCPU(u.CPU),
-		QuotaMem:     itoa(u.MemMB) + " MiB",
-		QuotaDisk:    itoa(u.DiskGB) + " GiB",
-		Images:       s.mgr.Images(),
-		DefaultImage: s.cfg.LXD.Image,
-		Msg:          msg,
-		Err:          errMsg,
+		Title:       "VPS Manager",
+		User:        u,
+		PublicIP:    s.cfg.DisplayIP(),
+		Prefix:      s.prefix(),
+		PortBase:    u.PortBase,
+		Ports:       mgr.ServicePorts(u.PortBase, s.cfg.Net.PortsPerUser),
+		PublicPorts: s.cfg.DisplayIP() + ":" + mgr.ServicePorts(u.PortBase, s.cfg.Net.PortsPerUser),
+		SSH:         "ssh -p " + itoa(u.PortBase) + " root@" + s.cfg.DisplayIP(),
+		QuotaCPU:    mgr.FormatCPU(u.CPU),
+		QuotaMem:    itoa(u.MemMB) + " MiB",
+		QuotaDisk:   itoa(u.DiskGB) + " GiB",
+		Msg:         msg,
+		Err:         errMsg,
 	}
 	// One `lxc list` call only for the container status (must be live).
 	// Traffic is read from the DB — the background sampler writes it every 60s.

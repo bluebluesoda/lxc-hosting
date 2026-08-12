@@ -7,8 +7,8 @@ import (
 
 // ManagedImage is one OS image offered for reinstall.
 type ManagedImage struct {
-	Alias string // LXD alias, e.g. "vpsmgr/debian-sshd"
-	Label string // display name, e.g. "Debian 13"
+	Alias string `json:"alias"` // LXD alias, e.g. "vpsmgr/debian-sshd"
+	Label string `json:"label"` // display name, e.g. "Debian 13"
 }
 
 // imageLabels maps known managed image aliases to friendly display names.

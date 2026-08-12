@@ -7,6 +7,7 @@ import (
 	"strconv"
 
 	"vpsmgr/internal/db"
+	"vpsmgr/internal/mgr"
 	"vpsmgr/internal/pw"
 )
 
@@ -258,4 +259,16 @@ func (s *Server) handleDomainDel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.redirect(w, r, s.p(""), "ok: domain removed")
+}
+
+// handleImages returns the OS images available for reinstall. It is fetched
+// lazily when the user opens the reinstall dialog, not on every page load, so
+// an LXD image listing only happens when actually needed.
+func (s *Server) handleImages(w http.ResponseWriter, r *http.Request) {
+	imgs := s.mgr.Images()
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(struct {
+		Images  []mgr.ManagedImage `json:"images"`
+		Default string             `json:"default"`
+	}{imgs, s.cfg.LXD.Image})
 }

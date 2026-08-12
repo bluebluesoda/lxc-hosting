@@ -392,11 +392,11 @@ func TestLanguageSwitch(t *testing.T) {
 func TestTemplateEscapesUserInput(t *testing.T) {
 	srv, _ := newTestServer(t)
 	html := srv.renderToString(t, "overview.html", pageData{
-		User: &db.User{Name: `alice"><img src=x onerror=alert(1)>`},
+		User:    &db.User{Name: `alice"><img src=x onerror=alert(1)>`},
 		Domains: []string{`evil.example"><script>alert(1)</script>`},
-		UpGB:   "1",
-		DownGB: "1",
-		Prefix: "/" + testSecret,
+		UpGB:    "1",
+		DownGB:  "1",
+		Prefix:  "/" + testSecret,
 	})
 	for _, raw := range []string{`<img src=x onerror`, `<script>alert(1)</script>`, `"><script>`} {
 		if strings.Contains(html, raw) {
@@ -426,6 +426,50 @@ func TestStripPrefix(t *testing.T) {
 		if ok != c.ok || (ok && rest != c.rest) {
 			t.Errorf("stripPrefix(%q) = (%q,%v), want (%q,%v)", c.path, rest, ok, c.rest, c.ok)
 		}
+	}
+}
+
+// TestImagesEndpoint verifies the lazy image-list endpoint: it always offers
+// the default Debian image (LXD unreachable in tests falls back to it), and it
+// is behind auth like every other panel route.
+func TestImagesEndpoint(t *testing.T) {
+	srv, d := newTestServer(t)
+	h := srv.Handler()
+	prefix := "/" + testSecret
+
+	hash, err := pw.Hash("correct-horse-battery")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.CreateUser("alice", hash, "10.42.0.2", 1, 10000, 10, 1024, 10); err != nil {
+		t.Fatal(err)
+	}
+	rr := doReq(t, h, http.MethodPost, prefix+"/login", url.Values{"username": {"alice"}, "password": {"correct-horse-battery"}}, nil)
+	var sess *http.Cookie
+	for _, c := range rr.Result().Cookies() {
+		if c.Name == "vpsmgr_session" {
+			v := *c
+			sess = &v
+		}
+	}
+	if sess == nil {
+		t.Fatal("no session cookie")
+	}
+
+	rr = doReq(t, h, http.MethodPost, prefix+"/images", nil, sess)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("POST /images = %d, want 200", rr.Code)
+	}
+	for _, want := range []string{"vpsmgr/debian-sshd", "Debian 13", `"default":"vpsmgr/debian-sshd"`} {
+		if !strings.Contains(rr.Body.String(), want) {
+			t.Errorf("/images body missing %q: %s", want, rr.Body.String())
+		}
+	}
+
+	// Behind auth: no session -> redirect to login.
+	rr = doReq(t, h, http.MethodPost, prefix+"/images", nil, nil)
+	if rr.Code != http.StatusFound {
+		t.Fatalf("POST /images without session = %d, want redirect", rr.Code)
 	}
 }
 
