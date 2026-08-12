@@ -1,11 +1,14 @@
 # Vpsmgr Lite
 
+**Warning ⚠️ Under active development — breaking changes may occur.**
+
 [简体中文](README.zh-CN.md) · [Docs](docs/README.md)
 
-A lightweight LXC hosting panel: one Debian 13 container per user. Users
-manage their machine from a web panel (start/stop/restart/reinstall), with
-automatic NAT4 port forwarding and 80/443 per-domain proxying by Traefik.
-Optional IPv6 pass-through (no NAT).
+A toy LXC hosting panel for small machines (≤ 4 GB RAM, small VPS): one Debian
+13 container per user, managed from a web panel (start/stop/restart/reinstall),
+with automatic NAT4 port forwarding and 80/443 per-domain proxying by Traefik.
+Optional IPv6 pass-through (no NAT). The panel is a single small Go binary and
+the container image stays slim — storage and memory are treated as scarce.
 
 ## Install
 
@@ -36,7 +39,7 @@ point.
 ## Usage
 
 ```
-vpsmgr add <name> [--cpu N] [--mem NG] [--disk NG]   # default 1 core / 1G / 10G
+vpsmgr add <name> [--password X] [--cpu N] [--mem NG] [--disk NG]   # default 1 core / 1G / 10G
 vpsmgr update <name> [--cpu N] [--mem N] [--disk NG] # disk can only grow
 vpsmgr reset-passwd <name>
 vpsmgr list

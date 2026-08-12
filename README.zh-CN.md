@@ -3,11 +3,11 @@
 
 [English](README.md) · [文档](docs/README.md)
 
-轻量的 LXC 托管面板：每用户一台 Debian 13，用户通过 Web 面板管理机器（开机/关机/重启/重装），自动 NAT4 端口转发，80/443 按域名由 Traefik 转发。可选 IPv6 直通（无 NAT）。
+面向小型机器（≤ 4G 内存、小型 VPS）的玩具级 LXC 托管面板：每用户一台 Debian 13，用户通过 Web 面板管理机器（开机/关机/重启/重装），自动 NAT4 端口转发，80/443 按域名由 Traefik 转发。可选 IPv6 直通（无 NAT）。面板是一个很小的 Go 单二进制，容器镜像保持精简——存储和内存都视作稀缺资源。
 
 ## 安装
 
-**最低要求：Ubuntu 24.04（物理机或 KVM）1 核心 1.5G 内存 10G 磁盘空闲 root** 
+**最低要求：Ubuntu 24.04（物理机或 KVM）1 核心 1.5G 内存 10G 磁盘空闲 root**
 
 amd64/arm64 均可，主要在amd64上进行了测试
 
@@ -17,8 +17,8 @@ sudo ./install.sh                  # 安装稳定版预编译二进制
 #sudo ./install.sh --local-build   # 强制本地编译
 ```
 
-**如需启用IPv6直通，请确保宿主机获得整段Route**，可以询问服务商，或者使用仓库中的检查脚本进行不严谨的测试。   
-**务必在测试v6整段可用后再尝试以v6支持进行安装**   
+**如需启用IPv6直通，请确保宿主机获得整段Route**，可以询问服务商，或者使用仓库中的检查脚本进行不严谨的测试。
+**务必在测试v6整段可用后再尝试以v6支持进行安装**
 ```
 bash check-ipv6-support.sh #v6测试脚本
 ```
@@ -29,14 +29,14 @@ bash check-ipv6-support.sh #v6测试脚本
 ## 使用
 
 ```
-vpsmgr add <name> [--cpu N] [--mem NG] [--disk NG]   # 默认 1核/1G/10G
+vpsmgr add <name> [--password X] [--cpu N] [--mem NG] [--disk NG]   # 默认 1核/1G/10G
 vpsmgr update <name> [--cpu N] [--mem N] [--disk NG] # 磁盘只许扩
-vpsmgr reset-passwd <name>    
-vpsmgr list   
-vpsmgr show <name>     
-vpsmgr start|stop|restart <name>   
-vpsmgr del <name>   
-vpsmgr panel-url   
+vpsmgr reset-passwd <name>
+vpsmgr list
+vpsmgr show <name>
+vpsmgr start|stop|restart <name>
+vpsmgr del <name>
+vpsmgr panel-url
 ```
 
 ## 配置

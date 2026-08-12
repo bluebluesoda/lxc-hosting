@@ -5,6 +5,25 @@ managed from a web panel and a CLI. Everything ships as a single Go binary
 (`vpsmgr` = CLI + embedded web panel); LXD, nftables and Traefik provide the
 plumbing.
 
+## Design goals
+
+vpsmgr is a toy for small machines (≤ 4 GB RAM, small VPS). Storage and memory
+are treated as scarce, which drives every choice in this document:
+
+- the panel is a single static Go binary — the only new service vpsmgr adds
+  besides LXD and Traefik;
+- the storage pool is sparse (a loop file that only grows as it fills) and the
+  published image is slimmed and the base image deleted, so disk is only
+  consumed by what containers actually use, and clones share the image's
+  blocks;
+- container tooling stays minimal (`git` / `python3` are deliberately absent);
+- live stats are batched into a handful of REST calls per refresh, and traffic
+  sampling runs every 60 s, keeping idle CPU/RAM use low.
+
+"Lightweight" refers to the panel and this storage/memory discipline, not to a
+zero-overhead platform: LXD (snap), nftables and Traefik are the minimal
+plumbing that makes the panel possible.
+
 ## Components
 
 ```
@@ -56,7 +75,8 @@ src/      Go source (single binary: CLI + panel)
   pool, uses a spare whole-disk block device, or (no spare disk) creates a
   **sparse loop-file pool** sized to a share of the free space on `/`:
   80% by default, 90% when ≥ 20 GiB free. The loop file only allocates blocks
-  as the pool actually fills.
+  as the pool actually fills. On very small hosts, cap the ZFS ARC
+  (`zfs.arc_max`) so container memory keeps priority over the pool's cache.
 - Containers are ZFS clones of the image: the image's blocks are shared
   (copy-on-write), so a well-provisioned image costs one copy no matter how
   many containers. Because LXD's `refquota` counts inherited blocks, image
