@@ -91,6 +91,13 @@ src/      Go source (single binary: CLI + panel)
 - Quotas: CPU (whole cores ≥ 1, or a fraction 0.1..0.9 of one core), memory
   (MiB), disk (GiB). Disk maps onto the ZFS quota and can only grow, never
   shrink.
+- **Traffic quota**: each user can carry a monthly traffic quota in GiB
+  (`users.traffic_quota_gb`, 0 = unlimited; counts upload + download of the
+  current month). The 60s traffic sampler enforces it: over-quota containers
+  get their eth0 rate-limited to 1Mbps each direction, back-under (e.g. monthly
+  rollover) is unthrottled. The NIC limits are applied LIVE by LXD via tc
+  (htb qdisc on the host veth) — no container restart — and the manager keeps
+  an in-memory throttle state so LXD is only touched on state changes.
 - **Init script**: each user can store a custom shell script (≤ 64 KiB) in
   their panel. On a successful `reinstall` it is written to the container over
   exec stdin (never the host command line — no injection surface) and run

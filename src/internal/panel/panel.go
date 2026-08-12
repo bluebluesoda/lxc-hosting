@@ -103,30 +103,34 @@ func (s *Server) prefix() string { return "/" + s.cfg.Panel.URLPath }
 func (s *Server) p(route string) string { return s.prefix() + route }
 
 type pageData struct {
-	Title      string
-	User       *db.User
-	State      string
-	IP         string
-	SSHPort    int
-	StartPort  int
-	Ports      string // full user-port block, e.g. 10700-10799 (tooltip)
-	PortsShort string // compact form, e.g. 107xx
-	SSH        string
-	V4Forward  bool   // false = IPv6-only box: v4 ssh/ports not offered
-	InitScript string // custom init script, run after a reinstall
-	QuotaCPU   string
-	QuotaMem   string
-	QuotaDisk  string
-	Domains    []string
-	Msg        string
-	Err        string
-	PublicIP   string
-	Prefix     string
-	Lang       string
-	UpGB       string
-	DownGB     string
-	IPv6       string // primary global address (the one to connect to)
-	IPv6Block  string // the /112 block the container owns (informational)
+	Title          string
+	User           *db.User
+	State          string
+	IP             string
+	SSHPort        int
+	StartPort      int
+	Ports          string // full user-port block, e.g. 10700-10799 (tooltip)
+	PortsShort     string // compact form, e.g. 107xx
+	SSH            string
+	V4Forward      bool   // false = IPv6-only box: v4 ssh/ports not offered
+	InitScript     string // custom init script, run after a reinstall
+	TrafficQuotaGB int    // monthly traffic quota GiB, 0 = unlimited
+	TrafficUsedGB  string // used this month (GB, 1 decimal) — only set when limited
+	TrafficPct     int    // used/quota * 100, clamped to 100
+	Throttled      bool   // over quota: NIC limited to 1Mbps
+	QuotaCPU       string
+	QuotaMem       string
+	QuotaDisk      string
+	Domains        []string
+	Msg            string
+	Err            string
+	PublicIP       string
+	Prefix         string
+	Lang           string
+	UpGB           string
+	DownGB         string
+	IPv6           string // primary global address (the one to connect to)
+	IPv6Block      string // the /112 block the container owns (informational)
 }
 
 func (s *Server) Handler() http.Handler {
@@ -277,6 +281,18 @@ func (s *Server) buildData(u *db.User, msg, errMsg string) pageData {
 	up, down := s.mgr.TrafficFor(u.ID) // pure DB read
 	d.UpGB = mgr.FormatGB(up)
 	d.DownGB = mgr.FormatGB(down)
+	if q := u.TrafficQuotaGB; q > 0 {
+		used := up + down
+		quota := uint64(q) << 30
+		pct := int(used * 100 / quota)
+		if pct > 100 {
+			pct = 100
+		}
+		d.TrafficQuotaGB = q
+		d.TrafficUsedGB = mgr.FormatGB(used)
+		d.TrafficPct = pct
+		d.Throttled = s.mgr.IsThrottled(u.Name)
+	}
 	domains, _ := s.db.ListDomains(u.ID)
 	for _, x := range domains {
 		d.Domains = append(d.Domains, x.Domain)

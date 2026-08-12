@@ -38,6 +38,14 @@ type Manager struct {
 	// index/IP. Cross-process CLI races are still caught by the users.idx
 	// UNIQUE constraint plus Add's rollback.
 	opMu sync.Mutex
+
+	// throttled tracks which containers currently carry a traffic throttle
+	// (name -> on), so EnforceTrafficLimits only touches LXD on state changes.
+	// limitMu guards it: the 60s sampler writes, the panel reads via
+	// IsThrottled. Re-applying a limit after a panel restart is harmless (LXD
+	// applies NIC limits live, no container restart).
+	limitMu   sync.Mutex
+	throttled map[string]bool
 }
 
 func New(c *cfg.Config, d *db.DB) *Manager {
@@ -218,6 +226,8 @@ type AddOptions struct {
 	CPU    int
 	MemMB  int
 	DiskGB int
+	// TrafficGB is the monthly traffic quota in GiB (0 = unlimited).
+	TrafficGB int
 }
 
 func (m *Manager) Add(name string, opt AddOptions) (*Result, error) {
@@ -323,6 +333,12 @@ func (m *Manager) Add(name string, opt AddOptions) (*Result, error) {
 		return nil, fmt.Errorf("db: %w", err)
 	}
 	createdID = u.ID
+	if opt.TrafficGB > 0 {
+		if err := m.db.UpdateTrafficQuota(u.ID, opt.TrafficGB); err != nil {
+			cleanup()
+			return nil, fmt.Errorf("db: %w", err)
+		}
+	}
 	if m.cfg.Net.V4Forward {
 		if err := m.fw.WriteUser(name, u.IP, u.SSHPort, u.StartPort, cfg.PortsPerUser); err != nil {
 			cleanup()
@@ -493,7 +509,13 @@ func (m *Manager) Del(name string) error {
 	if err := m.db.DeleteUser(u.ID); err != nil {
 		return err
 	}
-	return m.db.DeleteSessionsForUser(u.ID)
+	if err := m.db.DeleteSessionsForUser(u.ID); err != nil {
+		return err
+	}
+	m.limitMu.Lock()
+	delete(m.throttled, name)
+	m.limitMu.Unlock()
+	return nil
 }
 
 // ApplyV4State enforces the current v4_forward policy: it rewrites (when on)

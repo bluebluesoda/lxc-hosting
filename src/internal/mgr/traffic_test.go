@@ -33,3 +33,37 @@ func TestFormatGB(t *testing.T) {
 		}
 	}
 }
+
+func TestShouldThrottle(t *testing.T) {
+	cases := []struct {
+		used    uint64
+		quotaGB int
+		want    bool
+	}{
+		{0, 0, false},                 // unlimited
+		{1 << 40, 0, false},           // unlimited even when huge
+		{(100 << 30) - 1, 100, false}, // just under
+		{100 << 30, 100, true},        // exactly at the quota
+		{(100 << 30) + 1, 100, true},  // over
+		{0, -1, false},                // negative quota treated as unlimited
+	}
+	for _, c := range cases {
+		if got := shouldThrottle(c.used, c.quotaGB); got != c.want {
+			t.Errorf("shouldThrottle(%d, %d) = %v, want %v", c.used, c.quotaGB, got, c.want)
+		}
+	}
+}
+
+func TestParseTrafficGB(t *testing.T) {
+	for s, want := range map[string]int{"": 0, "0": 0, "100": 100, "  50 ": 50} {
+		got, err := ParseTrafficGB(s)
+		if err != nil || got != want {
+			t.Errorf("ParseTrafficGB(%q) = %d, %v; want %d", s, got, err, want)
+		}
+	}
+	for _, bad := range []string{"-1", "abc", "1.5", "100GB"} {
+		if _, err := ParseTrafficGB(bad); err == nil {
+			t.Errorf("ParseTrafficGB(%q): expected error", bad)
+		}
+	}
+}

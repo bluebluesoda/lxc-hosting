@@ -42,6 +42,7 @@ func (d *DB) migrate() error {
 			ssh_port INTEGER UNIQUE NOT NULL,
 			start_port INTEGER NOT NULL,
 			init_script TEXT NOT NULL DEFAULT '',
+			traffic_quota_gb INTEGER NOT NULL DEFAULT 0,
 			cpu INTEGER NOT NULL DEFAULT 10,
 			mem_mb INTEGER NOT NULL DEFAULT 1024,
 			disk_gb INTEGER NOT NULL DEFAULT 10,
@@ -74,18 +75,22 @@ func (d *DB) migrate() error {
 			return fmt.Errorf("migrate: %w", err)
 		}
 	}
-	if err := d.migrateInitScript(); err != nil {
-		return fmt.Errorf("migrate: add init_script: %w", err)
+	if err := d.migrateUserColumns(); err != nil {
+		return fmt.Errorf("migrate: add user columns: %w", err)
 	}
 	return d.migrateCPU()
 }
 
-// migrateInitScript adds the users.init_script column to databases created
-// before it existed. A fresh database already has it via CREATE TABLE; this
-// only matters for a pre-existing DB that survived from an earlier dev build.
-// The PRAGMA check is used instead of matching the driver's duplicate-column
-// error string.
-func (d *DB) migrateInitScript() error {
+// migrateUserColumns adds columns to the users table that were introduced
+// after the original schema (init_script, traffic_quota_gb). A fresh database
+// already has them via CREATE TABLE; this only matters for a pre-existing DB
+// that survived from an earlier dev build. The PRAGMA check is used instead of
+// matching the driver's duplicate-column error string.
+func (d *DB) migrateUserColumns() error {
+	want := map[string]string{
+		"init_script":      `ALTER TABLE users ADD COLUMN init_script TEXT NOT NULL DEFAULT ''`,
+		"traffic_quota_gb": `ALTER TABLE users ADD COLUMN traffic_quota_gb INTEGER NOT NULL DEFAULT 0`,
+	}
 	rows, err := d.sql.Query(`PRAGMA table_info(users)`)
 	if err != nil {
 		return err
@@ -98,15 +103,17 @@ func (d *DB) migrateInitScript() error {
 		if err := rows.Scan(&cid, &name, &typ, &notnull, &dflt, &pk); err != nil {
 			return err
 		}
-		if name == "init_script" {
-			return nil
-		}
+		delete(want, name)
 	}
 	if err := rows.Err(); err != nil {
 		return err
 	}
-	_, err = d.sql.Exec(`ALTER TABLE users ADD COLUMN init_script TEXT NOT NULL DEFAULT ''`)
-	return err
+	for _, stmt := range want {
+		if _, err := d.sql.Exec(stmt); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // migrateCPU converts the cpu column from whole cores to tenths of a core

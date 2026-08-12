@@ -73,6 +73,10 @@ Users can set a custom **init script** in their panel — it runs as root inside
 their container after a reinstall (output at `/var/log/vpsmgr-init.log`), for
 cloud-provider-style first-boot automation.
 
+Admins can set a per-user monthly **traffic quota** (GiB, upload + download);
+a container that exceeds it is rate-limited to **1Mbps** both directions. The
+limit is applied live via LXD (tc qdiscs) — no container restart.
+
 ## Config
 
 `/etc/vpsmgr/config.yaml` (auto-generated at install) — **the defaults are not

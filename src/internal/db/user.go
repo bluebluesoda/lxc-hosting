@@ -20,6 +20,9 @@ type User struct {
 	MemMB      int
 	DiskGB     int
 	CreatedAt  string
+	// TrafficQuotaGB is the monthly traffic quota (upload + download) in GiB.
+	// 0 means unlimited.
+	TrafficQuotaGB int
 }
 
 func (d *DB) CreateUser(name, passHash, ip string, idx, sshPort, startPort, cpu, memMB, diskGB int) (*User, error) {
@@ -81,7 +84,7 @@ func (d *DB) UsedSSHPorts() (map[int]bool, error) {
 func scanUser(row *sql.Row) (*User, error) {
 	u := &User{}
 	err := row.Scan(&u.ID, &u.Name, &u.PassHash, &u.Idx, &u.IP, &u.SSHPort, &u.StartPort,
-		&u.InitScript, &u.CPU, &u.MemMB, &u.DiskGB, &u.CreatedAt)
+		&u.InitScript, &u.TrafficQuotaGB, &u.CPU, &u.MemMB, &u.DiskGB, &u.CreatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -90,19 +93,19 @@ func scanUser(row *sql.Row) (*User, error) {
 
 func (d *DB) GetUserByName(name string) (*User, error) {
 	return scanUser(d.sql.QueryRow(
-		`SELECT id, name, pass_hash, idx, ip, ssh_port, start_port, init_script, cpu, mem_mb, disk_gb, created_at
+		`SELECT id, name, pass_hash, idx, ip, ssh_port, start_port, init_script, traffic_quota_gb, cpu, mem_mb, disk_gb, created_at
 		 FROM users WHERE name=?`, name))
 }
 
 func (d *DB) GetUserByID(id int64) (*User, error) {
 	return scanUser(d.sql.QueryRow(
-		`SELECT id, name, pass_hash, idx, ip, ssh_port, start_port, init_script, cpu, mem_mb, disk_gb, created_at
+		`SELECT id, name, pass_hash, idx, ip, ssh_port, start_port, init_script, traffic_quota_gb, cpu, mem_mb, disk_gb, created_at
 		 FROM users WHERE id=?`, id))
 }
 
 func (d *DB) ListUsers() ([]*User, error) {
 	rows, err := d.sql.Query(
-		`SELECT id, name, pass_hash, idx, ip, ssh_port, start_port, init_script, cpu, mem_mb, disk_gb, created_at
+		`SELECT id, name, pass_hash, idx, ip, ssh_port, start_port, init_script, traffic_quota_gb, cpu, mem_mb, disk_gb, created_at
 		 FROM users ORDER BY idx`)
 	if err != nil {
 		return nil, err
@@ -112,7 +115,7 @@ func (d *DB) ListUsers() ([]*User, error) {
 	for rows.Next() {
 		u := &User{}
 		if err := rows.Scan(&u.ID, &u.Name, &u.PassHash, &u.Idx, &u.IP, &u.SSHPort, &u.StartPort,
-			&u.InitScript, &u.CPU, &u.MemMB, &u.DiskGB, &u.CreatedAt); err != nil {
+			&u.InitScript, &u.TrafficQuotaGB, &u.CPU, &u.MemMB, &u.DiskGB, &u.CreatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, u)
@@ -139,5 +142,11 @@ func (d *DB) UpdateQuotas(id int64, cpu, memMB, diskGB int) error {
 // after a reinstall). An empty string clears it.
 func (d *DB) UpdateInitScript(id int64, script string) error {
 	_, err := d.sql.Exec(`UPDATE users SET init_script=? WHERE id=?`, script, id)
+	return err
+}
+
+// UpdateTrafficQuota sets a user's monthly traffic quota in GiB (0 = unlimited).
+func (d *DB) UpdateTrafficQuota(id int64, gb int) error {
+	_, err := d.sql.Exec(`UPDATE users SET traffic_quota_gb=? WHERE id=?`, gb, id)
 	return err
 }

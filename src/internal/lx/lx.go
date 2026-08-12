@@ -480,6 +480,33 @@ func (c *Client) EnsureEth0Options(name string, opts map[string]string) (bool, e
 	return true, nil
 }
 
+// EnsureNicRateLimit sets (rate != "") or clears (rate == "") the eth0
+// bandwidth limit of a container. Changing only the limits.* keys is applied
+// LIVE by LXD via tc (htb qdisc on the host veth) — it does NOT reset the NIC
+// or restart the container (confirmed by the LXD team and verified live: the
+// container uptime is untouched and `tc qdisc show` gains the htb qdisc). An
+// instance PATCH replaces the entire devices map, so the device map is read
+// first and patched as a whole. Safe on running and stopped instances.
+func (c *Client) EnsureNicRateLimit(name, rate string) error {
+	var it instance
+	if err := c.get("/1.0/instances/"+url.PathEscape(name)+"?recursion=1", &it); err != nil {
+		return err
+	}
+	eth0, ok := it.Devices["eth0"]
+	if !ok {
+		return fmt.Errorf("lxd: instance %s has no eth0 device", name)
+	}
+	if rate == "" {
+		delete(eth0, "limits.ingress")
+		delete(eth0, "limits.egress")
+	} else {
+		eth0["limits.ingress"] = rate
+		eth0["limits.egress"] = rate
+	}
+	body := map[string]map[string]device{"devices": it.Devices}
+	return c.patch("/1.0/instances/"+url.PathEscape(name), body, nil)
+}
+
 // HardenIsolation ensures a container's eth0 carries the NIC isolation options
 // (nicIsolation). Idempotent.
 func (c *Client) HardenIsolation(name string) (bool, error) {

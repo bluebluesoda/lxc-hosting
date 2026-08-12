@@ -55,6 +55,8 @@ vps v4-forward on|off   # 共享 IPv4 入站开关：off = 容器仅 IPv6
 
 用户可在面板中设置自定义**初始化脚本**——重装后在容器内以 root 自动运行（输出在容器内 /var/log/vpsmgr-init.log），用于云厂商式的首次引导自动化。
 
+管理员可设置每用户的**月度流量配额**（GiB，上传+下载）；超限后容器上下行各限速 **1Mbps**。限速由 LXD 实时应用（tc qdisc），无需重启容器。
+
 ## 配置
 
 `/etc/vpsmgr/config.yaml`（安装时自动生成）——**默认配置不建议修改**。参考：[docs/configuration.md](docs/configuration.md)。
