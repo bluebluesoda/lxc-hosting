@@ -408,6 +408,14 @@ func (c *Client) SetCPU(name string, cpuTenths int) error {
 		map[string]map[string]string{"config": cpuLimitConfig(cpuTenths)}, nil)
 }
 
+// SetAutostart toggles whether the container starts automatically when the
+// host boots. Containers stopped via the panel (user or admin) are disabled so
+// a maintenance reboot does not bring them back; start/restart re-enable it.
+func (c *Client) SetAutostart(name string, on bool) error {
+	body := map[string]map[string]string{"config": {"boot.autostart": strconv.FormatBool(on)}}
+	return c.patch("/1.0/instances/"+url.PathEscape(name), body, nil)
+}
+
 // SetMem live-updates the memory limit.
 func (c *Client) SetMem(name string, mb int) error {
 	body := map[string]map[string]string{"config": {"limits.memory": strconv.Itoa(mb) + "MiB"}}

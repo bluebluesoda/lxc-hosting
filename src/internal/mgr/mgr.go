@@ -416,6 +416,10 @@ func (m *Manager) UpdateQuotas(name string, cpu, memMB, diskGB int) (*Result, er
 	return m.ResultFor(u, ""), nil
 }
 
+// Power start/stops/restarts a container. boot.autostart mirrors the desired
+// state: starting (or restarting) re-enables it so a host reboot brings the
+// container back, while stopping disables it so a manually stopped container
+// stays off after the host reboots for maintenance.
 func (m *Manager) Power(name, action string) error {
 	u, err := m.db.GetUserByName(name)
 	if err != nil {
@@ -423,10 +427,19 @@ func (m *Manager) Power(name, action string) error {
 	}
 	switch action {
 	case "start":
+		if err := m.lx.SetAutostart(u.Name, true); err != nil {
+			return err
+		}
 		return m.lx.Start(u.Name)
 	case "stop":
+		if err := m.lx.SetAutostart(u.Name, false); err != nil {
+			return err
+		}
 		return m.lx.Stop(u.Name)
 	case "restart":
+		if err := m.lx.SetAutostart(u.Name, true); err != nil {
+			return err
+		}
 		return m.lx.Restart(u.Name)
 	}
 	return errors.New("unknown action")
