@@ -134,9 +134,8 @@ sshd enabled — the service is `sshd` on RHEL and `ssh` on Debian).
 
 ## Container isolation on the bridge
 
-All containers share the single `lxdbr0` L2 segment (10.42.0.0/24), so any
-tenant can `nmap` the subnet and see every live container IP. To make sure a
-scan does **not** reveal usernames:
+All containers share the single `lxdbr0` L2 segment (10.42.0.0/24). To make
+sure a scan does **not** reveal usernames:
 
 - LXD's dnsmasq must NOT serve instance-name DNS: by default it publishes
   `<instance>.lxd` records (instance name = username) that turn into
@@ -147,6 +146,44 @@ scan does **not** reveal usernames:
   guest hostname or the upstream resolver).
 - The in-guest hostname is already randomized (see above), so nothing
   username-derived is ever advertised on the wire.
+
+### L2 isolation per container
+
+Every container's `eth0` is created (and migrated) with three LXD NIC security
+options (`lx.nicIsolation`):
+
+- `security.port_isolation=true` — the veth is an isolated bridge port
+  (`isolated on`), so **no frames** (unicast, multicast, broadcast) flow
+  between containers at L2. This kills ARP/NDP spoofing, L2 sniffing, and
+  rogue DHCP/DHCPv6/DNS servers in one move.
+- `security.ipv4_filtering=true` + `security.ipv6_filtering=true` — LXD
+  installs bridge `input`/`forward` nftables rules per NIC that only accept
+  ARP/NDP/NA claiming the container's own addresses or MAC, and drop
+  router-advertisements from containers. This protects the **host's own
+  ARP/NDP caches** from container-side poisoning (verified: a container cannot
+  rewrite the host's neighbor entries).
+
+Side effects (verified empirically against the flat-bridge baseline):
+
+- Containers **cannot reach each other** on the private bridge anymore (IPv4
+  and IPv6 alike) — by design. Any inter-container traffic would have to go
+  through a public address + DNAT; the host does not proxy the private
+  subnet.
+- ARP spoofing a neighbor or the gateway, NDP/NA spoofing, and RA
+  router-announcement attacks are all blocked both against other containers
+  and against the host.
+- Outbound (IPv4/IPv6), host→container, DNAT port forwards, DHCP lease and
+  IPv6 pass-through (`/128` route + `proxy_ndp`) are unaffected.
+
+### `br_netfilter` requirement
+
+`security.ipv6_filtering` only works while the `br_netfilter` kernel module is
+loaded, and LXD does **not** load it itself — a container with the option
+**refuses to boot** without it (verified: `lxc start` fails, so after a host
+reboot every isolated container would fail to start). `vpsmgr install`
+therefore writes `/etc/modules-load.d/br_netfilter.conf` and loads the module,
+so it is present before LXD starts any container. Harmless no-op where the
+module is built into the kernel.
 
 ## Security model
 

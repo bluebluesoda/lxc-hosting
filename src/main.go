@@ -198,6 +198,19 @@ func cmdInstall() error {
 	if err := os.MkdirAll(cfg.DefaultDataDir, 0o755); err != nil {
 		return err
 	}
+	// LXD's security.ipv6_filtering (enabled on every container's eth0) only
+	// works while the br_netfilter kernel module is loaded, and LXD does NOT
+	// load it itself: a container with the option simply refuses to boot
+	// without it. Load it BEFORE any container is created/hardened, and persist
+	// it in /etc/modules-load.d so it is present at boot, before LXD starts any
+	// container. Harmless no-op where the module is built into the kernel.
+	if err := os.MkdirAll("/etc/modules-load.d", 0o755); err != nil {
+		return err
+	}
+	if err := os.WriteFile("/etc/modules-load.d/br_netfilter.conf", []byte("br_netfilter\n"), 0o644); err != nil {
+		return err
+	}
+	_ = exec.Command("modprobe", "br_netfilter").Run()
 	if err := os.MkdirAll(cfg.DefaultNftDir, 0o755); err != nil {
 		return err
 	}
@@ -221,6 +234,12 @@ func cmdInstall() error {
 	if err := m.RewireAllIPv6(); err != nil {
 		d.Close()
 		return fmt.Errorf("setup ipv6: %w", err)
+	}
+	// Container isolation: harden any containers created before the isolated
+	// build so the whole fleet is on the same security posture.
+	if err := m.HardenAll(); err != nil {
+		d.Close()
+		return fmt.Errorf("harden containers: %w", err)
 	}
 	d.Close()
 	f := fw.New(c)

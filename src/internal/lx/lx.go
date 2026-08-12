@@ -440,6 +440,47 @@ func (c *Client) SetDisk(name string, gb int) error {
 	return c.patch("/1.0/instances/"+url.PathEscape(name), body, nil)
 }
 
+// HardenIsolation ensures a container's eth0 carries the NIC isolation options
+// (nicIsolation). Idempotent: returns false when nothing changed. When the
+// options were missing, the container is stopped, the device patched, and the
+// container started again (preserving a stopped state) — patching a running
+// container hot-removes eth0, which trips an LXD netprio bug and can leave the
+// container without the option applied.
+func (c *Client) HardenIsolation(name string) (bool, error) {
+	var it instance
+	if err := c.get("/1.0/instances/"+url.PathEscape(name)+"?recursion=1", &it); err != nil {
+		return false, err
+	}
+	eth0, ok := it.Devices["eth0"]
+	if !ok {
+		return false, fmt.Errorf("lxd: instance %s has no eth0 device", name)
+	}
+	changed := false
+	for k, v := range nicIsolation {
+		if eth0[k] != v {
+			eth0[k] = v
+			changed = true
+		}
+	}
+	if !changed {
+		return false, nil
+	}
+	wasRunning := it.Status == "Running"
+	if wasRunning {
+		if err := c.Stop(name); err != nil {
+			return false, err
+		}
+	}
+	body := map[string]map[string]device{"devices": it.Devices}
+	if err := c.patch("/1.0/instances/"+url.PathEscape(name), body, nil); err != nil {
+		return false, err
+	}
+	if wasRunning {
+		return true, c.Start(name)
+	}
+	return true, nil
+}
+
 // Delete force-stops the container if needed and removes it. Already-gone
 // containers are treated as success so deletions are retryable after a partial
 // cleanup; any other failure (e.g. the daemon being unreachable) is returned
@@ -523,6 +564,24 @@ func (c *Client) PoolResources(pool string) (total, used int64, err error) {
 	return res.Space.Total, res.Space.Used, nil
 }
 
+// nicIsolation maps to LXD per-NIC security options that isolate a container's
+// eth0 from every other container on the bridge:
+//
+//   - security.port_isolation: the veth is an isolated bridge port, so no
+//     frames (unicast, multicast, broadcast) flow between containers at L2 —
+//     ARP/NDP spoofing, L2 sniffing and rogue DHCP/DNS servers all die here.
+//   - security.ipv4/ipv6_filtering: LXD installs bridge input rules dropping
+//     ARP/NDP that claims an address the container doesn't own, protecting the
+//     host's own ARP/NDP cache from container-side poisoning.
+//
+// A side effect of port isolation is that containers can no longer talk to
+// each other on the private bridge — by design (see docs/architecture.md).
+var nicIsolation = map[string]string{
+	"security.port_isolation": "true",
+	"security.ipv4_filtering": "true",
+	"security.ipv6_filtering": "true",
+}
+
 // Launch creates a container with limits, static IPv4 (and optional static
 // IPv6), root size and autostart enabled, then starts it and waits until it is
 // ready. security.nesting allows running Docker / nested containers inside.
@@ -540,6 +599,9 @@ func (c *Client) Launch(pool, bridge, name, image, ip, ipv6 string, cpu, memMB, 
 	}
 	if ipv6 != "" {
 		eth0["ipv6.address"] = ipv6
+	}
+	for k, v := range nicIsolation {
+		eth0[k] = v
 	}
 	config := cpuLimitConfig(cpu)
 	config["limits.memory"] = strconv.Itoa(memMB) + "MiB"

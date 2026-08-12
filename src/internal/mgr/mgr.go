@@ -622,6 +622,26 @@ func (m *Manager) DelDomain(name, domain string) error {
 	return m.syncTraefik(u)
 }
 
+// HardenAll applies the NIC isolation options to every existing container.
+// Called by `vpsmgr install` so an upgrade to an isolated build hardens the
+// previously-created containers in place. Idempotent; containers that were
+// already isolated (or exist in the DB but not in LXD) are skipped. Skips and
+// non-fatal errors are collected, not returned — one stale row must not break
+// the rest.
+func (m *Manager) HardenAll() error {
+	users, err := m.db.ListUsers()
+	if err != nil {
+		return err
+	}
+	var firstErr error
+	for _, u := range users {
+		if _, err := m.lx.HardenIsolation(u.Name); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
+}
+
 func (m *Manager) syncTraefik(u *db.User) error {
 	domains, err := m.db.ListDomains(u.ID)
 	if err != nil {
