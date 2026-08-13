@@ -122,8 +122,8 @@ footer a{color:var(--muted);text-decoration:underline}
 <h2>{{if eq .Lang "zh"}}概览{{else}}Overview{{end}}<span> · {{.User.Name}}</span></h2>
 <table>
 {{if .V4Forward}}<tr><th>IPV4</th><td><code>{{.PublicIP}}</code></td><th>{{if eq .Lang "zh"}}可用端口{{else}}Ports{{end}}</th><td><code>{{.PortsShort}}</code><span class="help" tabindex="0" role="button" aria-label="?">?<span class="tip">{{.Ports}}</span></span></td></tr>{{end}}
-{{if .IPv6}}<tr><th>IPv6</th><td colspan="3"><code>{{.IPv6}}</code>{{if .IPv6Block}}<div class="muted" style="margin-top:4px">{{if eq .Lang "zh"}}地址块{{else}}Address block{{end}}: <code>{{.IPv6Block}}</code></div>{{end}}</td></tr>{{end}}
 <tr><th>{{if eq .Lang "zh"}}SSH 登录端口{{else}}SSH port{{end}}</th><td colspan="3">{{if .V4Forward}}<span>{{if eq .Lang "zh"}}V4 端口{{else}}V4 port{{end}}: <code>{{.SSHPort}}</code></span>{{else}}<span>{{if eq .Lang "zh"}}V4 端口{{else}}V4 port{{end}}: <span class="pill down">{{if eq .Lang "zh"}}不支持{{else}}not available{{end}}</span></span>{{end}}{{if .IPv6}}<span class="muted"> &nbsp;|&nbsp; </span><span>{{if eq .Lang "zh"}}V6 端口{{else}}V6 port{{end}}: <code>22</code></span>{{end}}</td></tr>
+{{if .IPv6}}<tr><th>IPv6</th><td colspan="3"><code>{{.IPv6}}</code>{{if .IPv6Block}}<div class="muted" style="margin-top:4px">{{if eq .Lang "zh"}}地址块{{else}}Address block{{end}}: <code>{{.IPv6Block}}</code></div>{{end}}</td></tr>{{end}}
 </table>
 </div>
 
