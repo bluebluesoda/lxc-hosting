@@ -638,13 +638,13 @@ func configList() error {
 
 func configHelp() {
 	w := tabwriter.NewWriter(os.Stdout, 2, 4, 2, ' ', 0)
-	fmt.Fprintln(w, "KEY\tEDITABLE\tKIND\tAPPLY\tDESCRIPTION")
+	fmt.Fprintln(w, "KEY\tEDITABLE\tKIND\tDESCRIPTION")
 	for _, f := range cfg.Fields {
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", f.Key, f.Editable(), f.Kind, f.Apply, f.Desc)
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", f.Key, f.Editable(), f.Kind, f.Desc)
 	}
 	_ = w.Flush()
 	fmt.Println("\neditable: yes = changeable · no = refused · only-when-empty = re-enable a disabled panel")
-	fmt.Println("apply: restart panel (auto) = the panel is restarted for you · re-run vps install = run `vps install` or re-set with --apply")
+	fmt.Println("applies: restart panel (auto) = applied by vps config set · re-run vps install = needs --apply · immediate = applied right now · next add / reinstall = used later")
 }
 
 func configUsage() {

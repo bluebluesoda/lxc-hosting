@@ -339,11 +339,14 @@ apt-get update && apt-get install -y nginx{{end}}">{{.InitScript}}</textarea>
   }
 })();
 // (?) help icons: click toggles the floating tooltip; click elsewhere or
-// Escape closes it.
+// Escape closes it. preventDefault() matters for help icons nested inside a
+// <label> (the domain add form) — without it the label's default activation
+// toggles the checkbox instead of showing the tooltip.
 (function(){
   var tips=document.querySelectorAll('.help');
   tips.forEach(function(h){
     h.addEventListener('click',function(e){
+      e.preventDefault();
       e.stopPropagation();
       document.querySelectorAll('.help.open').forEach(function(o){if(o!==h)o.classList.remove('open');});
       h.classList.toggle('open');

@@ -140,6 +140,12 @@ func (s *Server) loadUsers(d *pageData) {
 	d.MaxUsers = cfg.MaxUsers
 	if d.MaxUsers > 0 {
 		d.CapacityPct = d.UserCount * 100 / d.MaxUsers
+		// With only a handful of containers the true percentage (e.g. 1/200)
+		// is an invisible sliver; floor it at 2% so the bar is visibly present
+		// once there is at least one container. 0 users stays empty.
+		if d.UserCount > 0 && d.CapacityPct < 2 {
+			d.CapacityPct = 2
+		}
 	}
 }
 
