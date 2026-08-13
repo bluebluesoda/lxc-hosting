@@ -120,7 +120,7 @@ type NetCfg struct {
 	// IPv6-only: no SSH DNAT, no user-port-block DNAT, and traefik (domains)
 	// is disabled — containers still reach IPv4 out via the NAT4 masquerade.
 	// Set once at install, changeable at runtime with `vps config set
-	// net.v4_forward true|false` (or `vps v4-forward on|off` before v0.3.x).
+	// net.v4_forward true|false`.
 	// Deliberately NOT omitempty: false must round-trip through the config.
 	V4Forward bool `yaml:"v4_forward"`
 	// IPv6Subnet is the global prefix handed out to containers (e.g.

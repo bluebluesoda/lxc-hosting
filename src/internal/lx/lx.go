@@ -713,22 +713,34 @@ func (c *Client) ExecSH(name, script string) (string, error) {
 //   - the exec itself is bounded by a timeout, so even a wedged container
 //     cannot hang the call
 func (c *Client) RunInitScript(name, script string) error {
-	cmdStr := "cat >/root/vpsmgr-init.sh && chmod 700 /root/vpsmgr-init.sh && nohup "
-	if hasShebang(script) {
-		cmdStr += "/root/vpsmgr-init.sh"
-	} else {
-		cmdStr += "sh /root/vpsmgr-init.sh"
-	}
-	cmdStr += " >/var/log/vpsmgr-init.log 2>&1 </dev/null &"
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "lxc", "exec", name, "--", "/bin/sh", "-c", cmdStr)
+	cmd := exec.CommandContext(ctx, "lxc", "exec", name, "--", "/bin/sh", "-c",
+		initScriptCmd(script, "/root/vpsmgr-init.sh", "/var/log/vpsmgr-init.log"))
 	cmd.Stdin = strings.NewReader(script)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("lxc exec %s: %s", name, strings.TrimSpace(string(out)))
 	}
 	return nil
+}
+
+// initScriptCmd builds the container-side shell command that delivers script to
+// path and runs it detached, logging to logPath.
+//
+// The write (`cat` + `chmod`) runs in the FOREGROUND and must finish before the
+// exec returns. The run is wrapped in a `( ... & )` subshell so ONLY the run is
+// backgrounded: a trailing `&` (as in an earlier version) backgrounds the whole
+// `cat && chmod && nohup` chain, so sh -c exits before cat has read stdin and
+// the session close kills the backgrounded cat mid-write — the file is left
+// empty and nothing ever runs.
+func initScriptCmd(script, path, logPath string) string {
+	run := "nohup sh " + path
+	if hasShebang(script) {
+		run = "nohup " + path
+	}
+	return "cat >" + path + " && chmod 700 " + path + " && (" + run +
+		" >" + logPath + " 2>&1 </dev/null &)"
 }
 
 // hasShebang reports whether a script starts with a #! interpreter line.

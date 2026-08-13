@@ -15,8 +15,8 @@ panel:
   session_days: 3
   url_path: AUTO           # 10-char random [a-zA-Z0-9_-] secret prefix, generated once at install
   admin_url_path: AUTO     # 10-char random secret prefix for the ADMIN panel, generated once at install
-  admin_pass_hash: AUTO    # bcrypt hash of the admin panel password; generated at install,
-                           # reset via `vpsmgr admin-passwd`. No admin username — password only.
+   admin_pass_hash: AUTO    # bcrypt hash of the admin panel password; generated at install,
+                            # reset via `vps admin-passwd`. No admin username — password only.
 
 net:
   # Container subnet 10.<n>.0.0/24, chosen ONCE at install (second octet n,
@@ -29,7 +29,7 @@ net:
   v4_forward: true            # IPv4 inbound policy. false (only meaningful with
                               # ipv6_subnet set) = containers are IPv6-only: no
                               # SSH/port-block DNAT and traefik/domains disabled
-                              # (NAT4 outbound kept). Toggle at runtime: vps v4-forward on|off
+                              # (NAT4 outbound kept). Toggle at runtime: vps config set net.v4_forward true|false
   ext_if: AUTO             # detected from default route
   ipv6_subnet: ""          # optional: global prefix for IPv6 pass-through, e.g. "2602:fada:6::/64".
                            # /64 or shorter works (e.g. /56); a provider /80 slice like
