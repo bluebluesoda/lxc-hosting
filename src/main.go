@@ -194,10 +194,18 @@ func panelPath(c *cfg.Config) string {
 // non-purging uninstall). Only when NEITHER is set is the origin unknown and
 // treated as too old. A config that already records 0.3.x must not be blocked
 // on an empty counterpart field — that is a normal 0.3.x re-upgrade.
+//
+// A config whose origin equals this binary's own version is never "older":
+// `vps install` records ver.Version as installed_version, so a fresh install
+// (and a same-version re-adoption) is always self-signed and safe to run.
+// Only a config written by a DIFFERENT, older binary is refused.
 func blockUnadoptable(c *cfg.Config) error {
 	origin := c.InstalledVersion
 	if origin == "" {
 		origin = c.UninstalledVersion
+	}
+	if origin == ver.Version {
+		return nil
 	}
 	if ver.Blocked(origin) {
 		return fmt.Errorf("vpsmgr %s cannot adopt a setup from an older release "+
