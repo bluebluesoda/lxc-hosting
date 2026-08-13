@@ -69,6 +69,11 @@ a{color:var(--accent);text-decoration:none}
 .domtable input[type=checkbox]{width:1rem;height:1rem;cursor:pointer}
 .chk{display:inline-flex;align-items:center;gap:.35rem;cursor:pointer;font-size:.82rem}
 .chk input{width:auto}
+.help{position:relative;display:inline-flex;align-items:center;justify-content:center;width:1.1em;height:1.1em;border:1px solid var(--border);border-radius:50%;color:var(--muted);font-size:.72rem;cursor:help;margin-left:.3rem;vertical-align:middle;user-select:none;flex:none}
+.help .tip{display:none;position:absolute;top:calc(100% + 8px);left:50%;transform:translateX(-50%);background:var(--card);border:1px solid var(--border);border-radius:8px;box-shadow:var(--shadow);padding:.55rem .7rem;font-size:.78rem;line-height:1.5;color:var(--text);white-space:normal;width:max-content;max-width:280px;z-index:80;text-align:left;font-weight:400}
+.help .tip b{color:var(--warn)}
+.help.open .tip{display:block}
+.traffic-line{margin:.15rem 0 .6rem;font-size:.8rem}
 .qgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:.55rem;margin:.15rem 0 .7rem}
 .qitem{background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:.45rem .55rem;text-align:center;min-width:0}
 .qlabel{display:block;color:var(--muted);font-size:.72rem;letter-spacing:.02em;margin-bottom:.2rem}
@@ -116,9 +121,9 @@ footer a{color:var(--muted);text-decoration:underline}
 <div class="card">
 <h2>{{if eq .Lang "zh"}}概览{{else}}Overview{{end}}<span> · {{.User.Name}}</span></h2>
 <table>
-<tr><th>{{if eq .Lang "zh"}}可用端口{{else}}Ports{{end}}</th><td colspan="3">{{if .V4Forward}}<span title="{{.Ports}}"><code>{{.PortsShort}}</code></span><span class="muted">&nbsp;{{if eq .Lang "zh"}}即 {{.Ports}};SSH 独立端口 {{.SSHPort}}{{else}}i.e. {{.Ports}}; separate SSH port {{.SSHPort}}{{end}}</span>{{else}}<span class="muted">{{if eq .Lang "zh"}}IPv4 入站已关闭 — 仅 IPv6 可连入{{else}}IPv4 inbound disabled — IPv6 only{{end}}</span>{{end}}</td></tr>
-{{if .IPv6}}<tr><th>IPv6</th><td colspan="3"><code>{{.IPv6}}</code>{{if .IPv6Block}}<div class="muted" style="margin-top:4px">{{if eq .Lang "zh"}}本机拥有完整地址块 {{.IPv6Block}},块内任意地址均可绑定使用。{{else}}You own the whole block {{.IPv6Block}} — any address inside it can be bound.{{end}}</div>{{end}}</td></tr>{{end}}
-{{if .V4Forward}}<tr><th>{{if eq .Lang "zh"}}SSH 登录{{else}}SSH access{{end}}</th><td colspan="3"><code>{{.SSH}}</code></td></tr>{{else}}<tr><th>{{if eq .Lang "zh"}}SSH 登录{{else}}SSH access{{end}}</th><td colspan="3" class="muted">{{if eq .Lang "zh"}}通过 IPv4 连接 SSH 不可用,请使用 IPv6 地址:{{else}}v4 SSH unavailable — use the IPv6 address:{{end}} <code>{{.IPv6}}</code></td></tr>{{end}}
+{{if .V4Forward}}<tr><th>IPV4</th><td><code>{{.PublicIP}}</code></td><th>{{if eq .Lang "zh"}}可用端口{{else}}Ports{{end}}</th><td><code>{{.PortsShort}}</code><span class="help" tabindex="0" role="button" aria-label="?">?<span class="tip">{{.Ports}}</span></span></td></tr>{{end}}
+{{if .IPv6}}<tr><th>IPv6</th><td colspan="3"><code>{{.IPv6}}</code>{{if .IPv6Block}}<div class="muted" style="margin-top:4px">{{if eq .Lang "zh"}}地址块{{else}}Address block{{end}}: <code>{{.IPv6Block}}</code></div>{{end}}</td></tr>{{end}}
+<tr><th>{{if eq .Lang "zh"}}SSH 登录端口{{else}}SSH port{{end}}</th><td colspan="3">{{if .V4Forward}}<span>{{if eq .Lang "zh"}}V4 端口{{else}}V4 port{{end}}: <code>{{.SSHPort}}</code></span>{{else}}<span>{{if eq .Lang "zh"}}V4 端口{{else}}V4 port{{end}}: <span class="pill down">{{if eq .Lang "zh"}}不支持{{else}}not available{{end}}</span></span>{{end}}{{if .IPv6}}<span class="muted"> &nbsp;|&nbsp; </span><span>{{if eq .Lang "zh"}}V6 端口{{else}}V6 port{{end}}: <code>22</code></span>{{end}}</td></tr>
 </table>
 </div>
 
@@ -129,15 +134,13 @@ footer a{color:var(--muted);text-decoration:underline}
 <div class="qitem"><span class="qlabel">CPU</span><span class="qval">{{.QuotaCPU}}</span></div>
 <div class="qitem"><span class="qlabel">{{if eq .Lang "zh"}}内存{{else}}Memory{{end}}</span><span class="qval">{{.QuotaMem}}</span></div>
 <div class="qitem"><span class="qlabel">{{if eq .Lang "zh"}}磁盘{{else}}Disk{{end}}</span><span class="qval">{{.QuotaDisk}}</span></div>
-<div class="qitem"><span class="qlabel">{{if eq .Lang "zh"}}本月流量{{else}}Traffic{{end}}</span><span class="qval">↑ {{.UpGB}} / ↓ {{.DownGB}} GB</span></div>
 </div>
+<div class="muted traffic-line">{{if eq .Lang "zh"}}本月流量{{else}}Bandwidth{{end}} ↑ {{.UpGB}} / ↓ {{.DownGB}} GB{{if not .TrafficQuotaGB}} · {{if eq .Lang "zh"}}无限制{{else}}unlimited{{end}}{{end}}</div>
 {{if .TrafficQuotaGB}}
 <div class="traffic-quota">
-<div class="trow"><span class="muted">{{if eq .Lang "zh"}}流量配额{{else}}Quota{{end}}</span><span>{{.TrafficUsedGB}} / {{.TrafficQuotaGB}} GB{{if .Throttled}} · <span class="pill down">{{if eq .Lang "zh"}}限速中 1Mbps{{else}}limited to 1Mbps{{end}}</span>{{end}}</span></div>
+<div class="trow"><span class="muted">{{if eq .Lang "zh"}}流量配额{{else}}Bandwidth quota{{end}}</span><span>{{.TrafficUsedGB}} / {{.TrafficQuotaGB}} GB{{if .Throttled}} · <span class="pill down">{{if eq .Lang "zh"}}限速中 1Mbps{{else}}limited to 1Mbps{{end}}</span>{{end}}</span></div>
 <div class="bar"><div class="fill" style="width:{{.TrafficPct}}%"></div></div>
 </div>
-{{else}}
-<div class="muted" style="margin:.4rem 0 0">{{if eq .Lang "zh"}}本月流量：{{else}}Traffic:{{end}} ↑ {{.UpGB}} / ↓ {{.DownGB}} GB · {{if eq .Lang "zh"}}无限制{{else}}unlimited{{end}}</div>
 {{end}}
 <div class="btnrow">
 <form action="{{.Prefix}}/power" method="post" class="inline"><input type="hidden" name="action" value="start"><button class="btn ok">{{if eq .Lang "zh"}}开机{{else}}Start{{end}}</button></form>
@@ -156,12 +159,12 @@ footer a{color:var(--muted);text-decoration:underline}
 {{if .Domains}}
 <form action="{{.Prefix}}/domain-update" method="post" id="domForm">
 <table class="domtable">
-<thead><tr><th>{{if eq .Lang "zh"}}域名{{else}}Domain{{end}}</th><th>PROXY v2</th><th></th></tr></thead>
+<thead><tr><th>{{if eq .Lang "zh"}}域名{{else}}Domain{{end}}</th><th>PROXY v2 <span class="help" tabindex="0" role="button" aria-label="?">?<span class="tip">{{if eq $.Lang "zh"}}PROXY protocol v2：启用后，443 的 TLS 透传会先向后端发送一段 PROXY 报文以汇报访客真实 IP。<b>需要后端支持</b>，默认不启用；HTTP/80 仍使用 X-Forwarded-For 头。{{else}}PROXY protocol v2: when enabled, the 443 TLS passthrough sends a PROXY preamble to the backend reporting the visitor's real IP. <b>The backend must support it</b>; disabled by default. HTTP/80 keeps X-Forwarded-For headers.{{end}}</span></span></th><th></th></tr></thead>
 <tbody>
 {{range .Domains}}
 <tr>
 <td><code>{{.Domain}}</code></td>
-<td><input type="checkbox" name="proto" value="{{.Domain}}"{{if .ProxyProtocol}} checked{{end}} title="{{if eq $.Lang "zh"}}PROXY protocol v2：一种 TCP 报文，向后端汇报访客 IP，需要后端适配{{else}}PROXY protocol v2: a TCP preamble that reports the visitor IP to the backend; the backend must support it{{end}}"></td>
+<td><input type="checkbox" name="proto" value="{{.Domain}}"{{if .ProxyProtocol}} checked{{end}}></td>
 <td><button type="button" class="btn danger" onclick="delDomain('{{.Domain}}')">{{if eq $.Lang "zh"}}删除{{else}}Remove{{end}}</button></td>
 </tr>
 {{end}}
@@ -173,8 +176,7 @@ footer a{color:var(--muted);text-decoration:underline}
 <div class="muted">{{if eq .Lang "zh"}}未绑定域名{{else}}No domains bound{{end}}</div>
 {{end}}
 {{if .V4Forward}}<form action="{{.Prefix}}/domain-add" method="post">
-<div class="frow"><label>{{if eq .Lang "zh"}}新域名{{else}}New domain{{end}}</label><input name="domain" placeholder="example.com"><button class="btn ok" type="submit">{{if eq .Lang "zh"}}添加{{else}}Add{{end}}</button></div>
-<div class="frow"><label></label><label class="chk"><input type="checkbox" name="proxy_protocol" value="1" title="{{if eq .Lang "zh"}}PROXY protocol v2：一种 TCP 报文，向后端汇报访客 IP，需要后端适配{{else}}PROXY protocol v2: a TCP preamble that reports the visitor IP to the backend; the backend must support it{{end}}"> PROXY protocol v2</label></div>
+<div class="frow"><label>{{if eq .Lang "zh"}}新域名{{else}}New domain{{end}}</label><input name="domain" placeholder="example.com"><label class="chk"><input type="checkbox" name="proxy_protocol" value="1"> PROXY v2 <span class="help" tabindex="0" role="button" aria-label="?">?<span class="tip">{{if eq $.Lang "zh"}}PROXY protocol v2：启用后，443 的 TLS 透传会先向后端发送一段 PROXY 报文以汇报访客真实 IP。<b>需要后端支持</b>，默认不启用；HTTP/80 仍使用 X-Forwarded-For 头。{{else}}PROXY protocol v2: when enabled, the 443 TLS passthrough sends a PROXY preamble to the backend reporting the visitor's real IP. <b>The backend must support it</b>; disabled by default. HTTP/80 keeps X-Forwarded-For headers.{{end}}</span></span></label><button class="btn ok" type="submit">{{if eq .Lang "zh"}}添加{{else}}Add{{end}}</button></div>
 </form>
 {{else}}<div class="muted">{{if eq .Lang "zh"}}IPv4 入站已关闭，无法添加新域名。管理员可用 `vps config set net.v4_forward true` 重新开启。{{else}}IPv4 inbound is disabled — adding domains is not available. Re-enable with `vps config set net.v4_forward true`.{{end}}</div>{{end}}
  </div>
@@ -336,16 +338,37 @@ apt-get update && apt-get install -y nginx{{end}}">{{.InitScript}}</textarea>
     });
   }
 })();
-// Domain PROXY protocol batch toggle: reveal the save button when any
-// checkbox changes; delete via a JS-built form (avoid nesting forms).
+// (?) help icons: click toggles the floating tooltip; click elsewhere or
+// Escape closes it.
+(function(){
+  var tips=document.querySelectorAll('.help');
+  tips.forEach(function(h){
+    h.addEventListener('click',function(e){
+      e.stopPropagation();
+      document.querySelectorAll('.help.open').forEach(function(o){if(o!==h)o.classList.remove('open');});
+      h.classList.toggle('open');
+    });
+  });
+  document.addEventListener('click',function(){document.querySelectorAll('.help.open').forEach(function(o){o.classList.remove('open');});});
+  document.addEventListener('keydown',function(e){if(e.key==='Escape')document.querySelectorAll('.help.open').forEach(function(o){o.classList.remove('open');});});
+})();
+// Domain PROXY protocol batch toggle: reveal the save button ONLY when a
+// checkbox actually changed from the loaded state; delete via a JS-built form
+// (avoid nesting forms).
 (function(){
   var P='{{.Prefix}}';
   var form=document.getElementById('domForm');
   if(form){
     var save=document.getElementById('domSave');
-    form.querySelectorAll('input[name=proto]').forEach(function(b){
-      b.addEventListener('change',function(){ save.hidden=false; });
-    });
+    var boxes=form.querySelectorAll('input[name=proto]');
+    var initial={};
+    boxes.forEach(function(b){initial[b.value]=b.checked;});
+    var sync=function(){
+      var changed=false;
+      boxes.forEach(function(b){if(b.checked!==initial[b.value])changed=true;});
+      save.hidden=!changed;
+    };
+    boxes.forEach(function(b){b.addEventListener('change',sync);});
   }
   window.delDomain=function(d){
     var f=document.createElement('form'); f.method='post'; f.action=P+'/domain-del';

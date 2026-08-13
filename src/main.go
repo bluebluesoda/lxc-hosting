@@ -150,8 +150,8 @@ func usage() {
 	fmt.Print(`vps ` + ver.Version + `
 usage:
   vps list [name]                  all users, or one user's detail
-  vps add <name> [--cpu 1] [--mem 1G] [--disk 10G] [--traffic 100]
-  vps quota <name> [--cpu 2] [--mem 2G] [--disk 20G] [--traffic 200]
+  vps add <name> [--cpu 1] [--mem 1G] [--disk 10G] [--bandwidth 100]
+  vps quota <name> [--cpu 2] [--mem 2G] [--disk 20G] [--bandwidth 200]
   vps power <name> start|stop|restart
   vps passwd <name>                reissue user panel password (shown once)
   vps admin-passwd                 reset admin panel password (shown once)
@@ -163,7 +163,7 @@ system:
   vps install | serve | ipv6-reapply | note-version <ver>
 cpu:  whole cores >= 1 (e.g. --cpu 2), or a fraction of one core in 0.1..0.9
       (e.g. --cpu 0.5 — the container is pinned to one core with a time slice)
-traffic: monthly quota in GiB (upload + download combined); 0 or empty = unlimited
+bandwidth: monthly quota in GiB (upload + download combined); 0 or empty = unlimited
 `)
 }
 
@@ -944,7 +944,7 @@ func userAdd(args []string) error {
 	fs.StringVar(&cpuS, "cpu", "", "")
 	fs.StringVar(&memS, "mem", "", "")
 	fs.StringVar(&diskS, "disk", "", "")
-	fs.StringVar(&trafficS, "traffic", "", "") // GiB/month, 0/empty = unlimited
+	fs.StringVar(&trafficS, "bandwidth", "", "") // GiB/month, 0/empty = unlimited
 	if err := fs.Parse(args[1:]); err != nil {
 		return err
 	}
@@ -974,7 +974,7 @@ func userAdd(args []string) error {
 	}
 
 	traffic := 0
-	if setTraffic := provided["traffic"]; setTraffic {
+	if setTraffic := provided["bandwidth"]; setTraffic {
 		if traffic, err = mgr.ParseTrafficGB(trafficS); err != nil {
 			return err
 		}
@@ -1002,8 +1002,8 @@ func userAdd(args []string) error {
 			}
 			disk, _ = parseDiskStrict(s)
 		}
-		if !provided["traffic"] {
-			s, err := inter.Ask("Traffic quota", "0", " GiB/month (0 = unlimited)", validateTrafficGB)
+		if !provided["bandwidth"] {
+			s, err := inter.Ask("Bandwidth quota", "0", " GiB/month (0 = unlimited)", validateTrafficGB)
 			if err != nil {
 				return err
 			}
@@ -1049,7 +1049,7 @@ func userDel(name string) error {
 
 func userQuota(args []string) error {
 	if len(args) < 1 {
-		return fmt.Errorf("usage: vps quota <name> [--cpu 2] [--mem 2G] [--disk 20G] [--traffic 100]")
+		return fmt.Errorf("usage: vps quota <name> [--cpu 2] [--mem 2G] [--disk 20G] [--bandwidth 100]")
 	}
 	name := args[0]
 	fs := flag.NewFlagSet("update", flag.ContinueOnError)
@@ -1059,7 +1059,7 @@ func userQuota(args []string) error {
 	fs.StringVar(&cpuS, "cpu", "", "")
 	fs.StringVar(&memS, "mem", "", "")
 	fs.StringVar(&diskS, "disk", "", "")
-	fs.StringVar(&trafficS, "traffic", "", "") // GiB/month, 0 = unlimited
+	fs.StringVar(&trafficS, "bandwidth", "", "") // GiB/month, 0 = unlimited
 	if err := fs.Parse(args[1:]); err != nil {
 		return err
 	}
@@ -1100,7 +1100,7 @@ func userQuota(args []string) error {
 			return err
 		}
 	}
-	setTraffic := provided["traffic"]
+	setTraffic := provided["bandwidth"]
 	trafficGB := u.TrafficQuotaGB
 	if setTraffic {
 		if trafficGB, err = mgr.ParseTrafficGB(trafficS); err != nil {
@@ -1109,7 +1109,7 @@ func userQuota(args []string) error {
 	}
 
 	if inter.IsTTY() {
-		fmt.Printf("current quota: CPU %s / mem %d MiB / disk %d GiB / traffic %d GiB\n", mgr.FormatCPU(u.CPU), u.MemMB, u.DiskGB, u.TrafficQuotaGB)
+		fmt.Printf("current quota: CPU %s / mem %d MiB / disk %d GiB / bandwidth %d GiB\n", mgr.FormatCPU(u.CPU), u.MemMB, u.DiskGB, u.TrafficQuotaGB)
 		if !setCpu {
 			s, err := inter.Ask("new CPU cores", mgr.FormatCPU(cpu), "", validateCPU)
 			if err != nil {
@@ -1132,7 +1132,7 @@ func userQuota(args []string) error {
 			disk, _ = parseDiskStrict(s)
 		}
 		if !setTraffic {
-			s, err := inter.Ask("new traffic quota", strconv.Itoa(trafficGB), " GiB/month (0 = unlimited)", validateTrafficGB)
+			s, err := inter.Ask("new bandwidth quota", strconv.Itoa(trafficGB), " GiB/month (0 = unlimited)", validateTrafficGB)
 			if err != nil {
 				return err
 			}
@@ -1146,7 +1146,7 @@ func userQuota(args []string) error {
 			fmt.Println("no changes, exiting")
 			return nil
 		}
-		return fmt.Errorf("nothing to update: pass at least one of --cpu/--mem/--disk/--traffic")
+		return fmt.Errorf("nothing to update: pass at least one of --cpu/--mem/--disk/--bandwidth")
 	}
 	if disk < u.DiskGB {
 		return fmt.Errorf("disk can only grow: current %d GiB, cannot shrink to %d GiB", u.DiskGB, disk)
@@ -1274,7 +1274,7 @@ func printAdded(r *mgr.Result) {
 		fmt.Printf("ssh:      %d (v4 inbound disabled — connect over IPv6)\n", u.SSHPort)
 		fmt.Printf("ports:    %s (v4 inbound disabled)\n", mgr.UserPorts(u.StartPort, r.PortsPerUser))
 	}
-	fmt.Printf("quotas:   %s cpu / %d MiB / %d GiB / traffic %d GiB\n", mgr.FormatCPU(u.CPU), u.MemMB, u.DiskGB, u.TrafficQuotaGB)
+	fmt.Printf("quotas:   %s cpu / %d MiB / %d GiB / bandwidth %d GiB\n", mgr.FormatCPU(u.CPU), u.MemMB, u.DiskGB, u.TrafficQuotaGB)
 	if r.IPv6 != "" {
 		fmt.Printf("ipv6:     %s\n", r.IPv6)
 	}
@@ -1305,10 +1305,10 @@ func printResult(r *mgr.Result) {
 		fmt.Printf("ssh:      %d (v4 inbound disabled — connect over IPv6)\n", u.SSHPort)
 		fmt.Printf("ports:    %s (v4 inbound disabled)\n", mgr.UserPorts(u.StartPort, r.PortsPerUser))
 	}
-	fmt.Printf("quotas:   %s cpu / %d MiB / %d GiB / traffic %d GiB\n", mgr.FormatCPU(u.CPU), u.MemMB, u.DiskGB, u.TrafficQuotaGB)
+	fmt.Printf("quotas:   %s cpu / %d MiB / %d GiB / bandwidth %d GiB\n", mgr.FormatCPU(u.CPU), u.MemMB, u.DiskGB, u.TrafficQuotaGB)
 	fmt.Printf("cpu use:  %s\n", r.CPUUse)
 	fmt.Printf("mem use:  %s\n", r.MemUse)
-	fmt.Printf("traffic:  up %s GB / down %s GB (this month)\n", r.UpGB, r.DownGB)
+	fmt.Printf("bandwidth:  up %s GB / down %s GB (this month)\n", r.UpGB, r.DownGB)
 	fmt.Printf("domains:  %s\n", strings.Join(r.Domains, ", "))
 	if r.Password != "" {
 		c, _ := cfg.Load()

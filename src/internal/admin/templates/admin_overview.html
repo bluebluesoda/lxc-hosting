@@ -148,7 +148,7 @@ a.copy.copied { border-color: #86efac; background: #dcfce7; color: #15803d; }
       </div>
       <div class="field"><label>{{if eq .Lang "zh"}}内存 MiB{{else}}Memory MiB{{end}}</label><input name="mem" id="cfMem" value="1024" required></div>
       <div class="field"><label>{{if eq .Lang "zh"}}磁盘 GiB{{else}}Disk GiB{{end}}</label><input name="disk" id="cfDisk" type="number" min="1" value="10" required></div>
-      <div class="field"><label>{{if eq .Lang "zh"}}流量配额 GiB{{else}}Traffic GiB{{end}}</label><input name="traffic" id="cfTraffic" type="number" min="0" step="1" value="0" title="{{if eq .Lang "zh"}}每月流量上限（上传+下载），0 = 不限；超限后限速 1Mbps{{else}}monthly quota (upload+download), 0 = unlimited; throttled to 1Mbps when exceeded{{end}}"></div>
+      <div class="field"><label>{{if eq .Lang "zh"}}流量配额 GiB{{else}}Bandwidth GiB{{end}}</label><input name="traffic" id="cfTraffic" type="number" min="0" step="1" value="0" title="{{if eq .Lang "zh"}}每月流量上限（上传+下载），0 = 不限；超限后限速 1Mbps{{else}}monthly quota (upload+download), 0 = unlimited; throttled to 1Mbps when exceeded{{end}}"></div>
       <button type="submit" class="primary" id="cfBtn">{{if eq .Lang "zh"}}创建{{else}}Create{{end}}</button>
     </form>
   </div>
@@ -167,7 +167,7 @@ a.copy.copied { border-color: #86efac; background: #dcfce7; color: #15803d; }
           <th>{{if eq .Lang "zh"}}内存使用{{else}}Mem use{{end}}</th>
           <th>{{if eq .Lang "zh"}}进程{{else}}Procs{{end}}</th>
           <th>{{if eq .Lang "zh"}}磁盘用量{{else}}Disk used{{end}}</th>
-          <th>{{if eq .Lang "zh"}}本月流量 上/下{{else}}Traffic ↑/↓{{end}}</th>
+          <th>{{if eq .Lang "zh"}}本月流量 上/下{{else}}Bandwidth ↑/↓{{end}}</th>
           <th>{{if eq .Lang "zh"}}操作{{else}}Actions{{end}}</th>
         </tr>
       </thead>
@@ -177,7 +177,7 @@ a.copy.copied { border-color: #86efac; background: #dcfce7; color: #15803d; }
           <td>{{.Name}}</td>
           <td class="{{if eq .State "Running"}}up{{else}}down{{end}}">{{.State}}</td>
           <td>{{if $.V4Forward}}<span title="{{.Ports}}">{{.PortsShort}}</span><br><small>ssh -p {{.SSHPort}}</small>{{else}}<span title="{{.Ports}}">{{.PortsShort}}</span><br><small>v4 off</small>{{end}}</td>
-          <td>{{.QuotaCPU}} / {{.QuotaMem}} / {{.QuotaDisk}}<br><small>{{if eq $.Lang "zh"}}流量{{else}}traffic{{end}}: {{if eq .TrafficGB 0}}{{if eq $.Lang "zh"}}不限{{else}}unlimited{{end}}{{else}}{{.TrafficGB}} GB{{end}}</small></td>
+          <td>{{.QuotaCPU}} / {{.QuotaMem}} / {{.QuotaDisk}}<br><small>{{if eq $.Lang "zh"}}流量{{else}}bandwidth{{end}}: {{if eq .TrafficGB 0}}{{if eq $.Lang "zh"}}不限{{else}}unlimited{{end}}{{else}}{{.TrafficGB}} GB{{end}}</small></td>
           <td>{{.CPUUse}}</td>
           <td>{{.MemUse}}</td>
           <td>{{if eq .State "Running"}}{{.Procs}} / {{.ProcsLimit}}{{else}}-{{end}}</td>
@@ -238,7 +238,7 @@ a.copy.copied { border-color: #86efac; background: #dcfce7; color: #15803d; }
       </div>
       <div class="field"><label>{{if eq .Lang "zh"}}内存 MiB{{else}}Memory MiB{{end}}</label><input name="mem" id="quotaMem" required></div>
       <div class="field"><label>{{if eq .Lang "zh"}}磁盘 GiB{{else}}Disk GiB{{end}}</label><input name="disk" id="quotaDisk" type="number" min="1" required></div>
-      <div class="field"><label>{{if eq .Lang "zh"}}流量 GiB{{else}}Traffic GiB{{end}}</label><input name="traffic" id="quotaTraffic" type="number" min="0" step="1" title="{{if eq .Lang "zh"}}每月流量上限（0 = 不限），超限后限速 1Mbps{{else}}monthly quota (0 = unlimited); throttled to 1Mbps when exceeded{{end}}"></div>
+      <div class="field"><label>{{if eq .Lang "zh"}}流量 GiB{{else}}Bandwidth GiB{{end}}</label><input name="traffic" id="quotaTraffic" type="number" min="0" step="1" title="{{if eq .Lang "zh"}}每月流量上限（0 = 不限），超限后限速 1Mbps{{else}}monthly quota (0 = unlimited); throttled to 1Mbps when exceeded{{end}}"></div>
       <button type="submit" class="primary" id="quotaSaveBtn">{{if eq .Lang "zh"}}保存{{else}}Save{{end}}</button>
       <button type="button" onclick="closeQuota()">{{if eq .Lang "zh"}}取消{{else}}Cancel{{end}}</button>
     </form>

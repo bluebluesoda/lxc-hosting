@@ -75,7 +75,7 @@ func shouldThrottle(used uint64, quotaGB int) bool {
 	return used >= uint64(quotaGB)<<30
 }
 
-// ParseTrafficGB parses a traffic quota in GiB: empty or "0" = unlimited,
+// ParseTrafficGB parses a bandwidth quota in GiB: empty or "0" = unlimited,
 // otherwise a non-negative integer.
 func ParseTrafficGB(s string) (int, error) {
 	s = strings.TrimSpace(s)
@@ -84,15 +84,15 @@ func ParseTrafficGB(s string) (int, error) {
 	}
 	n, err := strconv.Atoi(s)
 	if err != nil || n < 0 {
-		return 0, errors.New("traffic quota must be a non-negative integer GiB (0 = unlimited)")
+		return 0, errors.New("bandwidth quota must be a non-negative integer GiB (0 = unlimited)")
 	}
 	return n, nil
 }
 
-// SetTrafficQuota sets a user's monthly traffic quota in GiB (0 = unlimited).
+// SetTrafficQuota sets a user's monthly bandwidth quota in GiB (0 = unlimited).
 func (m *Manager) SetTrafficQuota(name string, gb int) error {
 	if gb < 0 {
-		return errors.New("traffic quota must be >= 0 GiB (0 = unlimited)")
+		return errors.New("bandwidth quota must be >= 0 GiB (0 = unlimited)")
 	}
 	u, err := m.db.GetUserByName(name)
 	if err != nil {

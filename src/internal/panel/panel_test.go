@@ -190,8 +190,8 @@ func TestOverviewShowsMonthlyTraffic(t *testing.T) {
 		DownGB: "0.4",
 		Prefix: "/" + testSecret,
 	})
-	// Unlimited: the traffic line lives in the Machine card and says so.
-	for _, want := range []string{"Traffic", "unlimited", "↑ 1.5 / ↓ 0.4 GB"} {
+	// Unlimited: the bandwidth line lives in the Machine card and says so.
+	for _, want := range []string{"Bandwidth", "unlimited", "↑ 1.5 / ↓ 0.4 GB"} {
 		if !strings.Contains(html, want) {
 			t.Errorf("overview (en default) missing %q", want)
 		}
@@ -210,6 +210,53 @@ func TestOverviewShowsMonthlyTraffic(t *testing.T) {
 	for _, want := range []string{"本月流量", "机器管理", "域名", "无限制"} {
 		if !strings.Contains(zh, want) {
 			t.Errorf("overview (zh) missing %q", want)
+		}
+	}
+}
+
+// TestOverviewConnectivityLayout covers the redesigned overview table: with v4
+// forwarding on, the IPV4 row carries the public IP and the port block with a
+// (?) help tooltip carrying the full range, and the SSH row shows both the V4
+// DNAT port and the V6 port 22. With v4 forwarding off, the IPV4 row is gone
+// and the V4 port shows "not available".
+func TestOverviewConnectivityLayout(t *testing.T) {
+	srv, _ := newTestServer(t)
+	html := srv.renderToString(t, "overview.html", pageData{
+		User:       &db.User{Name: "alice"},
+		SSHPort:    30351,
+		PublicIP:   "203.0.113.5",
+		PortsShort: "103xx",
+		Ports:      "10300-10399",
+		IPv6:       "2a05:f480:1800:378d:0:8fa1:dddd:1",
+		IPv6Block:  "2a05:f480:1800:378d:0:8fa1:dddd:0/112",
+		V4Forward:  true,
+		Prefix:     "/" + testSecret,
+	})
+	for _, want := range []string{"IPV4", "203.0.113.5", "103xx", "10300-10399", "30351", "V6 port", "22", "Address block"} {
+		if !strings.Contains(html, want) {
+			t.Errorf("overview (v4 on) missing %q", want)
+		}
+	}
+	if !strings.Contains(html, `class="help"`) {
+		t.Error("overview missing the (?) help icon on the port block")
+	}
+
+	off := srv.renderToString(t, "overview.html", pageData{
+		User:      &db.User{Name: "alice"},
+		SSHPort:   30351,
+		IPv6:      "2a05:f480:1800:378d:0:8fa1:dddd:1",
+		V4Forward: false,
+		Prefix:    "/" + testSecret,
+	})
+	if strings.Contains(off, "203.0.113.5") || strings.Contains(off, "IPV4") {
+		t.Error("v4-off overview should hide the IPV4 row")
+	}
+	if strings.Contains(off, "30351") {
+		t.Error("v4-off overview should not show the v4 SSH port")
+	}
+	for _, want := range []string{"not available", "V4 port", "V6 port", "22"} {
+		if !strings.Contains(off, want) {
+			t.Errorf("v4-off overview missing %q", want)
 		}
 	}
 }
