@@ -89,9 +89,10 @@ domain with its owner and last-modified time (UTC, shown in the browser's
 timezone) and can toggle the setting or delete domains.
 
 An **audit log** records resource-heavy user actions — power, reinstall, root
-password reset, domain config changes (admin-panel actions are marked
-`000+admin`). The admin audit page loads it in 500-row chunks with infinite
-scroll; the latest 5000 entries are kept.
+password reset, domain config changes. Rows are attributed to the acting
+username, or `000+<username>` when an admin acts on that user's resources. The
+admin audit page loads it in 500-row chunks with infinite scroll; the latest
+5000 entries are kept.
 
 ## Config
 

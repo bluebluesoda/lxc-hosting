@@ -377,7 +377,7 @@ func (s *Server) handlePower(w http.ResponseWriter, r *http.Request) {
 		s.redirect(w, r, s.p(""), "error: "+err.Error())
 		return
 	}
-	_ = s.db.AddAuditLog("000+admin", "power."+action, name)
+	_ = s.db.AddAuditLog("000+"+name, "power."+action)
 	s.redirect(w, r, s.p(""), s.t(r, "power_ok", name, action))
 }
 
@@ -520,7 +520,11 @@ func (s *Server) handleDomainDel(w http.ResponseWriter, r *http.Request) {
 		s.redirect(w, r, s.p("/domains"), "error: "+err.Error())
 		return
 	}
-	_ = s.db.AddAuditLog("000+admin", "domain_update", "")
+	if dmn, err := s.db.GetDomainByDomain(domain); err == nil {
+		if owner, err := s.db.GetUserByID(dmn.UserID); err == nil {
+			_ = s.db.AddAuditLog("000+"+owner.Name, "domain_update")
+		}
+	}
 	s.redirect(w, r, s.p("/domains"), s.t(r, "domain_deleted", domain))
 }
 
@@ -548,6 +552,7 @@ func (s *Server) handleDomainUpdate(w http.ResponseWriter, r *http.Request) {
 				s.redirect(w, r, s.p("/domains"), "error: "+err.Error())
 				return
 			}
+			_ = s.db.AddAuditLog("000+"+x.Username, "domain_update")
 			changed++
 		}
 	}
@@ -555,7 +560,6 @@ func (s *Server) handleDomainUpdate(w http.ResponseWriter, r *http.Request) {
 		s.redirect(w, r, s.p("/domains"), "ok: no changes")
 		return
 	}
-	_ = s.db.AddAuditLog("000+admin", "domain_update", "")
 	s.redirect(w, r, s.p("/domains"), s.t(r, "domains_updated"))
 }
 
@@ -613,12 +617,11 @@ func (s *Server) handleAuditAPI(w http.ResponseWriter, r *http.Request) {
 		ID        int64  `json:"id"`
 		Actor     string `json:"actor"`
 		Action    string `json:"action"`
-		Target    string `json:"target"`
 		CreatedAt string `json:"created_at"`
 	}
 	out := make([]auditRowJSON, 0, len(rows))
 	for _, a := range rows {
-		out = append(out, auditRowJSON{a.ID, a.Actor, a.Action, a.Target, a.CreatedAt})
+		out = append(out, auditRowJSON{a.ID, a.Actor, a.Action, a.CreatedAt})
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(struct {

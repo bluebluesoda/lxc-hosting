@@ -73,7 +73,6 @@ func (d *DB) migrate() error {
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			actor TEXT NOT NULL,
 			action TEXT NOT NULL,
-			target TEXT NOT NULL DEFAULT '',
 			created_at TEXT NOT NULL
 		)`,
 		`CREATE TABLE IF NOT EXISTS settings(
@@ -94,7 +93,41 @@ func (d *DB) migrate() error {
 	if err := d.migrateDomainColumns(); err != nil {
 		return fmt.Errorf("migrate: add domain columns: %w", err)
 	}
+	if err := d.migrateAuditTargetDrop(); err != nil {
+		return fmt.Errorf("migrate: drop audit target: %w", err)
+	}
 	return d.migrateCPU()
+}
+
+// migrateAuditTargetDrop removes the audit_log.target column that existed in an
+// early v0.3 dev schema. The audit design has no "target" concept — the actor
+// encodes it ("000+<user>" for admin-on-user actions). SQLite >= 3.35 supports
+// ALTER TABLE DROP COLUMN; the PRAGMA check keeps a fresh DB untouched.
+func (d *DB) migrateAuditTargetDrop() error {
+	rows, err := d.sql.Query(`PRAGMA table_info(audit_log)`)
+	if err != nil {
+		return err
+	}
+	hasTarget := false
+	for rows.Next() {
+		var cid, notnull, pk int
+		var name, typ string
+		var dflt sql.NullString
+		if err := rows.Scan(&cid, &name, &typ, &notnull, &dflt, &pk); err != nil {
+			return err
+		}
+		if name == "target" {
+			hasTarget = true
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if !hasTarget {
+		return nil
+	}
+	_, err = d.sql.Exec(`ALTER TABLE audit_log DROP COLUMN target`)
+	return err
 }
 
 // migrateDomainColumns adds columns to the domains table that were introduced

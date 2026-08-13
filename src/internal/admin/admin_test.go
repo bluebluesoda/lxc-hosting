@@ -394,10 +394,10 @@ func TestAuditPageAndAPI(t *testing.T) {
 	setAdminPass(t, srv, "correct-horse-battery")
 	h := srv.Handler()
 	prefix := "/" + testAdminSecret
-	if err := d.AddAuditLog("alice", "reinstall", ""); err != nil {
+	if err := d.AddAuditLog("alice", "reinstall"); err != nil {
 		t.Fatal(err)
 	}
-	if err := d.AddAuditLog("000+admin", "power.stop", "alice"); err != nil {
+	if err := d.AddAuditLog("000+alice", "power.stop"); err != nil {
 		t.Fatal(err)
 	}
 	cookie := adminLogin(t, h, prefix, "correct-horse-battery")
@@ -410,16 +410,22 @@ func TestAuditPageAndAPI(t *testing.T) {
 	if !strings.Contains(rr.Body.String(), "auditBody") {
 		t.Error("audit page missing the client-rendered table body")
 	}
+	if strings.Contains(rr.Body.String(), "（加载中…）") {
+		t.Error("audit page title should not carry a static loading marker")
+	}
 
-	// The API returns the rows newest first, with total/more.
+	// The API returns the rows newest first, with total/more, and no target.
 	rr = doReq(t, h, http.MethodGet, prefix+"/audit/api?offset=0&limit=10", nil, cookie)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("GET /audit/api = %d", rr.Code)
 	}
 	b := rr.Body.String()
-	for _, want := range []string{`"actor":"000+admin"`, `"action":"power.stop"`, `"target":"alice"`, `"total":2`, `"more":false`} {
+	for _, want := range []string{`"actor":"000+alice"`, `"action":"power.stop"`, `"total":2`, `"more":false`} {
 		if !strings.Contains(b, want) {
 			t.Errorf("audit api missing %s:\n%s", want, b)
 		}
+	}
+	if strings.Contains(b, `"target"`) {
+		t.Errorf("audit api should not include a target field:\n%s", b)
 	}
 }

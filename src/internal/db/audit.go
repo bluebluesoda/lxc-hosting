@@ -3,12 +3,13 @@ package db
 import "time"
 
 // AuditLog is one recorded user/admin action (power, reinstall, root password
-// reset, domain config update) for spotting resource-abuse patterns.
+// reset, domain config update) for spotting resource-abuse patterns. The actor
+// encodes who acted: a plain username for a user's own action, or "000+<name>"
+// for an admin acting on user <name>'s resources (usernames can't contain '+').
 type AuditLog struct {
 	ID        int64
-	Actor     string // username, or "000+admin" (usernames can't contain '+'/start with a digit)
-	Action    string // power.start / power.stop / power.restart / reinstall / reset_root_password / domain_update
-	Target    string // affected container's owner; empty for domain_update / self-actions
+	Actor     string
+	Action    string
 	CreatedAt string // UTC RFC3339 with millisecond precision
 }
 
@@ -21,10 +22,10 @@ const AuditRetention = 5000
 // audit page. Ordering/pruning never depend on it — they use the monotonic id.
 func nowMS() string { return time.Now().UTC().Format("2006-01-02T15:04:05.000Z") }
 
-func (d *DB) AddAuditLog(actor, action, target string) error {
+func (d *DB) AddAuditLog(actor, action string) error {
 	if _, err := d.sql.Exec(
-		`INSERT INTO audit_log(actor, action, target, created_at) VALUES(?,?,?,?)`,
-		actor, action, target, nowMS()); err != nil {
+		`INSERT INTO audit_log(actor, action, created_at) VALUES(?,?,?)`,
+		actor, action, nowMS()); err != nil {
 		return err
 	}
 	// Keep the newest AuditRetention rows: once the table has reached the cap,
@@ -46,7 +47,7 @@ func (d *DB) AddAuditLog(actor, action, target string) error {
 // ListAuditLog returns a chunk of audit rows, newest first.
 func (d *DB) ListAuditLog(offset, limit int) ([]*AuditLog, error) {
 	rows, err := d.sql.Query(
-		`SELECT id, actor, action, target, created_at FROM audit_log ORDER BY id DESC LIMIT ? OFFSET ?`,
+		`SELECT id, actor, action, created_at FROM audit_log ORDER BY id DESC LIMIT ? OFFSET ?`,
 		limit, offset)
 	if err != nil {
 		return nil, err
@@ -55,7 +56,7 @@ func (d *DB) ListAuditLog(offset, limit int) ([]*AuditLog, error) {
 	var out []*AuditLog
 	for rows.Next() {
 		a := &AuditLog{}
-		if err := rows.Scan(&a.ID, &a.Actor, &a.Action, &a.Target, &a.CreatedAt); err != nil {
+		if err := rows.Scan(&a.ID, &a.Actor, &a.Action, &a.CreatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, a)

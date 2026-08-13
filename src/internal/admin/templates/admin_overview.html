@@ -177,7 +177,7 @@ a.copy.copied { border-color: #86efac; background: #dcfce7; color: #15803d; }
           <td>{{.Name}}</td>
           <td class="{{if eq .State "Running"}}up{{else}}down{{end}}">{{.State}}</td>
           <td>{{if $.V4Forward}}<span title="{{.Ports}}">{{.PortsShort}}</span><br><small>ssh -p {{.SSHPort}}</small>{{else}}<span title="{{.Ports}}">{{.PortsShort}}</span><br><small>v4 off</small>{{end}}</td>
-          <td>{{.QuotaCPU}} / {{.QuotaMem}} / {{.QuotaDisk}}<br><small>{{if eq .Lang "zh"}}流量{{else}}traffic{{end}}: {{if eq .TrafficGB 0}}{{if eq .Lang "zh"}}不限{{else}}unlimited{{end}}{{else}}{{.TrafficGB}} GB{{end}}</small></td>
+          <td>{{.QuotaCPU}} / {{.QuotaMem}} / {{.QuotaDisk}}<br><small>{{if eq $.Lang "zh"}}流量{{else}}traffic{{end}}: {{if eq .TrafficGB 0}}{{if eq $.Lang "zh"}}不限{{else}}unlimited{{end}}{{else}}{{.TrafficGB}} GB{{end}}</small></td>
           <td>{{.CPUUse}}</td>
           <td>{{.MemUse}}</td>
           <td>{{if eq .State "Running"}}{{.Procs}} / {{.ProcsLimit}}{{else}}-{{end}}</td>

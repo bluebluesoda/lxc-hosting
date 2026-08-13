@@ -171,7 +171,7 @@ func (s *Server) handlePower(w http.ResponseWriter, r *http.Request) {
 	if err := s.mgr.Power(u.Name, action); err != nil {
 		msg = "error: " + err.Error()
 	} else {
-		_ = s.db.AddAuditLog(u.Name, "power."+action, "")
+		_ = s.db.AddAuditLog(u.Name, "power."+action)
 		msg = "ok: " + action
 	}
 	s.redirect(w, r, s.p(""), msg)
@@ -192,7 +192,7 @@ func (s *Server) handleReinstall(w http.ResponseWriter, r *http.Request) {
 		s.redirect(w, r, s.p(""), "error: "+err.Error())
 		return
 	}
-	_ = s.db.AddAuditLog(u.Name, "reinstall", "")
+	_ = s.db.AddAuditLog(u.Name, "reinstall")
 	s.redirectModal(w, r, s.p(""), s.t(r, "reinstall_done", pass))
 }
 
@@ -234,7 +234,7 @@ func (s *Server) handleRootReset(w http.ResponseWriter, r *http.Request) {
 		s.redirect(w, r, s.p(""), "error: "+err.Error())
 		return
 	}
-	_ = s.db.AddAuditLog(u.Name, "reset_root_password", "")
+	_ = s.db.AddAuditLog(u.Name, "reset_root_password")
 	s.redirectModal(w, r, s.p(""), s.t(r, "new_root_password", pass))
 }
 
@@ -249,7 +249,7 @@ func (s *Server) handleDomainAdd(w http.ResponseWriter, r *http.Request) {
 		s.redirect(w, r, s.p(""), "error: "+err.Error())
 		return
 	}
-	_ = s.db.AddAuditLog(u.Name, "domain_update", "")
+	_ = s.db.AddAuditLog(u.Name, "domain_update")
 	s.redirect(w, r, s.p(""), "ok: domain added")
 }
 
@@ -286,7 +286,7 @@ func (s *Server) handleDomainUpdate(w http.ResponseWriter, r *http.Request) {
 		s.redirect(w, r, s.p(""), "ok: no changes")
 		return
 	}
-	_ = s.db.AddAuditLog(u.Name, "domain_update", "")
+	_ = s.db.AddAuditLog(u.Name, "domain_update")
 	s.redirect(w, r, s.p(""), "ok: domain settings saved")
 }
 
@@ -300,7 +300,7 @@ func (s *Server) handleDomainDel(w http.ResponseWriter, r *http.Request) {
 		s.redirect(w, r, s.p(""), "error: "+err.Error())
 		return
 	}
-	_ = s.db.AddAuditLog(u.Name, "domain_update", "")
+	_ = s.db.AddAuditLog(u.Name, "domain_update")
 	s.redirect(w, r, s.p(""), "ok: domain removed")
 }
 
