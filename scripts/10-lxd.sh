@@ -88,7 +88,7 @@ if [[ -n "${VPSMGR_IPV6_SUBNET:-}" ]]; then
   log "IPv6 pass-through enabled: lxdbr0 will use global prefix $VPSMGR_IPV6_SUBNET"
 fi
 # Container IPv4 subnet (10.<n>.0.0/24): the bridge gateway is .1. Defaults to
-# 10.115.0.1/24; 00-ipv4-ask.sh exports the chosen subnet before this step.
+# 10.115.0.1/24; 00-ip-ask.sh exports the chosen subnet before this step.
 V4_GW="$(echo "${VPSMGR_IPV4_SUBNET:-10.115.0.0/24}" | cut -d. -f1-3).1/24"
 if [[ $POOL_EXISTS -eq 0 ]] || ! lxc network show lxdbr0 >/dev/null 2>&1; then
   PRESEED=/tmp/vpsmgr-preseed.yaml

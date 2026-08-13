@@ -93,9 +93,10 @@ scheme, or whose networkd config was corrupted, are repaired on every boot).
 
 ## Installer flow
 
-- `00-ipv6-ask.sh` — asks whether to enable IPv6 and captures the prefix.
+- `00-ip-ask.sh` — the install-time network asks: whether to enable IPv6
+  (captures the prefix) and the container subnet's second octet (default 115).
   The prefix length is **required** (no silent `/64` default). On reinstall it
-  reuses an existing config's `ipv6_subnet` instead of re-asking.
+  reuses an existing config's `ipv6_subnet` / `subnet` instead of re-asking.
 - `install.sh` — installs `ndppd` (only when IPv6 is enabled; it is not part
   of the default small install otherwise).
 - `10-lxd.sh` — puts the (clamped) prefix on `lxdbr0` at `lxd init` time.

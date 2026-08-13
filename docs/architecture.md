@@ -257,8 +257,8 @@ panel reads totals from the DB — it never blocks on `lxc` for traffic.
   the previous users/domains/settings. `--purge` removes those plus
   containers, the storage pool and the LXD snap.
 - `install.sh` detects an existing `/etc/vpsmgr/config.yaml` and adopts it
-  (users/domains survive). `00-ipv6-ask.sh` reuses a previously configured
-  `ipv6_subnet` instead of re-asking.
+  (users/domains survive). `00-ip-ask.sh` reuses a previously configured
+  `ipv6_subnet` / `subnet` instead of re-asking.
 - `install.sh --local-build` prints the current git branch and waits 10 s
   (Ctrl-C to abort) before starting, and always rebuilds rather than reusing
   an installed stable binary.

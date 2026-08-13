@@ -120,9 +120,8 @@ The port layout is fixed at install and immutable — there is no config knob:
 ## IPv4 inbound policy (`v4_forward`)
 
 `net.v4_forward` controls whether containers receive **shared IPv4 inbound**.
-Asked at install (default `true`), but only offered when IPv6 pass-through is
-enabled — with IPv6 off, IPv4 forwarding is mandatory (containers would
-otherwise be unreachable).
+Always enabled by default — the installer does not ask (with IPv6 off, IPv4
+forwarding is mandatory, as containers would otherwise be unreachable).
 
 - `true` (default): containers get the random SSH port + user port block (DNAT),
   and the domain proxy (traefik) is available.

@@ -1,7 +1,5 @@
 # Vpsmgr Lite
 
-**Warning ⚠️ Under active development — breaking changes may occur.**
-
 **Warning ⚠️ The "VMs" this project creates are LXC containers, not real
 virtual machines. Their isolation and security are far weaker than other
 virtualization approaches (KVM/QEMU, etc.). A kernel-level or container escape
@@ -16,9 +14,10 @@ with automatic NAT4 port forwarding and 80/443 per-domain proxying by Traefik.
 Optional IPv6 pass-through (no NAT). The panel is a single small Go binary and
 the container image stays slim — storage and memory are treated as scarce.
 
-Install notes: with IPv6 enabled, the installer asks whether to keep shared IPv4
-inbound (default yes; `no` makes containers IPv6-only). Port 25 (SMTP) is always
-blocked for containers, both directions — anti-spam, no toggle.
+Install notes: shared IPv4 inbound is always ON by default (flip it later with
+`vps config set net.v4_forward true|false`); the only network choice the
+installer asks for is the container subnet's second octet. Port 25 (SMTP) is
+always blocked for containers, both directions — anti-spam, no toggle.
 
 ## Install
 

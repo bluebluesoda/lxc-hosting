@@ -54,15 +54,10 @@ fi
 
 echo "==> vpsmgr installer starting (panel binary mode: $BUILD_MODE)"
 echo
-echo "===== 00-ipv6-ask ====="
+echo "===== 00-ip-ask ====="
 # shellcheck disable=SC1090
-source "$ROOT/scripts/00-ipv6-ask.sh"
+source "$ROOT/scripts/00-ip-ask.sh" || { echo "error: install-time network asks failed — aborting" >&2; exit 1; }
 export VPSMGR_IPV6_SUBNET="${VPSMGR_IPV6_SUBNET:-}"
-
-echo
-echo "===== 00-ipv4-ask ====="
-# shellcheck disable=SC1090
-source "$ROOT/scripts/00-ipv4-ask.sh"
 export VPSMGR_IPV4_SUBNET="${VPSMGR_IPV4_SUBNET:-}"
 
 # NDP proxy for IPv6 pass-through: each container owns a /112 block and ndppd

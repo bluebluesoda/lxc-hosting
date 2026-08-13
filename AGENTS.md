@@ -23,7 +23,8 @@ CGO_ENABLED=0 go vet ./...
 ```
 
 Shell scripts: check syntax with `bash -n scripts/*.sh`. Note: `install.sh`
-and `00-ipv6-ask.sh` are `source`d, so they must use `return`, not `exit`.
+and `00-ip-ask.sh` (the install-time network asks — IPv6 prefix + container
+subnet octet) are `source`d, so they must use `return`, not `exit`.
 
 ## Documentation
 
