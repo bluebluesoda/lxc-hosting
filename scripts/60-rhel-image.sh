@@ -47,10 +47,32 @@ if lxc launch "$BASE_ALIAS" "$NAME"; then
     if lxc exec "$NAME" -- /bin/true >/dev/null 2>&1; then break; fi
     sleep 2
   done
-  if lxc exec "$NAME" -- sh -c '
+  # RHEL containers bring eth0 up with NetworkManager, which lags the LXD agent
+  # by a few seconds: running dnf before DHCP has written resolv.conf makes it
+  # die with "Curl error (6): Couldn't resolve host". Wait until DNS answers,
+  # or the builder install fails and a broken image gets published.
+  DNS_OK=
+  for i in $(seq 1 30); do
+    if lxc exec "$NAME" -- getent hosts mirrors.almalinux.org >/dev/null 2>&1; then
+      DNS_OK=1; break
+    fi
+    sleep 2
+  done
+  if [ -z "$DNS_OK" ]; then
+    log "  warn: builder never got working DNS; nothing built"
+    lxc delete --force "$NAME" >/dev/null 2>&1 || true
+    lxc image delete "$BASE_ALIAS" >/dev/null 2>&1 || true
+  elif lxc exec "$NAME" -- sh -c '
+set -e
 # universal user tooling (mirrors the Debian image): sshd, curl/wget need
 # ca-certificates or HTTPS fails; bind-utils is the RHEL nslookup/dig package.
-dnf -y install openssh-server ca-certificates curl wget less bind-utils openssh-clients unzip nano
+# dnf is retried: the mirrorlist can flap on a slow uplink right after boot.
+for attempt in 1 2 3; do
+  dnf -y install openssh-server ca-certificates curl wget less bind-utils openssh-clients unzip nano && break
+  sleep 5
+done
+# hard gate: never publish an image without sshd baked in
+rpm -q openssh-server >/dev/null
 mkdir -p /etc/ssh/sshd_config.d
 printf "PermitRootLogin yes\nPasswordAuthentication yes\n" > /etc/ssh/sshd_config.d/99-vpsmgr.conf
 systemctl enable sshd

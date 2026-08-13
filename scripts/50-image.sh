@@ -44,10 +44,25 @@ if lxc launch vpsmgr-debian-13 "$NAME"; then
     if lxc exec "$NAME" -- /bin/true >/dev/null 2>&1; then break; fi
     sleep 2
   done
-  if lxc exec "$NAME" -- sh -c 'export DEBIAN_FRONTEND=noninteractive
+  # DNS can lag agent readiness; running apt before it is up fails the update
+  # and, without a gate, a broken sshd image would still be published.
+  DNS_OK=
+  for i in $(seq 1 30); do
+    if lxc exec "$NAME" -- getent hosts deb.debian.org >/dev/null 2>&1; then
+      DNS_OK=1; break
+    fi
+    sleep 2
+  done
+  if [ -z "$DNS_OK" ]; then
+    log "  warn: builder never got working DNS; skipping sshd image (add-user will install sshd on the fly)"
+    lxc delete --force "$NAME" >/dev/null 2>&1 || true
+  elif lxc exec "$NAME" -- sh -c 'export DEBIAN_FRONTEND=noninteractive
+set -e
 # universal user tooling (small, every container hits these): curl/wget need
 # ca-certificates or HTTPS fails; dnsutils is bind9-dnsutils on Debian 13.
 apt-get update -qq && apt-get install -y -qq openssh-server ca-certificates curl wget less bind9-dnsutils openssh-client unzip nano
+# hard gate: never publish an image without sshd baked in
+command -v sshd >/dev/null || { echo "sshd install failed" >&2; exit 1; }
 mkdir -p /etc/ssh/sshd_config.d
 printf "PermitRootLogin yes\nPasswordAuthentication yes\n" > /etc/ssh/sshd_config.d/99-vpsmgr.conf
 systemctl enable ssh
