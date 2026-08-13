@@ -43,11 +43,10 @@ src/      Go source (single binary: CLI + panel)
   quotas (0.1..0.9) are enforced as `limits.cpu=1` plus
   `limits.cpu.allowance=<n>ms/100ms` — a one-core pin with a time slice.
 - **nftables** — one table `inet vpsmgr`: DNAT (prerouting+output) for port
-  ranges, MASQUERADE for NAT4. Reload applies the whole ruleset as **one atomic
-  batch** (`delete table` + rules in a single `nft -f`, with an idempotent
-  `nft add table` first to cover boot where the table is absent), so a bad rule
-  can never leave tenants without NAT. Restored on boot by
-  `vpsmgr-nft.service`.
+  ranges, MASQUERADE for NAT4. Reload applies the whole ruleset in a single
+  `nft -f` batch (with an idempotent `nft add table` first to cover boot where
+  the table is absent); `nft -f` is transactional, so a load error leaves the
+  previous ruleset in place. Restored on boot by `vpsmgr-nft.service`.
 - **UFW** — vpsmgr manages its firewall through its own nftables table, so the
   installer **disables UFW** when it is active: UFW's default-DROP policy runs
   before LXD's `table inet lxd` rules and silently kills container IPv4 (no
@@ -108,11 +107,12 @@ src/      Go source (single binary: CLI + panel)
   `proxyProtocol.version: 2` (HTTP/80 cannot — traefik injects
   `X-Forwarded-For` there). Router/service names are `sanitizeDomain(domain)`
   (dots → underscores), which is collision-free across the `[a-z0-9.-]` domain
-  charset and globally unique. **DB and YAML are kept in sync atomically**:
-  every domain mutation updates the DB first, then the file, and rolls the DB
-  back on a file failure; `SyncAllDomains` (run on `vps install` and
-  `vps config set net.v4_forward true`) regenerates everything from the DB and deletes orphan
-  files, fixing any crash drift. All timestamps are stored as UTC; the admin
+  charset and globally unique. **DB and YAML are updated sequentially, not
+  atomically**: every domain mutation writes the DB first, then the file, and
+  rolls the DB back if the file write fails; a crash or full disk between the
+  two can leave them out of sync. `SyncAllDomains` (run on `vps install` and
+  `vps config set net.v4_forward true`) regenerates every file from the DB and
+  deletes orphans, repairing any drift. All timestamps are stored as UTC; the admin
   domain page renders them in the browser's timezone.
 - **Audit log**: resource-heavy user actions (power start/stop/restart,
   reinstall, reset root password, domain config changes) are recorded in the
@@ -204,16 +204,16 @@ options (`lx.nicIsolation`):
 
 - `security.port_isolation=true` — the veth is an isolated bridge port
   (`isolated on`), so **no frames** (unicast, multicast, broadcast) flow
-  between containers at L2. This kills ARP/NDP spoofing, L2 sniffing, and
-  rogue DHCP/DHCPv6/DNS servers in one move.
+  between containers at L2. This blocks ARP/NDP spoofing, L2 sniffing, and
+  rogue DHCP/DHCPv6/DNS servers.
 - `security.ipv4_filtering=true` + `security.ipv6_filtering=true` — LXD
   installs bridge `input`/`forward` nftables rules per NIC that only accept
   ARP/NDP/NA claiming the container's own addresses or MAC, and drop
   router-advertisements from containers. This protects the **host's own
-  ARP/NDP caches** from container-side poisoning (verified: a container cannot
-  rewrite the host's neighbor entries).
+  ARP/NDP caches** from container-side poisoning (a container cannot rewrite
+  the host's neighbor entries).
 
-Side effects (verified empirically against the flat-bridge baseline):
+Observed side effects compared with the flat-bridge baseline:
 
 - Containers **cannot reach each other** on the private bridge anymore (IPv4
   and IPv6 alike) — by design. Any inter-container traffic would have to go
@@ -230,8 +230,8 @@ Side effects (verified empirically against the flat-bridge baseline):
 
 `security.ipv6_filtering` only works while the `br_netfilter` kernel module is
 loaded, and LXD does **not** load it itself — a container with the option
-**refuses to boot** without it (verified: `lxc start` fails, so after a host
-reboot every isolated container would fail to start). `vps install`
+**refuses to boot** without it (`lxc start` fails), so after a host reboot
+every isolated container would fail to start. `vps install`
 therefore writes `/etc/modules-load.d/br_netfilter.conf` and loads the module,
 so it is present before LXD starts any container. Harmless no-op where the
 module is built into the kernel.

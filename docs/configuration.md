@@ -1,7 +1,9 @@
 # Configuration
 
 The config file is at `/etc/vpsmgr/config.yaml` (auto-generated at install,
-root-only read/write). Use the `VPSMGR_CONFIG` env var for another path.
+root-only read/write). The `VPSMGR_CONFIG` env var points the `vps` binary at
+another path; the shell install/uninstall scripts always use
+`/etc/vpsmgr/config.yaml`.
 
 **Editing config.yaml by hand is discouraged.** The sanctioned interface is
 `vps config list` / `vps config set` / `vps config help`, which validate every
@@ -30,7 +32,7 @@ same table; `vps config list` shows the live values with this annotation.
 | `net.gateway` | **fixed at install** | — | bridge gateway (derived from subnet) |
 | `net.v4_forward` | runtime toggle | **applied immediately** | false = IPv6-only containers (no SSH/port DNAT, traefik disabled, NAT4 outbound kept) |
 | `net.ext_if` | operator | re-run `vps install` | external NIC (auto-detected from default route) |
-| `net.ipv6_subnet` | operator | re-run `vps install` | global IPv6 prefix for pass-through, e.g. `2602:fada:6::/64`; empty = disabled |
+| `net.ipv6_subnet` | operator | re-run `vps install` | global IPv6 prefix for pass-through, e.g. `2602:fada:6::/64`; empty = disabled (does not remove IPv6 state already applied, see note below) |
 | `lxd.image` | operator | next `vps add` / reinstall | container image alias |
 | `lxd.image_fallback` | operator | next `vps add` / reinstall | fallback remote image |
 | `lxd.pool` | **fixed at install** | — | storage pool |
@@ -66,7 +68,7 @@ edit by hand` banner and are **overwritten on the next write**:
 |---|---|
 | `/etc/vpsmgr/nftables.conf` | `vps install` |
 | `/etc/vpsmgr/nftables.d/user-<name>.nft` | `vps add` / quota / firewall updates |
-| `/etc/traefik/traefik.yaml` | install (from `configs/traefik.yaml`) |
+| `/etc/traefik/traefik.yaml` | install (from `configs/traefik.yaml`); only written when absent — existing installs keep theirs |
 | `/etc/traefik/dynamic/<domain>.yaml` | domain add/update/delete |
 | `/etc/ndppd.conf` | IPv6 pass-through updates |
 | `/etc/sysctl.d/99-vpsmgr.conf` | `vps install` |
@@ -94,7 +96,8 @@ net:
   ext_if: AUTO                 # external NIC, auto-detected from the default route
   ipv6_subnet: ""              # optional: global prefix for IPv6 pass-through, e.g. "2602:fada:6::/64"
                                # (/64 or shorter, incl. provider /80 slices like
-                               # "2406:da14:1dd2:a807:753a::/80"); empty = disabled (default)
+                               # "2406:da14:1dd2:a807:753a::/80"); empty = disabled (default),
+                               # but does not remove IPv6 state already applied
 
 lxd:
   image: "vpsmgr/debian-sshd"
@@ -154,6 +157,9 @@ goes away when the panel is uninstalled.
 - `net.ipv6_subnet` must be a **global** (non-ULA) IPv6 CIDR with an explicit
   prefix length — a bare address is rejected, never silently assumed `/64`.
   Valid range is `/48`..`/80` (see [ipv6.md](ipv6.md)).
+- Clearing `net.ipv6_subnet` (empty) only stops vpsmgr from applying IPv6 on
+  the next `vps install`; it does not remove IPv6 already in place (bridge
+  address, ndppd, routes). Full IPv6 cleanup happens in `uninstall.sh`.
 - **v0.3 upgrade gate:** v0.3 makes breaking changes, so it refuses to adopt a
   config/db recorded as originating from an older release. `vps install`
   and `vps serve` both abort (and `install.sh` aborts early) when

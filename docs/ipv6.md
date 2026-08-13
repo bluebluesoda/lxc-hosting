@@ -82,7 +82,7 @@ For each container:
   /112: an upstream neighbor solicitation for an address in a block is relayed
   to the bridge, the container answers, and ndppd relays the NA back. Kernel
   `proxy_ndp` is not used for prefixes — it only answers single addresses
-  (verified: it ignores route-covered / prefix queries).
+  (route-covered or prefix queries are ignored).
 
 vpsmgr renders `/etc/ndppd.conf` (one `rule <block>::/112` per container) and
 restarts the daemon on `add`/`del`; the config is rebuilt from the DB at boot
@@ -110,15 +110,15 @@ scheme, or whose networkd config was corrupted, are repaired on every boot).
 - `vps install` / `add` / `reinstall` — apply the per-container config
   (`ConfigureContainerIPv6`); `ipv6-reapply` covers existing containers.
 - `check-ipv6-support.sh` — probe before install: reports the host's global
-  addresses, auto-measures the subnet size (prefers the on-link routed block,
-  e.g. AWS's /80, over the address's own configured length), and verifies from
-  the outside (Globalping, free) that the provider actually routes the whole
-  prefix to the host.
+  addresses, derives a candidate prefix from the address's configured length
+  (a provider routed block larger than that length is not auto-detected
+  reliably), and verifies from the outside (Globalping, free) that the
+  provider actually routes the prefix to the host.
 
 ## Isolation interplay
 
 Container isolation (see [architecture.md](architecture.md)) is unaffected:
-`security.ipv6_filtering` whitelists the whole routed /112 (verified on LXD
+`security.ipv6_filtering` whitelists the whole routed /112 (observed on LXD
 5.21), so a container may source packets from any address in its block, and
 nothing else. Containers cannot reach each other on the private bridge —
 v6 included — so inter-container traffic must go via public addresses; the
@@ -130,10 +130,3 @@ host does not proxy the private subnet.
 and disables `ndppd` and removes `/etc/ndppd.conf`, removes any leftover
 kernel `proxy_ndp` entries and `/128` routes matching the prefix, resets
 `lxdbr0` IPv6 to disabled, and restores forwarding sysctls.
-
-## Future: per-container /112 blocks (`lab` branch, merged)
-
-The `lab` branch experiment (`80a2dd0`, per-container `/112` via `ndppd`) is
-the current scheme; the primary address is byte-identical to the old
-single-address scheme, so existing container addresses were unchanged on
-merge.
