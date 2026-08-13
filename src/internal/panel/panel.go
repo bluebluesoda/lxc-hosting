@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"vpsmgr/internal/cfg"
+	"vpsmgr/internal/csrf"
 	"vpsmgr/internal/db"
 	"vpsmgr/internal/mgr"
 )
@@ -175,6 +176,14 @@ func (s *Server) Handler() http.Handler {
 		h.Set("Content-Security-Policy",
 			"default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; "+
 				"img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; form-action 'self'; base-uri 'self'")
+		// CSRF: reject cross-origin POSTs before any handler runs. The session
+		// cookie is SameSite=Lax (no cookies on cross-site POSTs); this check
+		// additionally stops login CSRF (which needs no session) and
+		// same-site-subdomain requests.
+		if r.Method == http.MethodPost && !csrf.Allowed(r) {
+			w.WriteHeader(http.StatusForbidden)
+			return
+		}
 		// Resolve the panel language once per request and persist an explicit
 		// ?lang= choice in a scoped cookie so it survives page navigations.
 		l := s.lang(r)

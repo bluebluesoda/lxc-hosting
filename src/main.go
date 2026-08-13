@@ -1153,13 +1153,12 @@ func userQuota(args []string) error {
 	}
 
 	m := mgr.New(c, d)
-	if cpu != u.CPU || mem != u.MemMB || disk != u.DiskGB {
-		if _, err := m.UpdateQuotas(name, cpu, mem, disk); err != nil {
-			return err
+	if cpu != u.CPU || mem != u.MemMB || disk != u.DiskGB || trafficChanged {
+		tgb := u.TrafficQuotaGB
+		if trafficChanged {
+			tgb = trafficGB
 		}
-	}
-	if trafficChanged {
-		if err := m.SetTrafficQuota(name, trafficGB); err != nil {
+		if _, err := m.UpdateQuotasAndTraffic(name, cpu, mem, disk, tgb); err != nil {
 			return err
 		}
 	}

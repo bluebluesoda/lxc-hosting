@@ -17,6 +17,10 @@ import (
 
 const testAdminSecret = "Adm1n-SecretX"
 
+// testHost is the Host header httptest.NewRequest assigns by default, used to
+// build a matching Origin for the same-origin CSRF case.
+const testHost = "example.com"
+
 // newTestServer builds an admin Server against a temp DB and points
 // VPSMGR_CONFIG at a temp config file so the per-login DB read in
 // currentAdminHash() stays isolated from the host's real config/db.
@@ -427,5 +431,102 @@ func TestAuditPageAndAPI(t *testing.T) {
 	}
 	if strings.Contains(b, `"target"`) {
 		t.Errorf("audit api should not include a target field:\n%s", b)
+	}
+}
+
+// doReqOrigin is doReq with an Origin header (simulating a browser cross-origin
+// POST).
+func doReqOrigin(t *testing.T, h http.Handler, method, target string, form url.Values, cookie *http.Cookie, origin string) *httptest.ResponseRecorder {
+	t.Helper()
+	var body io.Reader
+	if form != nil {
+		body = strings.NewReader(form.Encode())
+	}
+	req := httptest.NewRequest(method, target, body)
+	req.Header.Set("Origin", origin)
+	if form != nil {
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	}
+	if cookie != nil {
+		req.AddCookie(cookie)
+	}
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	return rr
+}
+
+func TestAdminCSRFRejectsCrossOriginPOST(t *testing.T) {
+	srv, _ := newTestServer(t)
+	setAdminPass(t, srv, "correct-horse-battery")
+	h := srv.Handler()
+	prefix := "/" + testAdminSecret
+	cookie := adminLogin(t, h, prefix, "correct-horse-battery")
+
+	// A POST with a mismatched Origin is rejected before any handler runs.
+	rr := doReqOrigin(t, h, http.MethodPost, prefix+"/user-quota",
+		url.Values{"name": {"alice"}, "cpu": {"2"}, "mem": {"2048"}, "disk": {"20"}, "traffic": {"0"}},
+		cookie, "https://evil.example.com")
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("cross-origin POST = %d, want 403", rr.Code)
+	}
+
+	// Same thing via Sec-Fetch-Site.
+	rr = doReqOrigin(t, h, http.MethodPost, prefix+"/user-quota",
+		url.Values{"name": {"alice"}, "cpu": {"2"}, "mem": {"2048"}, "disk": {"20"}, "traffic": {"0"}},
+		cookie, "https://evil.example.com")
+	req := httptest.NewRequest(http.MethodPost, prefix+"/user-quota",
+		strings.NewReader(url.Values{"name": {"alice"}, "cpu": {"2"}, "mem": {"2048"}, "disk": {"20"}, "traffic": {"0"}}.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Sec-Fetch-Site", "cross-site")
+	req.AddCookie(cookie)
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("cross-site POST = %d, want 403", rr.Code)
+	}
+
+	// A same-origin POST (matching Origin) is allowed through to the handler.
+	rr = doReqOrigin(t, h, http.MethodPost, prefix+"/user-quota",
+		url.Values{"name": {"alice"}, "cpu": {"2"}, "mem": {"2048"}, "disk": {"20"}, "traffic": {"0"}},
+		cookie, "https://"+testHost)
+	if rr.Code == http.StatusForbidden {
+		t.Fatal("same-origin POST must not be blocked by CSRF")
+	}
+
+	// Login CSRF is covered too: a cross-origin login POST is rejected.
+	rr = doReqOrigin(t, h, http.MethodPost, prefix+"/login",
+		url.Values{"password": {"correct-horse-battery"}}, nil, "https://evil.example.com")
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("cross-origin login POST = %d, want 403", rr.Code)
+	}
+}
+
+func TestAdminPassChangeInvalidatesOtherSessions(t *testing.T) {
+	srv, _ := newTestServer(t)
+	setAdminPass(t, srv, "correct-horse-battery")
+	h := srv.Handler()
+	prefix := "/" + testAdminSecret
+
+	c1 := adminLogin(t, h, prefix, "correct-horse-battery")
+	c2 := adminLogin(t, h, prefix, "correct-horse-battery")
+
+	// Change the password from session 1.
+	rr := doReq(t, h, http.MethodPost, prefix+"/admin-pass", url.Values{
+		"new_password":     {"new-long-password-123"},
+		"confirm_password": {"new-long-password-123"},
+	}, c1)
+	if rr.Code != http.StatusFound {
+		t.Fatalf("admin-pass = %d, want 302 (body %s)", rr.Code, rr.Body.String())
+	}
+
+	// Session 2 (other admin) is invalidated: overview redirects to login.
+	rr = doReq(t, h, http.MethodGet, prefix, nil, c2)
+	if rr.Code != http.StatusFound {
+		t.Fatalf("other session overview = %d, want 302 redirect", rr.Code)
+	}
+	// Session 1 (the changer) survives.
+	rr = doReq(t, h, http.MethodGet, prefix, nil, c1)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("changer session overview = %d, want 200", rr.Code)
 	}
 }

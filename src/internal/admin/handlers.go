@@ -361,11 +361,7 @@ func (s *Server) handleUserQuota(w http.ResponseWriter, r *http.Request) {
 		s.redirect(w, r, s.p(""), "error: "+err.Error())
 		return
 	}
-	if _, err := s.mgr.UpdateQuotas(name, cpu, memMB, diskGB); err != nil {
-		s.redirect(w, r, s.p(""), "error: "+err.Error())
-		return
-	}
-	if err := s.mgr.SetTrafficQuota(name, trafficGB); err != nil {
+	if _, err := s.mgr.UpdateQuotasAndTraffic(name, cpu, memMB, diskGB, trafficGB); err != nil {
 		s.redirect(w, r, s.p(""), "error: "+err.Error())
 		return
 	}
@@ -428,6 +424,11 @@ func (s *Server) handleAdminPass(w http.ResponseWriter, r *http.Request) {
 	if err := s.db.SetSetting(db.SettingAdminPassHash, hash); err != nil {
 		s.redirect(w, r, s.p(""), "error: "+err.Error())
 		return
+	}
+	// Every other admin session is now stale: keep only the one that changed
+	// the password, so a stolen/long-open session cannot outlive the rotation.
+	if c, err := r.Cookie("vpsmgr_admin_session"); err == nil {
+		s.sessions.clearExcept(c.Value)
 	}
 	s.redirect(w, r, s.p(""), s.t(r, "admin_pass_changed"))
 }

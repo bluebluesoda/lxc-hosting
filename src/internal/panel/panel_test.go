@@ -799,3 +799,56 @@ func TestDomainAddLogsAudit(t *testing.T) {
 		t.Errorf("audit rows = %+v", rows)
 	}
 }
+
+// doReqOrigin is doReq with an Origin header (simulating a browser cross-origin
+// POST).
+func doReqOrigin(t *testing.T, h http.Handler, method, target string, form url.Values, cookie *http.Cookie, origin string) *httptest.ResponseRecorder {
+	t.Helper()
+	var body io.Reader
+	if form != nil {
+		body = strings.NewReader(form.Encode())
+	}
+	req := httptest.NewRequest(method, target, body)
+	req.Header.Set("Origin", origin)
+	if form != nil {
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	}
+	if cookie != nil {
+		req.AddCookie(cookie)
+	}
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	return rr
+}
+
+func TestPanelCSRFRejectsCrossOriginPOST(t *testing.T) {
+	srv, d := newTestServer(t)
+	h := srv.Handler()
+	prefix := "/" + testSecret
+	hash, _ := pw.Hash("pw")
+	if _, err := d.CreateUser("alice", hash, "10.42.0.2", 1, 30001, 10000, 1, 1024, 10); err != nil {
+		t.Fatal(err)
+	}
+	cookie := loginAndCookie(t, h, prefix, "alice", "pw")
+
+	// Cross-origin state-changing POST rejected before the handler runs.
+	rr := doReqOrigin(t, h, http.MethodPost, prefix+"/power",
+		url.Values{"action": {"restart"}}, cookie, "https://evil.example.com")
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("cross-origin POST = %d, want 403", rr.Code)
+	}
+
+	// Cross-origin login POST rejected too (login CSRF needs no session).
+	rr = doReqOrigin(t, h, http.MethodPost, prefix+"/login",
+		url.Values{"username": {"alice"}, "password": {"pw"}}, nil, "https://evil.example.com")
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("cross-origin login POST = %d, want 403", rr.Code)
+	}
+
+	// Same-origin POST is allowed through (no CSRF block).
+	rr = doReqOrigin(t, h, http.MethodPost, prefix+"/power",
+		url.Values{"action": {"restart"}}, cookie, "https://example.com")
+	if rr.Code == http.StatusForbidden {
+		t.Fatal("same-origin POST must not be blocked by CSRF")
+	}
+}

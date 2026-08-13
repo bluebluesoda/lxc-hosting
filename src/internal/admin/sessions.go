@@ -59,6 +59,18 @@ func (s *sessionStore) delete(token string) {
 	delete(s.sessions, token)
 }
 
+// clearExcept drops every session except token. Used after an admin password
+// change: the changing session stays, all others are invalidated immediately.
+func (s *sessionStore) clearExcept(token string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for t := range s.sessions {
+		if t != token {
+			delete(s.sessions, t)
+		}
+	}
+}
+
 // pruneLocked removes expired sessions; caller holds s.mu.
 func (s *sessionStore) pruneLocked() {
 	now := time.Now()

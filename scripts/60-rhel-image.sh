@@ -96,15 +96,20 @@ chmod +x /usr/local/sbin/vpsmgr-ipv6
 printf "[Unit]\nDescription=vpsmgr IPv6 primary address\nAfter=network-online.target\nWants=network-online.target\n[Service]\nType=oneshot\nExecStart=/usr/local/sbin/vpsmgr-ipv6\nRemainAfterExit=yes\n[Install]\nWantedBy=multi-user.target\n" > /etc/systemd/system/vpsmgr-ipv6.service
 systemctl enable vpsmgr-ipv6.service >/dev/null 2>&1 || true'; then
     lxc stop "$NAME" --timeout=30 || true
-    lxc publish "$NAME" --alias "$IMAGE"
-    lxc delete --force "$NAME" || true
-    # keep only the modified image — the base was a build intermediate
-    if lxc image delete "$BASE_ALIAS" >/dev/null 2>&1; then
-      log "removed base image $BASE_ALIAS (only $IMAGE kept)"
+    if lxc publish "$NAME" --alias "$IMAGE"; then
+      lxc delete --force "$NAME" || true
+      # keep only the modified image — the base was a build intermediate
+      if lxc image delete "$BASE_ALIAS" >/dev/null 2>&1; then
+        log "removed base image $BASE_ALIAS (only $IMAGE kept)"
+      else
+        log "  warn: could not remove base image $BASE_ALIAS"
+      fi
+      log "image published: $IMAGE"
     else
-      log "  warn: could not remove base image $BASE_ALIAS"
+      log "  warn: publish FAILED — $IMAGE NOT built (base image kept; re-run to retry)"
+      lxc delete --force "$NAME" >/dev/null 2>&1 || true
+      exit 1
     fi
-    log "image published: $IMAGE"
   else
     log "  warn: install in builder failed; nothing built"
     lxc delete --force "$NAME" >/dev/null 2>&1 || true

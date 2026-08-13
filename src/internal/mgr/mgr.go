@@ -46,6 +46,13 @@ type Manager struct {
 	// applies NIC limits live, no container restart).
 	limitMu   sync.Mutex
 	throttled map[string]bool
+
+	// sampleMu serializes traffic sampling. LXD counters are read and the DB
+	// delta applied in one critical section so a slower, out-of-order sampler
+	// (the 60s goroutine vs a panel-triggered sample) can never write a lower
+	// counter after a higher one was recorded — the SQL reset path would then
+	// mistake the stale value for a container restart and double-count it.
+	sampleMu sync.Mutex
 }
 
 func New(c *cfg.Config, d *db.DB) *Manager {
@@ -656,40 +663,94 @@ func (m *Manager) Show(name string) (*Result, error) {
 func (m *Manager) State(name string) (string, error) { return m.lx.State(name) }
 
 // UpdateQuotas adjusts CPU/mem/disk of an existing user live (values <= 0 are
-// left unchanged).
+// left unchanged). The LXD changes are applied first and the DB written last;
+// if a later step fails, everything already applied to LXD is rolled back so
+// the live config and the database cannot disagree.
 func (m *Manager) UpdateQuotas(name string, cpu, memMB, diskGB int) (*Result, error) {
 	u, err := m.db.GetUserByName(name)
 	if err != nil {
 		return nil, err
 	}
+	// Validate everything before touching LXD so a rejected value never leaves
+	// a half-applied quota.
 	if cpu > 0 {
 		if err := ValidateCPU(cpu); err != nil {
 			return nil, err
 		}
-		if err := m.lx.SetCPU(u.Name, cpu); err != nil {
-			return nil, err
-		}
-		u.CPU = cpu
 	}
-	if memMB > 0 {
-		if err := m.lx.SetMem(u.Name, memMB); err != nil {
-			return nil, err
-		}
-		u.MemMB = memMB
+	if diskGB > 0 && diskGB < u.DiskGB {
+		return nil, fmt.Errorf("disk can only grow: current %d GiB, cannot shrink to %d GiB", u.DiskGB, diskGB)
 	}
-	if diskGB > 0 {
-		if diskGB < u.DiskGB {
-			return nil, fmt.Errorf("disk can only grow: current %d GiB, cannot shrink to %d GiB", u.DiskGB, diskGB)
+	// undo restores the LXD values applied so far, in reverse order. Best
+	// effort: if a rollback itself fails (e.g. LXD refusing a disk shrink),
+	// the caller still learns about it via the error text.
+	var undo []func() error
+	fail := func(err error) (*Result, error) {
+		var warns []string
+		for i := len(undo) - 1; i >= 0; i-- {
+			if e := undo[i](); e != nil {
+				warns = append(warns, e.Error())
+			}
 		}
-		if err := m.lx.SetDisk(u.Name, diskGB); err != nil {
-			return nil, err
+		if len(warns) > 0 {
+			return nil, fmt.Errorf("%v (rollback partial: %s)", err, strings.Join(warns, "; "))
 		}
-		u.DiskGB = diskGB
-	}
-	if err := m.db.UpdateQuotas(u.ID, u.CPU, u.MemMB, u.DiskGB); err != nil {
 		return nil, err
 	}
+	if cpu > 0 {
+		old := u.CPU
+		if err := m.lx.SetCPU(u.Name, cpu); err != nil {
+			return fail(err)
+		}
+		u.CPU = cpu
+		undo = append(undo, func() error { return m.lx.SetCPU(u.Name, old) })
+	}
+	if memMB > 0 {
+		old := u.MemMB
+		if err := m.lx.SetMem(u.Name, memMB); err != nil {
+			return fail(err)
+		}
+		u.MemMB = memMB
+		undo = append(undo, func() error { return m.lx.SetMem(u.Name, old) })
+	}
+	if diskGB > 0 {
+		old := u.DiskGB
+		if err := m.lx.SetDisk(u.Name, diskGB); err != nil {
+			return fail(err)
+		}
+		u.DiskGB = diskGB
+		undo = append(undo, func() error { return m.lx.SetDisk(u.Name, old) })
+	}
+	if err := m.db.UpdateQuotas(u.ID, u.CPU, u.MemMB, u.DiskGB); err != nil {
+		return fail(err)
+	}
 	return m.ResultFor(u, ""), nil
+}
+
+// UpdateQuotasAndTraffic adjusts CPU/mem/disk and the monthly bandwidth quota
+// in one call, so the admin panel's single submit cannot succeed halfway. The
+// traffic quota is a DB-only write: it is applied first and rolled back if the
+// LXD-side resource update fails. trafficGB < 0 leaves the traffic quota
+// unchanged.
+func (m *Manager) UpdateQuotasAndTraffic(name string, cpu, memMB, diskGB, trafficGB int) (*Result, error) {
+	u, err := m.db.GetUserByName(name)
+	if err != nil {
+		return nil, err
+	}
+	if trafficGB >= 0 {
+		if err := m.db.UpdateTrafficQuota(u.ID, trafficGB); err != nil {
+			return nil, err
+		}
+	}
+	res, err := m.UpdateQuotas(name, cpu, memMB, diskGB)
+	if err != nil {
+		if trafficGB >= 0 {
+			// restore the previous traffic quota so the form is fully rolled back
+			_ = m.db.UpdateTrafficQuota(u.ID, u.TrafficQuotaGB)
+		}
+		return nil, err
+	}
+	return res, nil
 }
 
 // Power start/stops/restarts a container. boot.autostart mirrors the desired

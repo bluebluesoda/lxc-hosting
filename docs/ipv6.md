@@ -33,8 +33,8 @@ block = [configured prefix][32-bit sha256(username)][16 host bits]
 | `/80` | the /80 itself | Common provider slice (e.g. AWS ENI /80). |
 
 The bridge prefix length is clamped with `min(ones, 64)`-equivalent logic
-(`bridgePrefixLen`); both the installer preseed (`10-lxd.sh`) and
-`SetupIPv6Bridge` (run by `vps install` and on boot) apply it.
+(`bridgePrefixLen`); `SetupIPv6Bridge` (run by `vps install` and on boot)
+applies it.
 
 ## Bridge setup (`SetupIPv6Bridge`)
 
@@ -99,7 +99,8 @@ scheme, or whose networkd config was corrupted, are repaired on every boot).
   reuses an existing config's `ipv6_subnet` / `subnet` instead of re-asking.
 - `install.sh` — installs `ndppd` (only when IPv6 is enabled; it is not part
   of the default small install otherwise).
-- `10-lxd.sh` — puts the (clamped) prefix on `lxdbr0` at `lxd init` time.
+- `10-lxd.sh` — creates `lxdbr0` without an IPv6 address (the address is
+  chosen clash-free by `SetupIPv6Bridge` at `vps install`).
 - `20-network.sh` — enables IPv6 forwarding.
 - `50-image.sh` — bakes the Debian networkd IPv6 config (`DHCP=ipv4`,
   `[IPv6AcceptRA]` off-link/no-SLAAC/no-DHCPv6) into the published image.
@@ -110,10 +111,10 @@ scheme, or whose networkd config was corrupted, are repaired on every boot).
 - `vps install` / `add` / `reinstall` — apply the per-container config
   (`ConfigureContainerIPv6`); `ipv6-reapply` covers existing containers.
 - `check-ipv6-support.sh` — probe before install: reports the host's global
-  addresses, derives a candidate prefix from the address's configured length
-  (a provider routed block larger than that length is not auto-detected
-  reliably), and verifies from the outside (Globalping, free) that the
-  provider actually routes the prefix to the host.
+  addresses, derives a candidate prefix from the on-link routed block when the
+  kernel route table shows one (e.g. an AWS /80), falling back to the
+  address's own configured length, and verifies from the outside (Globalping,
+  free) that the provider actually routes the prefix to the host.
 
 ## Isolation interplay
 

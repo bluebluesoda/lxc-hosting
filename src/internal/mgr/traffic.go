@@ -22,6 +22,8 @@ const TrafficInterval = 60 * time.Second
 // baselines stored in the database at statement time, not against values read
 // in this process.
 func (m *Manager) SampleTraffic() error {
+	m.sampleMu.Lock()
+	defer m.sampleMu.Unlock()
 	tm, err := m.lx.TrafficMap()
 	if err != nil {
 		return err
@@ -89,18 +91,6 @@ func ParseTrafficGB(s string) (int, error) {
 	return n, nil
 }
 
-// SetTrafficQuota sets a user's monthly bandwidth quota in GiB (0 = unlimited).
-func (m *Manager) SetTrafficQuota(name string, gb int) error {
-	if gb < 0 {
-		return errors.New("bandwidth quota must be >= 0 GiB (0 = unlimited)")
-	}
-	u, err := m.db.GetUserByName(name)
-	if err != nil {
-		return err
-	}
-	return m.db.UpdateTrafficQuota(u.ID, gb)
-}
-
 // IsThrottled reports whether the container currently carries the traffic
 // throttle. Safe to call from panel goroutines (limitMu-guarded).
 func (m *Manager) IsThrottled(name string) bool {
@@ -117,12 +107,22 @@ func (m *Manager) IsThrottled(name string) bool {
 func (m *Manager) EnforceTrafficLimits() error {
 	m.limitMu.Lock()
 	defer m.limitMu.Unlock()
-	if m.throttled == nil {
-		m.throttled = map[string]bool{}
-	}
 	users, err := m.db.ListUsers()
 	if err != nil {
 		return err
+	}
+	// First pass after a process restart: prime the throttle map from the
+	// limits actually present on the containers, not from memory. Otherwise a
+	// container that was throttled before the restart and is now back under
+	// quota (e.g. monthly rollover) would never have its stale NIC limit
+	// removed.
+	if m.throttled == nil {
+		m.throttled = map[string]bool{}
+		for _, u := range users {
+			if rate, err := m.lx.NicRateLimit(u.Name); err == nil && rate != "" {
+				m.throttled[u.Name] = true
+			}
+		}
 	}
 	var firstErr error
 	for _, u := range users {

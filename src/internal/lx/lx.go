@@ -516,6 +516,25 @@ func (c *Client) EnsureNicRateLimit(name, rate string) error {
 	return c.patch("/1.0/instances/"+url.PathEscape(name), body, nil)
 }
 
+// NicRateLimit returns the eth0 rate limit currently applied to a container,
+// or "" when unset. Used after a process restart to rebuild the in-memory
+// throttle state from what LXD actually has, so a stale limit is not left on a
+// container that is back under quota.
+func (c *Client) NicRateLimit(name string) (string, error) {
+	var it instance
+	if err := c.get("/1.0/instances/"+url.PathEscape(name)+"?recursion=1", &it); err != nil {
+		return "", err
+	}
+	eth0, ok := it.Devices["eth0"]
+	if !ok {
+		return "", fmt.Errorf("lxd: instance %s has no eth0 device", name)
+	}
+	if r := eth0["limits.egress"]; r != "" {
+		return r, nil
+	}
+	return eth0["limits.ingress"], nil
+}
+
 // HardenIsolation ensures a container's eth0 carries the NIC isolation options
 // (nicIsolation). Idempotent.
 func (c *Client) HardenIsolation(name string) (bool, error) {

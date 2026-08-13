@@ -210,11 +210,23 @@ func (d *DB) migrateCPU() error {
 	if v >= 1 {
 		return nil
 	}
-	if _, err := d.sql.Exec(`UPDATE users SET cpu = cpu * 10`); err != nil {
+	// The UPDATE and the version bump must commit together: a crash between
+	// them would re-run the UPDATE on the next start and double every cpu
+	// value. PRAGMA user_version is a connection-local statement, so it runs
+	// on the transaction's connection and is rolled back with it.
+	tx, err := d.sql.Begin()
+	if err != nil {
+		return fmt.Errorf("migrate: begin cpu scale: %w", err)
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(`UPDATE users SET cpu = cpu * 10`); err != nil {
 		return fmt.Errorf("migrate: scale cpu to tenths: %w", err)
 	}
-	if _, err := d.sql.Exec(`PRAGMA user_version = 1`); err != nil {
+	if _, err := tx.Exec(`PRAGMA user_version = 1`); err != nil {
 		return fmt.Errorf("migrate: set user_version: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("migrate: commit cpu scale: %w", err)
 	}
 	return nil
 }

@@ -89,16 +89,21 @@ rm -rf /tmp/* /var/tmp/* 2>/dev/null || true
 # own on first boot.
 rm -f /etc/machine-id /var/lib/dbus/machine-id 2>/dev/null || true'; then
     lxc stop "$NAME" --timeout=30 || true
-    lxc publish "$NAME" --alias vpsmgr/debian-sshd
-    lxc delete --force "$NAME" || true
-    # keep only the modified image — the Debian base was a build intermediate
-    # and is never used to launch containers (fallback is the remote images:).
-    if lxc image delete vpsmgr-debian-13 >/dev/null 2>&1; then
-      log "removed base image vpsmgr-debian-13 (only vpsmgr/debian-sshd kept)"
+    if lxc publish "$NAME" --alias vpsmgr/debian-sshd; then
+      lxc delete --force "$NAME" || true
+      # keep only the modified image — the Debian base was a build intermediate
+      # and is never used to launch containers (fallback is the remote images:).
+      if lxc image delete vpsmgr-debian-13 >/dev/null 2>&1; then
+        log "removed base image vpsmgr-debian-13 (only vpsmgr/debian-sshd kept)"
+      else
+        log "  warn: could not remove base image vpsmgr-debian-13"
+      fi
+      log "sshd image published: vpsmgr/debian-sshd"
     else
-      log "  warn: could not remove base image vpsmgr-debian-13"
+      log "  warn: publish FAILED — sshd image NOT built (base image kept; re-run to retry)"
+      lxc delete --force "$NAME" >/dev/null 2>&1 || true
+      exit 1
     fi
-    log "sshd image published: vpsmgr/debian-sshd"
   else
     log "  warn: sshd install in builder failed; add-user will install sshd on the fly"
     lxc delete --force "$NAME" >/dev/null 2>&1 || true

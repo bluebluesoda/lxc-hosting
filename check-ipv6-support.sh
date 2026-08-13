@@ -67,11 +67,16 @@ print(f"{n.network_address}/{n.prefixlen}")' "$1" "$2"
 # the canonical CIDR, or empty. More authoritative than the address's own
 # configured length and still correct when the address is a bare /128.
 routed_prefix(){
-  python3 - "$1" <<'PY'
+  # The piped route table cannot share stdin with the heredoc (the heredoc IS
+  # python's stdin), so capture it and pass it as an argument instead.
+  local routes
+  routes=$(cat)
+  python3 - "$1" "$routes" <<'PY'
 import ipaddress, sys
 target = ipaddress.IPv6Address(sys.argv[1])
+routes = sys.argv[2]
 best = None
-for line in sys.stdin:
+for line in routes.splitlines():
     f = line.split()
     if not f or "/" not in f[0]:
         continue
@@ -264,14 +269,19 @@ ip -6 addr add "$TEST_CIDR" dev "$EXT_IF" 2>/dev/null \
 
 # Cleanup on any exit: remove temp addr (and temp nc listener if we started one).
 NCPID=""
+IP6FW=0
 cleanup(){
   [[ -n "$NCPID" ]] && kill "$NCPID" 2>/dev/null
   ip -6 addr del "$TEST_CIDR" dev "$EXT_IF" 2>/dev/null
+  # Remove the temporary ICMPv6 echo-request allow so a failed, interrupted or
+  # otherwise exited run never leaves a permanent INPUT rule behind.
+  if [[ "$IP6FW" == 1 ]]; then
+    ip6tables -D INPUT -p icmpv6 --icmpv6-type echo-request -j ACCEPT 2>/dev/null
+  fi
 }
 trap 'cleanup' EXIT
 
 # Software firewall may drop ICMPv6 echo; temporarily allow echo-request on input.
-IP6FW=0
 if command -v ip6tables >/dev/null 2>&1 && ip6tables -L INPUT -n 2>/dev/null | grep -q '^DROP\|^REJECT'; then
   ip6tables -I INPUT -p icmpv6 --icmpv6-type echo-request -j ACCEPT 2>/dev/null && IP6FW=1
   log "temporarily allowed ICMPv6 echo-request on INPUT (host firewall detected)"
