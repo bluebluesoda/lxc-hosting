@@ -214,6 +214,27 @@ func TestOverviewShowsMonthlyTraffic(t *testing.T) {
 	}
 }
 
+// TestOverviewDomSaveHiddenByDefault guards the domain save button: it must be
+// hidden on load (only a PROXY checkbox change reveals it). The button carries
+// the `hidden` attribute AND a .btn[hidden]{display:none} CSS rule — without
+// the rule, .btn's display:inline-block would override the attribute and the
+// button would always be visible.
+func TestOverviewDomSaveHiddenByDefault(t *testing.T) {
+	srv, _ := newTestServer(t)
+	html := srv.renderToString(t, "overview.html", pageData{
+		User:     &db.User{Name: "alice"},
+		Prefix:   "/" + testSecret,
+		Domains:  []domainRow{{Domain: "example.com", ProxyProtocol: false}},
+		V4Forward: true,
+	})
+	if !strings.Contains(html, `id="domSave" hidden`) {
+		t.Error("domSave button must be hidden by default")
+	}
+	if !strings.Contains(html, `.btn[hidden]{display:none}`) {
+		t.Error("missing .btn[hidden]{display:none} CSS rule (hidden attribute is overridden by .btn display otherwise)")
+	}
+}
+
 // TestOverviewConnectivityLayout covers the redesigned overview table: with v4
 // forwarding on, the IPV4 row carries the public IP and the port block with a
 // (?) help tooltip carrying the full range, and the SSH row shows both the V4
