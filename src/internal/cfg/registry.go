@@ -77,12 +77,21 @@ func (a Apply) String() string {
 
 // Field describes one config key for the `vps config` command.
 type Field struct {
-	Key   string
-	Kind  FieldKind
-	Apply Apply
-	Desc  string
-	Get   func(c *Config) string
-	Assign func(c *Config, v string) error
+	Key     string
+	Kind    FieldKind
+	Apply   Apply
+	Desc    string
+	Example string // shown by the interactive `vps config set` prompt
+	Get     func(c *Config) string
+	Assign  func(c *Config, v string) error
+}
+
+// AssignCheck validates an input value for a field by applying it to a COPY of
+// the config — the caller's config is not mutated. Used by the interactive
+// `vps config set` prompt to check-and-reprompt on bad input.
+func AssignCheck(c *Config, f *Field, v string) error {
+	cp := *c
+	return f.Assign(&cp, v)
 }
 
 // Editable reports whether the field may be changed via `vps config set`:
@@ -104,6 +113,7 @@ func (f *Field) Editable() string {
 var Fields = []Field{
 	{"panel.listen", KindOperator, ApplyRestart,
 		"panel listen address, e.g. \":8443\"",
+		":8443",
 		getStr(func(c *Config) string { return c.Panel.Listen }),
 		func(c *Config, v string) error {
 			if _, _, err := net.SplitHostPort(v); err != nil {
@@ -113,15 +123,19 @@ var Fields = []Field{
 			return nil
 		}},
 	{"panel.cert", KindOperator, ApplyRestart, "panel TLS certificate path",
+		"/etc/vpsmgr/panel.crt",
 		getStr(func(c *Config) string { return c.Panel.Cert }),
 		nonEmpty("panel.cert", func(c *Config, v string) { c.Panel.Cert = v })},
 	{"panel.key", KindOperator, ApplyRestart, "panel TLS private key path",
+		"/etc/vpsmgr/panel.key",
 		getStr(func(c *Config) string { return c.Panel.Key }),
 		nonEmpty("panel.key", func(c *Config, v string) { c.Panel.Key = v })},
 	{"panel.db", KindOperator, ApplyInstall, "SQLite database path",
+		"/etc/vpsmgr/vpsmgr.db",
 		getStr(func(c *Config) string { return c.Panel.DB }),
 		nonEmpty("panel.db", func(c *Config, v string) { c.Panel.DB = v })},
 	{"panel.public_ip", KindOperator, ApplyInstall, "NIC IPv4 used by firewall/routing (cert is regenerated)",
+		"203.0.113.5 or AUTO",
 		getStr(func(c *Config) string { return c.Panel.PublicIP }),
 		func(c *Config, v string) error {
 			v = strings.TrimSpace(v)
@@ -136,6 +150,7 @@ var Fields = []Field{
 			return nil
 		}},
 	{"panel.display_ip", KindOperator, ApplyRestart, "public IPv4 shown to users (panel URL / SSH hints); empty = fall back to public_ip",
+		"203.0.113.5 or AUTO",
 		getStr(func(c *Config) string { return c.Panel.DisplayIP }),
 		func(c *Config, v string) error {
 			v = strings.TrimSpace(v)
@@ -150,6 +165,7 @@ var Fields = []Field{
 			return nil
 		}},
 	{"panel.session_days", KindOperator, ApplyRestart, "login session lifetime in days",
+		"3",
 		getStr(func(c *Config) string { return strconv.Itoa(c.Panel.SessionDays) }),
 		func(c *Config, v string) error {
 			n, err := strconv.Atoi(strings.TrimSpace(v))
@@ -161,6 +177,7 @@ var Fields = []Field{
 		}},
 	{"panel.url_path", KindImmutable, ApplyRestart,
 		"secret prefix of the user panel (immutable once set; settable only while empty = enable)",
+		"Ab1_cdEf-9x",
 		getStr(func(c *Config) string { return c.Panel.URLPath }),
 		func(c *Config, v string) error {
 			if err := setSecretPath(v, c.Panel.AdminPath, "panel.url_path"); err != nil {
@@ -169,10 +186,21 @@ var Fields = []Field{
 			c.Panel.URLPath = v
 			return nil
 		}},
-	{"panel.admin_url_path", KindImmutable, ApplyRestart,
-		"secret prefix of the admin panel (immutable once set; settable only while empty = enable)",
-		getStr(func(c *Config) string { return c.Panel.AdminPath }),
+	{"panel.admin_url_path", KindOperator, ApplyRestart,
+		"secret prefix of the admin panel; empty value = admin panel disabled",
+		"Xy-9ab_cdEf (or empty/CLEAR to disable)",
+		func(c *Config) string {
+			if c.Panel.AdminPath == "" {
+				return "disabled"
+			}
+			return c.Panel.AdminPath
+		},
 		func(c *Config, v string) error {
+			v = strings.TrimSpace(v)
+			if v == "" {
+				c.Panel.AdminPath = ""
+				return nil
+			}
 			if err := setSecretPath(v, c.Panel.URLPath, "panel.admin_url_path"); err != nil {
 				return err
 			}
@@ -181,24 +209,28 @@ var Fields = []Field{
 		}},
 	{"panel.admin_pass_hash", KindSpecial, ApplyNone,
 		"admin password bcrypt hash — set via `vps admin-passwd` (stored in the DB)",
+		"",
 		func(c *Config) string { return "(in database, via `vps admin-passwd`)" },
 		func(c *Config, v string) error {
 			return fmt.Errorf("panel.admin_pass_hash is managed by `vps admin-passwd`, not `vps config set`")
 		}},
 	{"net.subnet", KindImmutable, ApplyNone,
 		"container subnet 10.<n>.0.0/24 — fixed at install, would break existing containers",
+		"",
 		getStr(func(c *Config) string { return c.Net.Subnet }),
 		func(c *Config, v string) error {
 			return fmt.Errorf("net.subnet is fixed at install; changing it breaks existing containers")
 		}},
 	{"net.gateway", KindImmutable, ApplyNone,
 		"bridge gateway (derived from subnet) — fixed at install",
+		"",
 		getStr(func(c *Config) string { return c.Net.Gateway }),
 		func(c *Config, v string) error {
 			return fmt.Errorf("net.gateway is fixed at install (derived from net.subnet)")
 		}},
 	{"net.v4_forward", KindRuntime, ApplyImmediate,
 		"IPv4 inbound policy: true = SSH/port-block DNAT + traefik, false = IPv6-only containers",
+		"true or false",
 		getStr(func(c *Config) string { return strconv.FormatBool(c.Net.V4Forward) }),
 		func(c *Config, v string) error {
 			b, ok := parseBool(v)
@@ -209,11 +241,18 @@ var Fields = []Field{
 			return nil
 		}},
 	{"net.ext_if", KindOperator, ApplyInstall, "external NIC (auto-detected from default route)",
+		"eth0",
 		getStr(func(c *Config) string { return c.Net.ExtIF }),
 		nonEmpty("net.ext_if", func(c *Config, v string) { c.Net.ExtIF = v })},
 	{"net.ipv6_subnet", KindOperator, ApplyInstall,
 		"global IPv6 prefix for pass-through (e.g. 2602:fada:6::/64); empty = disabled",
-		getStr(func(c *Config) string { return c.Net.IPv6Subnet }),
+		"2602:fada:6::/64 (empty to disable)",
+		func(c *Config) string {
+			if c.Net.IPv6Subnet == "" {
+				return "disabled"
+			}
+			return c.Net.IPv6Subnet
+		},
 		func(c *Config, v string) error {
 			v = strings.TrimSpace(v)
 			if v == "" {
@@ -229,32 +268,39 @@ var Fields = []Field{
 			return nil
 		}},
 	{"lxd.image", KindOperator, ApplyNextAdd, "container image alias used on add/reinstall",
+		"vpsmgr/debian-sshd",
 		getStr(func(c *Config) string { return c.LXD.Image }),
 		nonEmpty("lxd.image", func(c *Config, v string) { c.LXD.Image = v })},
 	{"lxd.image_fallback", KindOperator, ApplyNextAdd, "fallback remote image when the local one is missing",
+		"images:debian/13",
 		getStr(func(c *Config) string { return c.LXD.ImageFallback }),
 		nonEmpty("lxd.image_fallback", func(c *Config, v string) { c.LXD.ImageFallback = v })},
 	{"lxd.pool", KindImmutable, ApplyNone,
 		"storage pool — fixed at install",
+		"",
 		getStr(func(c *Config) string { return c.LXD.Pool }),
 		func(c *Config, v string) error {
 			return fmt.Errorf("lxd.pool is fixed at install; changing it breaks existing containers")
 		}},
 	{"lxd.bridge", KindImmutable, ApplyNone,
 		"managed bridge — fixed at install",
+		"",
 		getStr(func(c *Config) string { return c.LXD.Bridge }),
 		func(c *Config, v string) error {
 			return fmt.Errorf("lxd.bridge is fixed at install; changing it breaks existing containers")
 		}},
 	{"lxd.socket", KindOperator, ApplyRestart, "LXD daemon Unix socket path",
+		"/var/snap/lxd/common/lxd/unix.socket",
 		getStr(func(c *Config) string { return c.LXD.Socket }),
 		nonEmpty("lxd.socket", func(c *Config, v string) { c.LXD.Socket = v })},
 	{"installed_version", KindAuto, ApplyNone, "binary version that installed/adopted this config (auto)",
+		"",
 		getStr(func(c *Config) string { return c.InstalledVersion }),
 		func(c *Config, v string) error {
 			return fmt.Errorf("installed_version is auto-written by `vps install`")
 		}},
 	{"uninstalled_version", KindAuto, ApplyNone, "binary version that a non-purging uninstall removed (auto)",
+		"",
 		getStr(func(c *Config) string { return c.UninstalledVersion }),
 		func(c *Config, v string) error {
 			return fmt.Errorf("uninstalled_version is auto-written by `vps note-version`")

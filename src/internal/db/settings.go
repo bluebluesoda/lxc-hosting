@@ -21,6 +21,13 @@ const (
 	// the live config has drifted from it, so "shouldn't be changed" fields
 	// are enforced rather than just documented.
 	SettingImmutableSnapshot = "immutable_snapshot"
+
+	// SettingV4Forward mirrors net.v4_forward in the DB so the long-running
+	// panel process sees a toggle made by `vps config set net.v4_forward`
+	// immediately (its in-memory config is only loaded at startup). Written by
+	// mgr.ApplyV4State; the panel reads it live to decide whether domains may
+	// be added.
+	SettingV4Forward = "v4_forward"
 )
 
 // GetSetting returns a settings value; ok is false when the key is absent.

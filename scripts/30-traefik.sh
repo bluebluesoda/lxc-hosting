@@ -68,7 +68,7 @@ if [[ "$V4_FWD" == "1" ]]; then
     die "traefik failed to start"
   fi
 else
-  systemctl disable traefik >/dev/null 2>&1 || true
+  systemctl disable --now traefik >/dev/null 2>&1 || true
   log "v4 forwarding off — traefik installed but disabled (domains kept)"
 fi
 

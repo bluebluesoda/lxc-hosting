@@ -526,7 +526,9 @@ func (m *Manager) Del(name string) error {
 // ApplyV4State enforces the current v4_forward policy: it rewrites (when on)
 // or removes (when off) every user's DNAT rules, reloads the ruleset, and
 // starts/stops the traefik service to match. Called by
-// `vps config set net.v4_forward` and at the end of `vps install`.
+// `vps config set net.v4_forward` and at the end of `vps install`. It also
+// records the effective policy in the DB settings so the long-running panel
+// process reflects the toggle without a restart.
 func (m *Manager) ApplyV4State() error {
 	users, err := m.db.ListUsers()
 	if err != nil {
@@ -546,19 +548,49 @@ func (m *Manager) ApplyV4State() error {
 	if err := m.fw.Reload(); err != nil {
 		return err
 	}
+	if err := m.db.SetSetting(db.SettingV4Forward, strconv.FormatBool(m.cfg.Net.V4Forward)); err != nil {
+		return fmt.Errorf("record v4_forward: %w", err)
+	}
 	return m.ApplyTraefikState()
 }
 
+// V4ForwardLive reports whether IPv4 inbound is currently enabled, preferring
+// the DB setting (written by ApplyV4State) over the manager's in-memory config.
+// The panel process reads its config only at startup, so without this it would
+// keep serving domains for a v4_forward toggle made by `vps config set`.
+func (m *Manager) V4ForwardLive() bool {
+	v, ok, err := m.db.GetSetting(db.SettingV4Forward)
+	if err != nil || !ok {
+		return m.cfg.Net.V4Forward
+	}
+	return v == "1" || strings.EqualFold(v, "true")
+}
+
 // ApplyTraefikState starts/stops the traefik service to match v4_forward: with
-// IPv4 inbound off, the domain proxy is not offered, so traefik is stopped to
-// free memory. Domain config files are KEPT, so re-enabling restores them; a
-// full re-sync runs when enabling.
+// IPv4 inbound off, the domain proxy is not offered, so traefik is stopped and
+// its BOOT AUTOSTART is disabled (systemctl disable --now) — it must not come
+// back on the next reboot. Domain config files are KEPT, so re-enabling
+// restores them; a full re-sync runs when enabling. systemctl errors are
+// surfaced, not swallowed.
 func (m *Manager) ApplyTraefikState() error {
 	if m.cfg.Net.V4Forward {
-		_ = exec.Command("systemctl", "enable", "--now", "traefik.service").Run()
+		if err := systemctl("enable", "--now", "traefik.service"); err != nil {
+			return fmt.Errorf("start traefik: %w", err)
+		}
 		return m.SyncAllDomains()
 	}
-	_ = exec.Command("systemctl", "disable", "--now", "traefik.service").Run()
+	if err := systemctl("disable", "--now", "traefik.service"); err != nil {
+		return fmt.Errorf("stop/disable traefik: %w", err)
+	}
+	return nil
+}
+
+// systemctl runs systemctl and returns its stderr on failure.
+func systemctl(args ...string) error {
+	out, err := exec.Command("systemctl", args...).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("systemctl %s: %s", strings.Join(args, " "), strings.TrimSpace(string(out)))
+	}
 	return nil
 }
 
@@ -815,7 +847,7 @@ func (m *Manager) Reinstall(name, image string) (string, error) {
 // atomically: insert the DB row, write the domain's YAML file, and if the file
 // write fails roll the DB row back so the two never disagree.
 func (m *Manager) AddDomain(name, domain string, proxyProtocol bool) error {
-	if !m.cfg.Net.V4Forward {
+	if !m.V4ForwardLive() {
 		return errors.New("v4 forwarding is disabled (v4_forward: false) — domains are not available; re-enable with `vps config set net.v4_forward true`")
 	}
 	u, err := m.db.GetUserByName(name)

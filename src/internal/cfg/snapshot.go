@@ -10,14 +10,15 @@ import (
 // any of them would break existing containers/wiring, so their values are
 // snapshotted into the DB on the first `vps install` and verified on every
 // later `vps install` / `vps serve` — "shouldn't be changed" is enforced, not
-// just documented.
+// just documented. Note: panel.url_path is here (moving the user entrance
+// strands users) but panel.admin_url_path is NOT — the admin path is
+// operator-editable and can be emptied to disable the admin panel.
 var ImmutableFields = []string{
 	"net.subnet",
 	"net.gateway",
 	"lxd.pool",
 	"lxd.bridge",
 	"panel.url_path",
-	"panel.admin_url_path",
 }
 
 // ImmutableSnapshot renders the immutable fields as JSON for storage in the DB

@@ -33,6 +33,32 @@ func readLine() (string, error) {
 	return strings.TrimSpace(line), nil
 }
 
+// Confirm prints "label [y/N]: " (defTrue -> "[Y/n]: ") and returns true for
+// y/yes. Empty input resolves to the default. Anything else re-prompts.
+func Confirm(label string, defTrue bool) (bool, error) {
+	suffix := " [y/N]"
+	if defTrue {
+		suffix = " [Y/n]"
+	}
+	for {
+		fmt.Printf("%s%s: ", label, suffix)
+		line, err := readLine()
+		if err != nil {
+			return false, err
+		}
+		switch strings.ToLower(line) {
+		case "y", "yes":
+			return true, nil
+		case "n", "no":
+			return false, nil
+		case "":
+			return defTrue, nil
+		default:
+			fmt.Println("  ! answer y or n")
+		}
+	}
+}
+
 // Ask prints "label [default] unit: " and returns either the validated input
 // or the default on empty input / EOF. Invalid input re-prompts showing the
 // validation error.

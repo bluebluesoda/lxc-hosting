@@ -80,7 +80,7 @@ func (s *Server) buildPageData(msg, errMsg string) pageData {
 		Prefix:    s.prefix(),
 		Msg:       msg,
 		Err:       errMsg,
-		V4Forward: s.cfg.Net.V4Forward,
+		V4Forward: s.mgr.V4ForwardLive(),
 	}
 	hs := s.mgr.HostStats()
 	d.Reboot = hs.RebootNeeded

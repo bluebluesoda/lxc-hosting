@@ -24,7 +24,7 @@ same table; `vps config list` shows the live values with this annotation.
 | `panel.display_ip` | operator | restart panel | public IPv4 shown to users (panel URL / SSH hints); empty = fall back to `public_ip` |
 | `panel.session_days` | operator | restart panel | login session lifetime (days) |
 | `panel.url_path` | **fixed at install** | — | secret prefix of the user panel; settable only while empty (re-enable) |
-| `panel.admin_url_path` | **fixed at install** | — | secret prefix of the admin panel; settable only while empty (re-enable) |
+| `panel.admin_url_path` | operator | restart panel | secret prefix of the admin panel; an **empty value disables the admin panel** (shown as `disabled`) |
 | `panel.admin_pass_hash` | managed elsewhere | — | bcrypt hash of the admin password; stored in the **DB**, set via `vps admin-passwd` / web UI |
 | `net.subnet` | **fixed at install** | — | container subnet `10.<n>.0.0/24`; changing breaks existing containers |
 | `net.gateway` | **fixed at install** | — | bridge gateway (derived from subnet) |
@@ -42,10 +42,13 @@ same table; `vps config list` shows the live values with this annotation.
 ### How "fixed at install" is enforced
 
 Fields marked **fixed at install** (`net.subnet`, `net.gateway`, `lxd.pool`,
-`lxd.bridge`, `panel.url_path`, `panel.admin_url_path`) are snapshotted into
-the DB settings table on the first `vps install`. Every later `vps install`
-and `vps serve` compares the live config against that snapshot and **refuses to
-run** if any of them drifted — `vps config set` also refuses them up front.
+`lxd.bridge`, `panel.url_path`) are snapshotted into the DB settings table on
+the first `vps install`. Every later `vps install` and `vps serve` compares the
+live config against that snapshot and **refuses to run** if any of them drifted
+— `vps config set` also refuses them up front. The user panel path
+(`panel.url_path`) is immutable on purpose: moving it strands every user who
+bookmarked it. The admin path is NOT immutable — it can be rotated and emptied
+to disable the admin panel.
 
 ### Auto-written metadata
 
@@ -129,9 +132,12 @@ otherwise be unreachable).
   masquerade.
 
 Toggle at runtime with `vps config set net.v4_forward true|false` — the rules
-are refreshed and traefik started/stopped immediately. The SSH/user ports stay
-recorded in the DB, so turning it back on restores everything. The user panel
-hides IPv4 inbound info and shows "v4 SSH unavailable" while off.
+are refreshed and traefik started/stopped immediately (its boot autostart is
+disabled along with it, so it cannot come back on reboot). The SSH/user ports
+stay recorded in the DB, so turning it back on restores everything. The user
+panel hides IPv4 inbound info and shows "v4 SSH unavailable" while off, and
+**domain-add is blocked while off** — the add form is hidden and the handler
+rejects it (the panel reads the toggle live from the DB, no restart needed).
 
 ## Port 25 (SMTP) is always blocked
 

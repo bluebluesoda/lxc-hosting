@@ -261,7 +261,7 @@ func (s *Server) buildData(u *db.User, msg, errMsg string) pageData {
 		Ports:      mgr.UserPorts(u.StartPort, cfg.PortsPerUser),
 		PortsShort: mgr.UserPortsShort(u.StartPort),
 		SSH:        "ssh -p " + itoa(u.SSHPort) + " root@" + s.cfg.DisplayIP(),
-		V4Forward:  s.cfg.Net.V4Forward,
+		V4Forward:  s.mgr.V4ForwardLive(),
 		InitScript: u.InitScript,
 		QuotaCPU:   mgr.FormatCPU(u.CPU),
 		QuotaMem:   itoa(u.MemMB) + " MiB",

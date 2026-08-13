@@ -115,7 +115,7 @@ func TestEditableClassification(t *testing.T) {
 		"net.v4_forward":        "yes",
 		"net.ipv6_subnet":       "yes",
 		"panel.url_path":        "only-when-empty",
-		"panel.admin_url_path":  "only-when-empty",
+		"panel.admin_url_path":  "yes",
 		"net.subnet":            "no",
 		"net.gateway":           "no",
 		"lxd.pool":              "no",
@@ -149,9 +149,41 @@ func TestSecretPathValidators(t *testing.T) {
 	if err := FieldFor("panel.url_path").Assign(c, "Xy-9ab_cdE"); err == nil {
 		t.Error("url_path equal to admin_url_path accepted")
 	}
-	// empty rejected
-	if err := FieldFor("panel.admin_url_path").Assign(c, ""); err == nil {
-		t.Error("empty admin_url_path accepted")
+}
+
+func TestAdminPathEditable(t *testing.T) {
+	c := Default()
+	// valid path set
+	if err := FieldFor("panel.admin_url_path").Assign(c, "Xy-9ab_cdE"); err != nil {
+		t.Fatalf("valid admin_url_path rejected: %v", err)
+	}
+	if c.Panel.AdminPath != "Xy-9ab_cdE" {
+		t.Errorf("admin_url_path = %q", c.Panel.AdminPath)
+	}
+	// list shows the path when set, "disabled" when empty
+	if v := FieldValue(c, "panel.admin_url_path"); v != "Xy-9ab_cdE" {
+		t.Errorf("admin_url_path value = %q", v)
+	}
+	// empty value = disable the admin panel (allowed, not refused)
+	if err := FieldFor("panel.admin_url_path").Assign(c, ""); err != nil {
+		t.Fatalf("empty admin_url_path (disable) rejected: %v", err)
+	}
+	if c.Panel.AdminPath != "" {
+		t.Errorf("admin_url_path not cleared: %q", c.Panel.AdminPath)
+	}
+	if v := FieldValue(c, "panel.admin_url_path"); v != "disabled" {
+		t.Errorf("admin_url_path value when disabled = %q", v)
+	}
+	// still validated: too short / bad charset / collision with user path
+	if err := FieldFor("panel.admin_url_path").Assign(c, "Short1"); err == nil {
+		t.Error("short admin_url_path accepted")
+	}
+	if err := FieldFor("panel.admin_url_path").Assign(c, "bad path with spaces"); err == nil {
+		t.Error("admin_url_path with spaces accepted")
+	}
+	c.Panel.URLPath = "Ab1_cdE-9x"
+	if err := FieldFor("panel.admin_url_path").Assign(c, "Ab1_cdE-9x"); err == nil {
+		t.Error("admin_url_path equal to url_path accepted")
 	}
 }
 

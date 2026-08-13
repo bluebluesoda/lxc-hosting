@@ -172,10 +172,11 @@ footer a{color:var(--muted);text-decoration:underline}
 {{else}}
 <div class="muted">{{if eq .Lang "zh"}}未绑定域名{{else}}No domains bound{{end}}</div>
 {{end}}
-<form action="{{.Prefix}}/domain-add" method="post">
+{{if .V4Forward}}<form action="{{.Prefix}}/domain-add" method="post">
 <div class="frow"><label>{{if eq .Lang "zh"}}新域名{{else}}New domain{{end}}</label><input name="domain" placeholder="example.com"><button class="btn ok" type="submit">{{if eq .Lang "zh"}}添加{{else}}Add{{end}}</button></div>
 <div class="frow"><label></label><label class="chk"><input type="checkbox" name="proxy_protocol" value="1" title="{{if eq .Lang "zh"}}PROXY protocol v2：一种 TCP 报文，向后端汇报访客 IP，需要后端适配{{else}}PROXY protocol v2: a TCP preamble that reports the visitor IP to the backend; the backend must support it{{end}}"> PROXY protocol v2</label></div>
 </form>
+{{else}}<div class="muted">{{if eq .Lang "zh"}}IPv4 入站已关闭，无法添加新域名。管理员可用 `vps config set net.v4_forward true` 重新开启。{{else}}IPv4 inbound is disabled — adding domains is not available. Re-enable with `vps config set net.v4_forward true`.{{end}}</div>{{end}}
  </div>
 </div>
 

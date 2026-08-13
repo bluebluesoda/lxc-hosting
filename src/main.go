@@ -157,7 +157,7 @@ usage:
   vps admin-passwd                 reset admin panel password (shown once)
   vps del <name>
   vps panel-url                    print panel address
-  vps config list|set|help         inspect/change config.yaml (per-field editable+apply)
+  vps config list|set|help         inspect/change config.yaml (per-field validated edits)
   vps version
 system:
   vps install | serve | ipv6-reapply | note-version <ver>
@@ -625,9 +625,9 @@ func configList() error {
 		return fmt.Errorf("load config: %w", err)
 	}
 	w := tabwriter.NewWriter(os.Stdout, 2, 4, 2, ' ', 0)
-	fmt.Fprintln(w, "KEY\tEDITABLE\tKIND\tAPPLY\tVALUE")
+	fmt.Fprintln(w, "KEY\tEDITABLE\tKIND\tVALUE")
 	for _, f := range cfg.Fields {
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", f.Key, f.Editable(), f.Kind, f.Apply, cfg.FieldValue(c, f.Key))
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", f.Key, f.Editable(), f.Kind, cfg.FieldValue(c, f.Key))
 	}
 	if err := w.Flush(); err != nil {
 		return err
@@ -649,8 +649,9 @@ func configHelp() {
 
 func configUsage() {
 	fmt.Print(`usage:
-  vps config list                show current config, annotated with editable/kind/apply
-  vps config set <key> <value>   change one field (validated; immutable fields refused)
+  vps config list                show current config, annotated with editable/kind/value
+  vps config set <key> [<value>] change one field (validated; immutable fields refused;
+                                 missing value prompts interactively with an example)
                                  [--apply]    apply install-class fields now (runs vps install)
                                  [--no-apply] save only, do not apply
   vps config help                describe every field and how changes take effect
@@ -680,7 +681,7 @@ func configSet(args []string) error {
 			}
 		}
 	}
-	if key == "" || value == "" {
+	if key == "" {
 		return fmt.Errorf("usage: vps config set <key> <value> [--apply|--no-apply]")
 	}
 	if apply && noApply {
@@ -695,8 +696,8 @@ func configSet(args []string) error {
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
 	}
-	// Immutable fields are refused, except (re-)enabling the two secret panel
-	// paths while they are currently empty (panel disabled).
+	// Immutable fields are refused, except (re-)enabling the user panel path
+	// while it is currently empty (panel disabled).
 	if f.Kind == cfg.KindImmutable && (f.Editable() != "only-when-empty" || cfg.FieldValue(c, key) != "") {
 		cur := cfg.FieldValue(c, key)
 		if f.Editable() == "only-when-empty" && cur != "" {
@@ -708,6 +709,22 @@ func configSet(args []string) error {
 		return fmt.Errorf("%s is not editable (auto-written by the panel)", key)
 	}
 
+	// No value given: prompt interactively with the field description, current
+	// value and an example, validating each attempt. Empty input keeps the
+	// current value (no change).
+	if value == "" {
+		if !inter.IsTTY() {
+			return fmt.Errorf("usage: vps config set %s <value> [--apply|--no-apply]", key)
+		}
+		var changed bool
+		if value, changed, err = promptConfigValue(c, f); err != nil {
+			return err
+		}
+		if !changed {
+			return nil
+		}
+	}
+
 	old := cfg.FieldValue(c, key)
 	if err := f.Assign(c, value); err != nil {
 		return err
@@ -715,6 +732,17 @@ func configSet(args []string) error {
 	if cfg.FieldValue(c, key) == old {
 		fmt.Printf("%s is already %q — nothing to do.\n", key, old)
 		return nil
+	}
+	// A change whose apply is disruptive (re-runs `vps install`, or a live
+	// runtime toggle) gets a second y/N confirmation before anything is saved.
+	if !noApply && dangerousApply(f) && inter.IsTTY() {
+		ok, err := confirmApply(c, f, key)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return fmt.Errorf("aborted — %s left unchanged", key)
+		}
 	}
 	if err := cfg.Save(c); err != nil {
 		return fmt.Errorf("save config: %w", err)
@@ -770,6 +798,71 @@ func configSet(args []string) error {
 		return fmt.Errorf("%s is not settable", key)
 	}
 	return nil
+}
+
+// promptConfigValue interactively asks for a new value when
+// `vps config set <key>` was run without one. It shows the field description,
+// current value and an example, and validates every attempt against the
+// field's own Assign rules (re-prompting on error). changed=false means the
+// user kept the current value (or, for panel.admin_url_path, typed CLEAR to
+// disable — returned as value "" with changed=true).
+func promptConfigValue(c *cfg.Config, f *cfg.Field) (value string, changed bool, err error) {
+	cur := cfg.FieldValue(c, f.Key)
+	def := cur
+	if def == "" {
+		def = "disabled"
+	}
+	fmt.Printf("== %s ==\n%s\n", f.Key, f.Desc)
+	if f.Key == "panel.admin_url_path" && def == "disabled" {
+		fmt.Println("hint: an empty value disables the admin panel; type CLEAR to disable")
+	}
+	fmt.Printf("current: %s\n", def)
+	if f.Example != "" {
+		fmt.Printf("example: %s\n", f.Example)
+	}
+	s, err := inter.Ask("new value", def, "", func(v string) error {
+		v = strings.TrimSpace(v)
+		if f.Key == "panel.admin_url_path" && strings.EqualFold(v, "clear") {
+			return nil
+		}
+		return cfg.AssignCheck(c, f, v)
+	})
+	if err != nil {
+		return "", false, err
+	}
+	s = strings.TrimSpace(s)
+	if f.Key == "panel.admin_url_path" && strings.EqualFold(s, "clear") {
+		return "", true, nil
+	}
+	if s == def {
+		return "", false, nil
+	}
+	return s, true, nil
+}
+
+// dangerousApply reports whether applying a field change is disruptive enough
+// to warrant a second confirmation: re-running `vps install` (regenerates
+// firewall/routing/container wiring) or a live runtime toggle (net.v4_forward
+// changes SSH/port/domain reachability of every container).
+func dangerousApply(f *cfg.Field) bool {
+	return f.Apply == cfg.ApplyInstall || f.Apply == cfg.ApplyImmediate
+}
+
+// confirmApply asks for a y/N confirmation before saving a change whose apply
+// is disruptive, showing the new value and what applying does.
+func confirmApply(c *cfg.Config, f *cfg.Field, key string) (bool, error) {
+	var what string
+	switch f.Apply {
+	case cfg.ApplyInstall:
+		what = "re-runs `vps install`, regenerating the firewall / routing / container wiring"
+	case cfg.ApplyImmediate:
+		if key == "net.v4_forward" {
+			what = "toggles container IPv4 inbound immediately — SSH / port / domain reachability of every container changes"
+		} else {
+			what = "applies immediately"
+		}
+	}
+	return inter.Confirm(fmt.Sprintf("set %s to %q — this %s. continue?", key, cfg.FieldValue(c, key), what), false)
 }
 
 // restartPanel restarts the vpsmgr-panel systemd service and waits for it to
