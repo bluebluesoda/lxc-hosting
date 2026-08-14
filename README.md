@@ -111,3 +111,13 @@ sudo ./uninstall.sh --purge  # also delete config/db, containers, pool, LXD
 
 Technical detail lives in `docs/` (English): [index](docs/README.md), plus
 [`AGENTS.md`](AGENTS.md) for AI coding agents.
+
+## Screenshots
+
+Admin panel:
+
+![Admin panel](ScreenShot-AdminPanel.png)
+
+User panel:
+
+![User panel](ScreenShot-UserPanel.png)

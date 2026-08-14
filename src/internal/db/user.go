@@ -1,8 +1,10 @@
 package db
 
 import (
+	"crypto/rand"
 	"database/sql"
 	"fmt"
+	"math/big"
 
 	"vpsmgr/internal/cfg"
 )
@@ -39,9 +41,12 @@ func (d *DB) CreateUser(name, passHash, ip string, idx, sshPort, startPort, cpu,
 	return u, nil
 }
 
-// NextFreeIdx returns the smallest unused index in [1, cfg.MaxUsers].
+// NextFreeIdx returns a random unused index in [1, cfg.MaxUsers], so a new
+// user gets a random slot (and therefore IP + port block) instead of always
+// the smallest free one. Cross-process races on the pick are caught by the
+// users.idx UNIQUE constraint; within one process Add is serialized by opMu.
 func (d *DB) NextFreeIdx() (int, error) {
-	rows, err := d.sql.Query(`SELECT idx FROM users ORDER BY idx`)
+	rows, err := d.sql.Query(`SELECT idx FROM users`)
 	if err != nil {
 		return 0, err
 	}
@@ -54,12 +59,23 @@ func (d *DB) NextFreeIdx() (int, error) {
 		}
 		used[i] = true
 	}
+	if err := rows.Err(); err != nil {
+		return 0, err
+	}
+	free := make([]int, 0, cfg.MaxUsers-len(used))
 	for i := 1; i <= cfg.MaxUsers; i++ {
 		if !used[i] {
-			return i, nil
+			free = append(free, i)
 		}
 	}
-	return 0, fmt.Errorf("user limit reached (%d)", cfg.MaxUsers)
+	if len(free) == 0 {
+		return 0, fmt.Errorf("user limit reached (%d)", cfg.MaxUsers)
+	}
+	n, err := rand.Int(rand.Reader, big.NewInt(int64(len(free))))
+	if err != nil {
+		return 0, err
+	}
+	return free[n.Int64()], nil
 }
 
 // UsedSSHPorts returns the set of ssh_port values already assigned to users,
