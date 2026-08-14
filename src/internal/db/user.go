@@ -41,6 +41,48 @@ func (d *DB) CreateUser(name, passHash, ip string, idx, sshPort, startPort, cpu,
 	return u, nil
 }
 
+// CreateUserFull atomically creates a user, its initial traffic row and (when
+// trafficGB > 0) the monthly traffic quota in ONE SQLite transaction. The Add
+// flow uses this so a crash can never leave a user row without its traffic
+// state — the "half-created user" failure mode of the original design.
+func (d *DB) CreateUserFull(name, passHash, ip string, idx, sshPort, startPort, cpu, memMB, diskGB, trafficGB int) (*User, error) {
+	tx, err := d.sql.Begin()
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+
+	u := &User{Name: name, PassHash: passHash, Idx: idx, IP: ip, SSHPort: sshPort, StartPort: startPort,
+		CPU: cpu, MemMB: memMB, DiskGB: diskGB, CreatedAt: now()}
+	r, err := tx.Exec(
+		`INSERT INTO users(name, pass_hash, idx, ip, ssh_port, start_port, cpu, mem_mb, disk_gb, created_at)
+		 VALUES(?,?,?,?,?,?,?,?,?,?)`,
+		u.Name, u.PassHash, u.Idx, u.IP, u.SSHPort, u.StartPort, u.CPU, u.MemMB, u.DiskGB, u.CreatedAt)
+	if err != nil {
+		return nil, err
+	}
+	u.ID, _ = r.LastInsertId()
+
+	// The traffic row always exists for a new user (0 counters), so SampleTraffic
+	// and the quota logic have a baseline from the start.
+	if _, err := tx.Exec(
+		`INSERT INTO traffic(user_id, period, upload_bytes, download_bytes, last_rx, last_tx)
+		 VALUES(?, ?, 0, 0, 0, 0)`,
+		u.ID, now()[:7]); err != nil {
+		return nil, err
+	}
+	if trafficGB > 0 {
+		if _, err := tx.Exec(`UPDATE users SET traffic_quota_gb=? WHERE id=?`, trafficGB, u.ID); err != nil {
+			return nil, err
+		}
+		u.TrafficQuotaGB = trafficGB
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return u, nil
+}
+
 // NextFreeIdx returns a random unused index in [1, cfg.MaxUsers], so a new
 // user gets a random slot (and therefore IP + port block) instead of always
 // the smallest free one. Cross-process races on the pick are caught by the

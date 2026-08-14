@@ -10,11 +10,11 @@ import (
 
 // TestUpdateQuotasAndTrafficRollsBackTrafficOnResourceFailure verifies the
 // combined admin quota submit cannot half-apply: the traffic quota is written
-// first, and when the LXD-side resource update fails it is restored. LXD is
+// first, and when the Incus-side resource update fails it is restored. Incus is
 // pointed at a nonexistent socket so the resource update always fails.
 func TestUpdateQuotasAndTrafficRollsBackTrafficOnResourceFailure(t *testing.T) {
 	c := cfg.Default()
-	c.LXD.Socket = "/nonexistent/vpsmgr-test.sock"
+	c.Incus.Socket = "/nonexistent/vpsmgr-test.sock"
 	d, err := db.Open(filepath.Join(t.TempDir(), "test.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -26,7 +26,7 @@ func TestUpdateQuotasAndTrafficRollsBackTrafficOnResourceFailure(t *testing.T) {
 	m := New(c, d)
 
 	if _, err := m.UpdateQuotasAndTraffic("alice", 20, 2048, 20, 100); err == nil {
-		t.Fatal("expected an error: LXD is unreachable")
+		t.Fatal("expected an error: Incus is unreachable")
 	}
 	u, err := d.GetUserByName("alice")
 	if err != nil {
@@ -41,10 +41,10 @@ func TestUpdateQuotasAndTrafficRollsBackTrafficOnResourceFailure(t *testing.T) {
 }
 
 // TestUpdateQuotasValidatesBeforeApplying ensures an invalid value is rejected
-// before anything touches LXD, so a bad submit never leaves a partial change.
+// before anything touches Incus, so a bad submit never leaves a partial change.
 func TestUpdateQuotasValidatesBeforeApplying(t *testing.T) {
 	c := cfg.Default()
-	c.LXD.Socket = "/nonexistent/vpsmgr-test.sock"
+	c.Incus.Socket = "/nonexistent/vpsmgr-test.sock"
 	d, err := db.Open(filepath.Join(t.TempDir(), "test.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -55,7 +55,7 @@ func TestUpdateQuotasValidatesBeforeApplying(t *testing.T) {
 	}
 	m := New(c, d)
 
-	// Disk shrink is rejected up front (no LXD call is made).
+	// Disk shrink is rejected up front (no Incus call is made).
 	if _, err := m.UpdateQuotas("bob", 20, 2048, 5); err == nil {
 		t.Fatal("expected disk-shrink error")
 	}

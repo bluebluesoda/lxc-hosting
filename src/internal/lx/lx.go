@@ -10,22 +10,27 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"os/exec"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/gorilla/websocket"
 )
 
-// Client talks to the local LXD daemon over its Unix socket using the REST
+// Client talks to the local Incus daemon over its Unix socket using the REST
 // API. All mutations go through async operations that are waited on, so the
-// caller sees the same blocking semantics the `lxc` CLI used to provide, but
-// without paying for a process spawn (and a snap bootstrap) on every call.
+// caller sees the same blocking semantics the `incus` CLI used to provide, but
+// without paying for a process spawn on every call.
+//
+// Exec is implemented over the API websocket transport (the `/1.0/instances/
+// <name>/exec` endpoint), so the panel never shells out to the `incus` CLI.
 type Client struct {
-	base string
-	http *http.Client
+	base   string
+	socket string
+	http   *http.Client
 }
 
-// New creates a client for the LXD Unix socket at path. The connection is
+// New creates a client for the Incus Unix socket at path. The connection is
 // lazy: nothing dials the socket until the first request.
 func New(socket string) *Client {
 	t := &http.Transport{
@@ -35,10 +40,19 @@ func New(socket string) *Client {
 	}
 	// Per-request cap guards against a hung daemon. The operation wait uses
 	// timeout=30 server-side, so 60s covers it with margin.
-	return &Client{base: "http://unix", http: &http.Client{Transport: t, Timeout: 60 * time.Second}}
+	return &Client{base: "http://unix", socket: socket, http: &http.Client{Transport: t, Timeout: 60 * time.Second}}
 }
 
-// ---- LXD REST API primitives ----
+// dialer returns a websocket dialer that talks to the same Unix socket.
+func (c *Client) dialer() *websocket.Dialer {
+	return &websocket.Dialer{
+		NetDialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+			return (&net.Dialer{}).DialContext(ctx, "unix", c.socket)
+		},
+	}
+}
+
+// ---- Incus REST API primitives ----
 
 type response struct {
 	Type       string          `json:"type"`
@@ -48,7 +62,7 @@ type response struct {
 	Metadata   json.RawMessage `json:"metadata"`
 }
 
-// do sends a request and returns the LXD response envelope. The envelope's
+// do sends a request and returns the Incus response envelope. The envelope's
 // "error" type is turned into a Go error.
 func (c *Client) do(method, path string, body any) (*response, error) {
 	var rd io.Reader
@@ -77,10 +91,10 @@ func (c *Client) do(method, path string, body any) (*response, error) {
 	}
 	var r response
 	if err := json.Unmarshal(raw, &r); err != nil {
-		return nil, fmt.Errorf("lxd %s %s: bad response: %w", method, path, err)
+		return nil, fmt.Errorf("incus %s %s: bad response: %w", method, path, err)
 	}
 	if r.Type == "error" {
-		return nil, fmt.Errorf("lxd %s %s: %s", method, path, r.Error)
+		return nil, fmt.Errorf("incus %s %s: %s", method, path, r.Error)
 	}
 	return &r, nil
 }
@@ -142,12 +156,12 @@ func (c *Client) wait(opPath string, timeout time.Duration) error {
 			return nil
 		}
 		if time.Now().After(deadline) {
-			return fmt.Errorf("lxd operation timed out after %v", timeout)
+			return fmt.Errorf("incus operation timed out after %v", timeout)
 		}
 	}
 }
 
-// ---- API payload shapes (subset of api.*, matching 5.21 LTS) ----
+// ---- API payload shapes (subset of the Incus API) ----
 
 type instance struct {
 	Name    string            `json:"name"`
@@ -193,6 +207,21 @@ type stateAction struct {
 	Action  string `json:"action"`
 	Force   bool   `json:"force,omitempty"`
 	Timeout int    `json:"timeout,omitempty"`
+}
+
+// execReq is the body of a POST /1.0/instances/<name>/exec call. wait-for-websocket
+// makes the operation respond with the fds (websocket secrets) in its metadata.
+type execReq struct {
+	Command            []string          `json:"command"`
+	WaitForWebsocket   bool              `json:"wait-for-websocket"`
+	Interactive        bool              `json:"interactive"`
+	Environment        map[string]string `json:"environment,omitempty"`
+	RecordOutput       bool              `json:"record-output,omitempty"`
+	User               uint32            `json:"user,omitempty"`
+	Group              uint32            `json:"group,omitempty"`
+	Cwd                string            `json:"cwd,omitempty"`
+	Width              int               `json:"width,omitempty"`
+	Height             int               `json:"height,omitempty"`
 }
 
 // ---- high-level helpers ----
@@ -356,12 +385,12 @@ func (c *Client) State(name string) (string, error) {
 
 // ---- mutations ----
 
-// NetworkSet sets one key=value config option on a managed LXD network
-// (e.g. lxdbr0). Used for IPv6 pass-through bridge configuration.
+// NetworkSet sets one key=value config option on a managed Incus network
+// (e.g. incusbr0). Used for IPv6 pass-through bridge configuration.
 func (c *Client) NetworkSet(network, kv string) error {
 	key, val, ok := strings.Cut(kv, "=")
 	if !ok {
-		return fmt.Errorf("lxd network set: invalid key=value %q", kv)
+		return fmt.Errorf("incus network set: invalid key=value %q", kv)
 	}
 	body := map[string]map[string]string{"config": {key: val}}
 	return c.patch("/1.0/networks/"+url.PathEscape(network), body, nil)
@@ -391,7 +420,7 @@ func (c *Client) Restart(name string) error {
 // now — no config knob; the admin panel renders it as "<used> / 4096".
 const DefaultProcessesLimit = "4096"
 
-// cpuLimitConfig maps a CPU quota in tenths of a core onto LXD config keys.
+// cpuLimitConfig maps a CPU quota in tenths of a core onto Incus config keys.
 // Whole cores set `limits.cpu=<n>`. Fractional quotas (0.1..0.9) pin the
 // container to a single core and add a time allowance
 // (`limits.cpu.allowance=<n>ms/100ms`) so it may only use that slice of the
@@ -441,7 +470,7 @@ func (c *Client) SetDisk(name string, gb int) error {
 	devices := it.Devices
 	root, ok := devices["root"]
 	if !ok {
-		return fmt.Errorf("lxd: instance %s has no root device", name)
+		return fmt.Errorf("incus: instance %s has no root device", name)
 	}
 	root["size"] = strconv.Itoa(gb) + "GiB"
 	devices["root"] = root
@@ -452,8 +481,8 @@ func (c *Client) SetDisk(name string, gb int) error {
 // EnsureEth0Options ensures eth0 carries the given options, patching the
 // device and restarting the container when any are missing (preserving a
 // stopped state). Returns true when a change was made. Patching a running
-// container hot-removes eth0, which trips an LXD netprio bug and can leave the
-// option unapplied, so the container is stopped first.
+// container hot-removes eth0, which trips an Incus netprio bug and can leave
+// the option unapplied, so the container is stopped first.
 func (c *Client) EnsureEth0Options(name string, opts map[string]string) (bool, error) {
 	var it instance
 	if err := c.get("/1.0/instances/"+url.PathEscape(name)+"?recursion=1", &it); err != nil {
@@ -461,7 +490,7 @@ func (c *Client) EnsureEth0Options(name string, opts map[string]string) (bool, e
 	}
 	eth0, ok := it.Devices["eth0"]
 	if !ok {
-		return false, fmt.Errorf("lxd: instance %s has no eth0 device", name)
+		return false, fmt.Errorf("incus: instance %s has no eth0 device", name)
 	}
 	changed := false
 	for k, v := range opts {
@@ -491,11 +520,10 @@ func (c *Client) EnsureEth0Options(name string, opts map[string]string) (bool, e
 
 // EnsureNicRateLimit sets (rate != "") or clears (rate == "") the eth0
 // bandwidth limit of a container. Changing only the limits.* keys is applied
-// LIVE by LXD via tc (htb qdisc on the host veth) — it does NOT reset the NIC
-// or restart the container (confirmed by the LXD team and verified live: the
-// container uptime is untouched and `tc qdisc show` gains the htb qdisc). An
-// instance PATCH replaces the entire devices map, so the device map is read
-// first and patched as a whole. Safe on running and stopped instances.
+// LIVE by Incus via tc (htb qdisc on the host veth) — it does NOT reset the NIC
+// or restart the container. An instance PATCH replaces the entire devices map,
+// so the device map is read first and patched as a whole. Safe on running and
+// stopped instances.
 func (c *Client) EnsureNicRateLimit(name, rate string) error {
 	var it instance
 	if err := c.get("/1.0/instances/"+url.PathEscape(name)+"?recursion=1", &it); err != nil {
@@ -503,7 +531,7 @@ func (c *Client) EnsureNicRateLimit(name, rate string) error {
 	}
 	eth0, ok := it.Devices["eth0"]
 	if !ok {
-		return fmt.Errorf("lxd: instance %s has no eth0 device", name)
+		return fmt.Errorf("incus: instance %s has no eth0 device", name)
 	}
 	if rate == "" {
 		delete(eth0, "limits.ingress")
@@ -518,8 +546,8 @@ func (c *Client) EnsureNicRateLimit(name, rate string) error {
 
 // NicRateLimit returns the eth0 rate limit currently applied to a container,
 // or "" when unset. Used after a process restart to rebuild the in-memory
-// throttle state from what LXD actually has, so a stale limit is not left on a
-// container that is back under quota.
+// throttle state from what Incus actually has, so a stale limit is not left on
+// a container that is back under quota.
 func (c *Client) NicRateLimit(name string) (string, error) {
 	var it instance
 	if err := c.get("/1.0/instances/"+url.PathEscape(name)+"?recursion=1", &it); err != nil {
@@ -527,7 +555,7 @@ func (c *Client) NicRateLimit(name string) (string, error) {
 	}
 	eth0, ok := it.Devices["eth0"]
 	if !ok {
-		return "", fmt.Errorf("lxd: instance %s has no eth0 device", name)
+		return "", fmt.Errorf("incus: instance %s has no eth0 device", name)
 	}
 	if r := eth0["limits.egress"]; r != "" {
 		return r, nil
@@ -564,7 +592,7 @@ func (c *Client) Delete(name string) error {
 // IPv4 (the eth0 device's ipv4.address), regardless of running state. Instances
 // created from a profile without an own eth0 override carry an empty IP but are
 // still returned, so the caller can detect name collisions too. Used to refuse
-// an add whose name or IP is already claimed by a live LXD instance.
+// an add whose name or IP is already claimed by a live Incus instance.
 func (c *Client) InstanceStaticIPs() (map[string]string, error) {
 	var insts []instance
 	if err := c.get("/1.0/instances?recursion=1", &insts); err != nil {
@@ -590,6 +618,37 @@ func (c *Client) ImageExists(alias string) (bool, error) {
 	return true, nil
 }
 
+// EnsureImage makes sure an image alias is available locally, pulling it from
+// its remote when needed. The alias may be a plain local alias ("debian/13")
+// or a remote-qualified one ("images:debian/13"). The remote-qualified form is
+// split into server+alias for the pull request (the Incus API does not accept
+// the "remote:" prefix in the source.alias field). No-op when the local image
+// already exists.
+func (c *Client) EnsureImage(alias string) error {
+	// Normalize a "remote:alias" form down to the local alias before checking,
+	// so an already-cached remote image is not re-pulled.
+	local := alias
+	if _, name, found := strings.Cut(alias, ":"); found {
+		local = name
+	}
+	if ok, _ := c.ImageExists(local); ok {
+		return nil
+	}
+	body := map[string]any{
+		"source": map[string]string{
+			"type":     "image",
+			"alias":    local,
+			"server":   "https://images.linuxcontainers.org",
+			"protocol": "simplestreams",
+		},
+	}
+	r, err := c.do(http.MethodPost, "/1.0/images", body)
+	if err != nil {
+		return err
+	}
+	return c.wait(r.Operation, 5*time.Minute)
+}
+
 // ImageAliases returns every image alias stored locally, e.g. to enumerate the
 // managed reinstall images (`vpsmgr/*-sshd`).
 func (c *Client) ImageAliases() ([]string, error) {
@@ -610,7 +669,7 @@ func (c *Client) ImageAliases() ([]string, error) {
 	return out, nil
 }
 
-// PoolResources returns the storage pool's total/used bytes from the LXD API.
+// PoolResources returns the storage pool's total/used bytes from the Incus API.
 func (c *Client) PoolResources(pool string) (total, used int64, err error) {
 	var res struct {
 		Space struct {
@@ -624,13 +683,13 @@ func (c *Client) PoolResources(pool string) (total, used int64, err error) {
 	return res.Space.Total, res.Space.Used, nil
 }
 
-// nicIsolation maps to LXD per-NIC security options that isolate a container's
-// eth0 from every other container on the bridge:
+// nicIsolation maps to Incus per-NIC security options that isolate a
+// container's eth0 from every other container on the bridge:
 //
 //   - security.port_isolation: the veth is an isolated bridge port, so no
 //     frames (unicast, multicast, broadcast) flow between containers at L2 —
 //     ARP/NDP spoofing, L2 sniffing and rogue DHCP/DNS servers all die here.
-//   - security.ipv4/ipv6_filtering: LXD installs bridge input rules dropping
+//   - security.ipv4/ipv6_filtering: Incus installs bridge input rules dropping
 //     ARP/NDP that claims an address the container doesn't own, protecting the
 //     host's own ARP/NDP cache from container-side poisoning.
 //
@@ -651,6 +710,11 @@ var nicIsolation = map[string]string{
 // Everything is submitted in ONE create request — the config, the eth0 static
 // addresses and the root size — so no follow-up device overrides are needed.
 func (c *Client) Launch(pool, bridge, name, image, ip, ipv6, block string, cpu, memMB, diskGB int) error {
+	// The create source takes a plain local alias; strip a "remote:" prefix
+	// (the image is ensured to be cached locally before Launch is called).
+	if _, local, found := strings.Cut(image, ":"); found {
+		image = local
+	}
 	eth0 := device{
 		"type":         "nic",
 		"nictype":      "bridged",
@@ -706,15 +770,14 @@ func (c *Client) WaitReady(name string, timeout time.Duration) error {
 	return fmt.Errorf("container %s not ready within %v", name, timeout)
 }
 
-// ExecSH runs a shell script inside a container as root. Kept on the `lxc`
-// CLI: exec needs a websocket transport, and the scripted calls (provisioning,
-// the readiness probe) are infrequent relative to the panel's polling loops.
+// ExecSH runs a shell script inside a container as root over the exec API
+// (websocket transport), so no `incus` CLI process is ever spawned.
 func (c *Client) ExecSH(name, script string) (string, error) {
-	out, err := exec.Command("lxc", "exec", name, "--", "/bin/sh", "-c", script).CombinedOutput()
+	out, err := c.Exec(name, []string{"/bin/sh", "-c", script}, "", time.Minute)
 	if err != nil {
-		return "", fmt.Errorf("lxc exec %s: %s", name, strings.TrimSpace(string(out)))
+		return "", fmt.Errorf("incus exec %s: %s", name, strings.TrimSpace(err.Error()))
 	}
-	return strings.TrimSpace(string(out)), nil
+	return strings.TrimSpace(out), nil
 }
 
 // RunInitScript writes a user's custom init script into the container and runs
@@ -732,16 +795,161 @@ func (c *Client) ExecSH(name, script string) (string, error) {
 //   - the exec itself is bounded by a timeout, so even a wedged container
 //     cannot hang the call
 func (c *Client) RunInitScript(name, script string) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, "lxc", "exec", name, "--", "/bin/sh", "-c",
-		initScriptCmd(script, "/root/vpsmgr-init.sh", "/var/log/vpsmgr-init.log"))
-	cmd.Stdin = strings.NewReader(script)
-	out, err := cmd.CombinedOutput()
+	_, err := c.Exec(name, []string{"/bin/sh", "-c", initScriptCmd(script, "/root/vpsmgr-init.sh", "/var/log/vpsmgr-init.log")},
+		script, 30*time.Second)
 	if err != nil {
-		return fmt.Errorf("lxc exec %s: %s", name, strings.TrimSpace(string(out)))
+		return fmt.Errorf("incus exec %s: %s", name, strings.TrimSpace(err.Error()))
 	}
 	return nil
+}
+
+// Exec runs command inside the container over the exec API websocket transport
+// and returns its combined stdout (stderr is folded in on error). stdin, when
+// non-empty, is written to the child's stdin before it is closed (EOF).
+func (c *Client) Exec(name string, command []string, stdin string, timeout time.Duration) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	req := execReq{
+		Command:          command,
+		WaitForWebsocket: true,
+		Interactive:      false,
+		Environment:      map[string]string{"TERM": "dumb"},
+		User:             0,
+		Group:            0,
+	}
+
+	// POST the exec operation. With wait-for-websocket the response carries the
+	// websocket secrets (fds) in the operation metadata.
+	body, err := json.Marshal(req)
+	if err != nil {
+		return "", err
+	}
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		c.base+"/1.0/instances/"+url.PathEscape(name)+"/exec", bytes.NewReader(body))
+	if err != nil {
+		return "", err
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	resp, err := c.http.Do(httpReq)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return "", err
+	}
+	var op struct {
+		Type       string `json:"type"`
+		Operation  string `json:"operation"`
+		Error      string `json:"error"`
+		StatusCode int    `json:"status_code"`
+		Metadata   struct {
+			Status string `json:"status"`
+			Err    string `json:"err"`
+			Inner  struct {
+				Fds map[string]string `json:"fds"`
+			} `json:"metadata"`
+		} `json:"metadata"`
+	}
+	if err := json.Unmarshal(raw, &op); err != nil {
+		return "", fmt.Errorf("incus exec %s: bad response: %w", name, err)
+	}
+	if op.Type == "error" {
+		return "", errors.New(op.Error)
+	}
+	if op.Operation == "" {
+		return "", fmt.Errorf("incus exec %s: no operation returned", name)
+	}
+	if len(op.Metadata.Inner.Fds) == 0 {
+		return "", fmt.Errorf("incus exec %s: no websocket fds in response", name)
+	}
+	opID := strings.TrimPrefix(op.Operation, "/1.0/operations/")
+	wsURL := func(secret string) string {
+		return "ws://unix/1.0/operations/" + opID + "/websocket?secret=" + secret
+	}
+
+	dialer := c.dialer()
+	conns := make(map[string]*websocket.Conn, len(op.Metadata.Inner.Fds))
+	for k, secret := range op.Metadata.Inner.Fds {
+		ws, _, err := dialer.DialContext(ctx, wsURL(secret), nil)
+		if err != nil {
+			return "", fmt.Errorf("incus exec %s: connect fd %s: %w", name, k, err)
+		}
+		conns[k] = ws
+		defer ws.Close()
+	}
+
+	stdout, ok1 := conns["1"]
+	stderr, ok2 := conns["2"]
+	control := conns["control"]
+	stdinConn, ok0 := conns["0"]
+	if !ok1 || !ok2 {
+		return "", fmt.Errorf("incus exec %s: missing stdout/stderr fds", name)
+	}
+
+	// Copy stdout and stderr concurrently.
+	type stream struct {
+		text string
+		err  error
+	}
+	readLoop := func(ws *websocket.Conn) chan stream {
+		ch := make(chan stream, 1)
+		go func() {
+			var sb strings.Builder
+			for {
+				_, msg, err := ws.ReadMessage()
+				if err != nil {
+					ch <- stream{sb.String(), err}
+					return
+				}
+				sb.Write(msg)
+			}
+		}()
+		return ch
+	}
+	stdoutCh := readLoop(stdout)
+	stderrCh := readLoop(stderr)
+	// Drain the control channel if present so the command can finish.
+	if control != nil {
+		go func() {
+			for {
+				if _, _, err := control.ReadMessage(); err != nil {
+					return
+				}
+			}
+		}()
+	}
+
+	// All fds are connected now, so the command has been spawned. Send stdin
+	// (binary frame — Incus copies the raw bytes to the child's stdin) and
+	// close the socket to signal EOF. For an empty stdin just closing is the
+	// EOF.
+	if ok0 {
+		if stdin != "" {
+			_ = stdinConn.WriteMessage(websocket.BinaryMessage, []byte(stdin))
+		}
+		_ = stdinConn.Close()
+	}
+
+	// Wait for stdout EOF (command finished).
+	var outText, errText string
+	select {
+	case s := <-stdoutCh:
+		outText = s.text
+	case <-ctx.Done():
+		return "", fmt.Errorf("incus exec %s: %v", name, ctx.Err())
+	}
+	select {
+	case s := <-stderrCh:
+		errText = s.text
+	default:
+	}
+	if errText != "" {
+		return "", errors.New(strings.TrimSpace(errText))
+	}
+	return outText, nil
 }
 
 // initScriptCmd builds the container-side shell command that delivers script to

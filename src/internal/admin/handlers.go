@@ -256,7 +256,7 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleOverview renders the admin dashboard. It performs one full batch
-// refresh (a handful of lxc calls) on every manual page load; there is no
+// refresh (a handful of incus calls) on every manual page load; there is no
 // automatic polling.
 func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
 	d := s.buildPageData("", "")

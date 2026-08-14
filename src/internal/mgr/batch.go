@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"fmt"
 	"os"
-	"os/exec"
 	"strconv"
 	"strings"
 	"sync"
@@ -33,12 +32,12 @@ type HostStats struct {
 	RebootNeeded bool
 }
 
-// PoolRemainingBytes returns the pool's total/used/available bytes via the LXD
+// PoolRemainingBytes returns the pool's total/used/available bytes via the Incus
 // storage-pool resources API (one REST call, exact byte counts).
 func (m *Manager) PoolRemainingBytes() (total, used, avail int64, err error) {
-	total, used, err = m.lx.PoolResources(m.cfg.LXD.Pool)
+	total, used, err = m.lx.PoolResources(m.cfg.Incus.Pool)
 	if err != nil {
-		return 0, 0, 0, fmt.Errorf("lxd storage resources %s: %w", m.cfg.LXD.Pool, err)
+		return 0, 0, 0, fmt.Errorf("lxd storage resources %s: %w", m.cfg.Incus.Pool, err)
 	}
 	avail = total - used
 	if avail < 0 {
@@ -48,7 +47,7 @@ func (m *Manager) PoolRemainingBytes() (total, used, avail int64, err error) {
 }
 
 // HostStats gathers host memory/swap from /proc/meminfo, pool space from
-// LXD and uptime from /proc/uptime. Pool / uptime failures are non-fatal
+// Incus and uptime from /proc/uptime. Pool / uptime failures are non-fatal
 // (zeroed) so the panel still renders the available sections.
 func (m *Manager) HostStats() HostStats {
 	hs := HostStats{}
@@ -131,11 +130,11 @@ type UserStatus struct {
 	Procs    int64 // live process count (0 when stopped / unavailable)
 }
 
-// BatchUsers returns live status for every user with a MINIMAL number of LXD
+// BatchUsers returns live status for every user with a MINIMAL number of Incus
 // calls regardless of user count:
-//   - 1 x `lxc list --format=json` (SampleTraffic, also freshens monthly totals)
-//   - 2 x `lxc list --format=json` ~1s apart (CPU% delta, same algorithm as List)
-//   - 1 x `lxc exec <name> -- df -k /` per RUNNING container for real disk usage
+//   - 1 x instances list (SampleTraffic, also freshens monthly totals)
+//   - 2 x instances list ~1s apart (CPU% delta, same algorithm as List)
+//   - 1 x exec `df -k /` per RUNNING container for real disk usage
 //
 // The per-container disk probe runs concurrently so the total time is bounded
 // by the slowest container, not the count.
@@ -167,7 +166,7 @@ func (m *Manager) BatchUsers() ([]*UserStatus, error) {
 		wg.Add(1)
 		go func(name string) {
 			defer wg.Done()
-			if kb, err := containerDiskKB(name); err == nil && kb >= 0 {
+			if kb, err := m.containerDiskKB(name); err == nil && kb >= 0 {
 				diskMu.Lock()
 				disk[name] = kb * 1024
 				diskMu.Unlock()
@@ -208,16 +207,17 @@ func (m *Manager) BatchUsers() ([]*UserStatus, error) {
 }
 
 // containerDiskKB returns the used kilobytes of the container's root
-// filesystem as reported by `df -k /` inside the container. The first data row
-// of df carries the mount point (/) in its LAST column, the total 1K-blocks in
-// the second and the Used KB in the THIRD; the filesystem name (e.g.
-// vpsmgr/containers/test) is not a reliable marker across storage drivers.
-func containerDiskKB(name string) (int64, error) {
-	out, err := exec.Command("lxc", "exec", name, "--", "df", "-k", "/").CombinedOutput()
+// filesystem as reported by `df -k /` inside the container (over the exec
+// API). The first data row of df carries the mount point (/) in its LAST
+// column, the total 1K-blocks in the second and the Used KB in the THIRD; the
+// filesystem name (e.g. vpsmgr/containers/test) is not a reliable marker
+// across storage drivers.
+func (m *Manager) containerDiskKB(name string) (int64, error) {
+	out, err := m.lx.ExecSH(name, "df -k /")
 	if err != nil {
 		return -1, err
 	}
-	sc := bufio.NewScanner(strings.NewReader(string(out)))
+	sc := bufio.NewScanner(strings.NewReader(out))
 	for sc.Scan() {
 		f := strings.Fields(sc.Text())
 		if len(f) >= 6 && f[0] != "Filesystem" && f[len(f)-1] == "/" {

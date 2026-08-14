@@ -322,12 +322,12 @@ func (s *Server) handleInitScript(w http.ResponseWriter, r *http.Request) {
 
 // handleImages returns the OS images available for reinstall. It is fetched
 // lazily when the user opens the reinstall dialog, not on every page load, so
-// an LXD image listing only happens when actually needed.
+// an Incus image listing only happens when actually needed.
 func (s *Server) handleImages(w http.ResponseWriter, r *http.Request) {
 	imgs := s.mgr.Images()
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(struct {
 		Images  []mgr.ManagedImage `json:"images"`
 		Default string             `json:"default"`
-	}{imgs, s.cfg.LXD.Image})
+	}{imgs, s.cfg.Incus.Image})
 }

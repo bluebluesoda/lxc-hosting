@@ -278,7 +278,7 @@ func (s *Server) buildData(u *db.User, msg, errMsg string) pageData {
 		Msg:        msg,
 		Err:        errMsg,
 	}
-	// One `lxc list` call only for the container status (must be live).
+	// One `incus list` call only for the container status (must be live).
 	// Traffic is read from the DB — the background sampler writes it every 60s.
 	st, err := s.mgr.State(u.Name)
 	if err != nil {
@@ -288,7 +288,7 @@ func (s *Server) buildData(u *db.User, msg, errMsg string) pageData {
 		d.IP = u.IP
 	}
 	if s.cfg.IPv6Enabled() {
-		if ipv6, _ := s.mgr.IPv6Addr(u.Name); ipv6 != "" { // pure computation, no lxc call
+		if ipv6, _ := s.mgr.IPv6Addr(u.Name); ipv6 != "" { // pure computation, no incus call
 			d.IPv6 = ipv6
 		}
 		if b, _ := s.mgr.IPv6Block(u.Name); b != nil {

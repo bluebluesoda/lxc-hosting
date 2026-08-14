@@ -26,20 +26,29 @@ import (
 	"vpsmgr/internal/mgr"
 	"vpsmgr/internal/panel"
 	"vpsmgr/internal/pw"
+	"vpsmgr/internal/su"
 	"vpsmgr/internal/ver"
 )
 
 const panelUnit = `# Managed by vpsmgr — installed file, do not edit by hand.
 # Changes are overwritten on the next install.
 [Unit]
-Description=vpsmgr panel
-After=network-online.target
+Description=vps panel
+After=network-online.target incus.service
 Wants=network-online.target
 [Service]
 Type=simple
+# Unprivileged: the panel talks to Incus over its group-readable socket
+# (incus-admin) and escalates only the exact whitelisted commands via sudo.
+User=vps
+Group=vps
 ExecStart=/usr/local/bin/vps serve
 Restart=always
 RestartSec=3
+# The panel writes /etc/vpsmgr (config/db/certs) and /etc/traefik/dynamic.
+# /etc/vpsmgr is chowned to vps at install; ProtectSystem is off so those
+# writes work while the rest of the host stays untouched by policy.
+NoNewPrivileges=false
 [Install]
 WantedBy=multi-user.target
 `
@@ -47,13 +56,15 @@ WantedBy=multi-user.target
 const nftUnit = `# Managed by vpsmgr — installed file, do not edit by hand.
 # Changes are overwritten on the next install.
 [Unit]
-Description=vpsmgr nftables rules
-After=network-online.target lxd.service
+Description=vps nftables rules
+After=network-online.target incus.service
 Wants=network-online.target
-Before=vpsmgr-panel.service
+Before=vps.service
 [Service]
 Type=oneshot
-ExecStart=/bin/sh -c 'nft add table inet vpsmgr 2>/dev/null; exec nft -f /etc/vpsmgr/nftables.conf'
+# The config file starts with a delete-table line so the whole ruleset reloads
+# as ONE atomic batch (a failed rule keeps the previous table intact).
+ExecStart=/usr/sbin/nft -f /etc/vpsmgr/nftables.conf
 RemainAfterExit=yes
 [Install]
 WantedBy=multi-user.target
@@ -62,10 +73,10 @@ WantedBy=multi-user.target
 const ipv6Unit = `# Managed by vpsmgr — installed file, do not edit by hand.
 # Changes are overwritten on the next install.
 [Unit]
-Description=vpsmgr IPv6 pass-through routes
-After=network-online.target lxd.service vpsmgr-nft.service
+Description=vps IPv6 pass-through routes
+After=network-online.target incus.service vps-nft.service
 Wants=network-online.target
-Before=vpsmgr-panel.service
+Before=vps.service
 [Service]
 Type=oneshot
 ExecStart=/usr/local/bin/vps ipv6-reapply
@@ -123,7 +134,7 @@ func main() {
 		err = cmdAdminPasswd()
 	case "ipv6-reapply":
 		// Re-attach IPv6 routes/proxy_ndp for all existing containers.
-		// Run by the vpsmgr-ipv6.service boot unit and `vps install`.
+		// Run by the vps-ipv6.service boot unit and `vps install`.
 		err = cmdIPv6Reapply()
 	case "note-version":
 		if len(os.Args) != 3 {
@@ -267,11 +278,11 @@ func cmdInstall() error {
 	if err := os.MkdirAll(cfg.DefaultDataDir, 0o755); err != nil {
 		return err
 	}
-	// LXD's security.ipv6_filtering (enabled on every container's eth0) only
-	// works while the br_netfilter kernel module is loaded, and LXD does NOT
+	// Incus's security.ipv6_filtering (enabled on every container's eth0) only
+	// works while the br_netfilter kernel module is loaded, and Incus does NOT
 	// load it itself: a container with the option simply refuses to boot
 	// without it. Load it BEFORE any container is created/hardened, and persist
-	// it in /etc/modules-load.d so it is present at boot, before LXD starts any
+	// it in /etc/modules-load.d so it is present at boot, before Incus starts any
 	// container. Harmless no-op where the module is built into the kernel.
 	if err := os.MkdirAll("/etc/modules-load.d", 0o755); err != nil {
 		return err
@@ -301,7 +312,7 @@ func cmdInstall() error {
 	}
 	// Immutable fields are enforced from the DB snapshot: refuse a config that
 	// drifted from install (first install / pre-snapshot upgrade freezes the
-	// current values as the baseline). Done before any LXD/nft mutation.
+	// current values as the baseline). Done before any Incus/nft mutation.
 	snap, ok, err := d.GetSetting(db.SettingImmutableSnapshot)
 	if err != nil {
 		d.Close()
@@ -349,6 +360,11 @@ func cmdInstall() error {
 		return fmt.Errorf("routed ipv6: %w", err)
 	}
 	d.Close()
+	// Unprivileged panel: create the 'vps' service user (if missing), hand it
+	// the writable dirs (/etc/vpsmgr, /etc/traefik/dynamic) and the sudoers
+	// whitelist, and add it to incus-admin so the socket API is fully usable
+	// without root. Idempotent on adoption.
+	ensureVPSUser(c)
 	f := fw.New(c)
 	if err := f.WriteMain(); err != nil {
 		return err
@@ -356,31 +372,31 @@ func cmdInstall() error {
 	if err := f.Reload(); err != nil {
 		return err
 	}
-	if err := writeUnit("vpsmgr-panel.service", panelUnit); err != nil {
+	if err := writeUnit("vps.service", panelUnit); err != nil {
 		return err
 	}
-	if err := writeUnit("vpsmgr-nft.service", nftUnit); err != nil {
+	if err := writeUnit("vps-nft.service", nftUnit); err != nil {
 		return err
 	}
 	// IPv6 pass-through boot unit (re-applies routes/proxy after reboot).
 	if c.IPv6Enabled() {
-		if err := writeUnit("vpsmgr-ipv6.service", ipv6Unit); err != nil {
+		if err := writeUnit("vps-ipv6.service", ipv6Unit); err != nil {
 			return err
 		}
 	}
 	if out, err := exec.Command("systemctl", "daemon-reload").CombinedOutput(); err != nil {
 		return fmt.Errorf("daemon-reload: %s", strings.TrimSpace(string(out)))
 	}
-	if out, err := exec.Command("systemctl", "enable", "--now", "vpsmgr-nft.service").CombinedOutput(); err != nil {
-		return fmt.Errorf("enable vpsmgr-nft: %s", strings.TrimSpace(string(out)))
+	if out, err := exec.Command("systemctl", "enable", "--now", "vps-nft.service").CombinedOutput(); err != nil {
+		return fmt.Errorf("enable vps-nft: %s", strings.TrimSpace(string(out)))
 	}
 	if c.IPv6Enabled() {
-		if out, err := exec.Command("systemctl", "enable", "--now", "vpsmgr-ipv6.service").CombinedOutput(); err != nil {
-			return fmt.Errorf("enable vpsmgr-ipv6: %s", strings.TrimSpace(string(out)))
+		if out, err := exec.Command("systemctl", "enable", "--now", "vps-ipv6.service").CombinedOutput(); err != nil {
+			return fmt.Errorf("enable vps-ipv6: %s", strings.TrimSpace(string(out)))
 		}
 	}
-	if out, err := exec.Command("systemctl", "enable", "--now", "vpsmgr-panel.service").CombinedOutput(); err != nil {
-		return fmt.Errorf("enable vpsmgr-panel: %s", strings.TrimSpace(string(out)))
+	if out, err := exec.Command("systemctl", "enable", "--now", "vps.service").CombinedOutput(); err != nil {
+		return fmt.Errorf("enable vps: %s", strings.TrimSpace(string(out)))
 	}
 	// Enforce the IPv4 inbound policy: per-user DNAT rules + traefik state
 	// (v4_forward off = IPv6-only, traefik disabled). Idempotent.
@@ -468,6 +484,84 @@ func writeUnit(name, content string) error {
 	return os.Rename(tmp, p)
 }
 
+// ensureVPSUser sets up the unprivileged 'vps' account the panel daemon runs
+// as. Idempotent, called by `vps install`:
+//   - creates the system user if missing
+//   - chowns /etc/vpsmgr and /etc/traefik/dynamic so the panel can write its
+//     config, db, certs and domain files without root
+//   - adds vps to the incus-admin group so the Incus Unix-socket API is fully
+//     usable (the socket is group-rw by incus-admin)
+//   - installs the sudoers whitelist granting ONLY the exact privileged
+//     commands the panel needs (nft reload, traefik/self systemctl, IPv6
+//     route/neigh/addr, sysctl forwarding, ndppd control)
+func ensureVPSUser(c *cfg.Config) {
+	// 1. System user.
+	if out, err := exec.Command("id", "-u", "vps").CombinedOutput(); err != nil {
+		_ = exec.Command("useradd", "--system", "--no-create-home", "--home-dir",
+			"/nonexistent", "--shell", "/usr/sbin/nologin", "vps").Run()
+		_ = out
+	}
+	// 2. Writable dirs (best-effort; a fresh install created them above).
+	_ = exec.Command("chown", "-R", "vps:vps", c.DataDir()).Run()
+	_ = exec.Command("chown", "-R", "vps:vps", c.TraefikDir()).Run()
+	_ = os.MkdirAll(c.TraefikDir(), 0o755)
+	_ = exec.Command("chown", "vps:vps", c.TraefikDir()).Run()
+	// 3. incus-admin group membership (the Incus socket's owning group).
+	_ = exec.Command("usermod", "-aG", "incus-admin", "vps").Run()
+	// 4. sudoers whitelist.
+	ensureSudoers()
+}
+
+// ensureSudoers installs the panel's sudoers whitelist. The file is embedded
+// here (rather than read from disk) so `vps install` is self-contained after
+// the binary is in place.
+func ensureSudoers() {
+	const sudoers = `# Managed by vpsmgr — installed file, do not edit by hand.
+# Changes are overwritten on the next install.
+#
+# The vps panel runs as the unprivileged 'vps' user. These are the ONLY
+# root-privileged commands it may run, each pinned to its exact invocation.
+vps ALL=(root) NOPASSWD: /usr/sbin/nft add table inet vpsmgr
+vps ALL=(root) NOPASSWD: /usr/sbin/nft -f /etc/vpsmgr/nftables.conf
+vps ALL=(root) NOPASSWD: /usr/bin/systemctl enable traefik.service
+vps ALL=(root) NOPASSWD: /usr/bin/systemctl disable traefik.service
+vps ALL=(root) NOPASSWD: /usr/bin/systemctl start traefik.service
+vps ALL=(root) NOPASSWD: /usr/bin/systemctl stop traefik.service
+vps ALL=(root) NOPASSWD: /usr/bin/systemctl is-active traefik.service
+vps ALL=(root) NOPASSWD: /usr/bin/systemctl restart vps.service
+vps ALL=(root) NOPASSWD: /usr/bin/systemctl is-active vps.service
+vps ALL=(root) NOPASSWD: /sbin/ip -6 route del *
+vps ALL=(root) NOPASSWD: /sbin/ip -6 route add *
+vps ALL=(root) NOPASSWD: /sbin/ip -6 route replace *
+vps ALL=(root) NOPASSWD: /sbin/ip -6 neigh del proxy *
+vps ALL=(root) NOPASSWD: /sbin/ip -6 neigh add proxy *
+vps ALL=(root) NOPASSWD: /sbin/ip -6 addr replace *
+vps ALL=(root) NOPASSWD: /sbin/sysctl -w net.ipv6.conf.all.forwarding=1
+vps ALL=(root) NOPASSWD: /usr/sbin/service ndppd restart
+vps ALL=(root) NOPASSWD: /usr/sbin/service ndppd start
+vps ALL=(root) NOPASSWD: /usr/sbin/service ndppd stop
+vps ALL=(root) NOPASSWD: /usr/bin/pkill -x ndppd
+vps ALL=(root) NOPASSWD: /usr/sbin/ndppd -d -p /var/run/ndppd.pid
+`
+	if err := os.MkdirAll("/etc/sudoers.d", 0o750); err != nil {
+		return
+	}
+	tmp := "/etc/sudoers.d/vps.tmp"
+	if err := os.WriteFile(tmp, []byte(sudoers), 0o440); err != nil {
+		return
+	}
+	// Validate with visudo -c before activating; a syntax error must never
+	// brick sudo for the whole host.
+	if out, err := exec.Command("visudo", "-c", "-f", tmp).CombinedOutput(); err != nil {
+		_ = os.Remove(tmp)
+		log.Printf("warn: sudoers whitelist not installed (%s)", strings.TrimSpace(string(out)))
+		return
+	}
+	_ = os.Rename(tmp, "/etc/sudoers.d/vps")
+	_ = exec.Command("chown", "root:root", "/etc/sudoers.d/vps").Run()
+	_ = exec.Command("chmod", "0440", "/etc/sudoers.d/vps").Run()
+}
+
 func cmdServe() error {
 	c, err := cfg.Load()
 	if err != nil {
@@ -532,7 +626,7 @@ func pathUnder(path, prefix string) bool {
 // sampleTrafficLoop runs the monthly traffic collector until the process ends.
 // After every sample it enforces traffic quotas: users over their monthly
 // limit get their NIC rate-limited to 1Mbps, users back under (e.g. monthly
-// rollover) get the limit removed. LXD applies the NIC limits live (tc), so no
+// rollover) get the limit removed. Incus applies the NIC limits live (tc), so no
 // container restart is involved.
 func sampleTrafficLoop(m *mgr.Manager) {
 	if err := m.SampleTraffic(); err != nil {
@@ -865,23 +959,24 @@ func confirmApply(c *cfg.Config, f *cfg.Field, key string) (bool, error) {
 	return inter.Confirm(fmt.Sprintf("set %s to %q — this %s. continue?", key, cfg.FieldValue(c, key), what), false)
 }
 
-// restartPanel restarts the vpsmgr-panel systemd service and waits for it to
-// come back. It refuses (returns an error) when the panel is not running as an
+// restartPanel restarts the vps systemd service and waits for it to come
+// back. The panel runs unprivileged, so the restart goes through the sudoers
+// whitelist. It refuses (returns an error) when the panel is not running as an
 // active systemd service — in that case the operator must restart it manually.
 func restartPanel() error {
-	if out, err := exec.Command("systemctl", "is-active", "--quiet", "vpsmgr-panel.service").CombinedOutput(); err != nil {
-		return fmt.Errorf("vpsmgr-panel.service is not an active systemd service (%s) — restart the panel manually", strings.TrimSpace(string(out)))
+	if _, err := su.Run("/usr/bin/systemctl", "is-active", "--quiet", "vps.service"); err != nil {
+		return fmt.Errorf("vps.service is not an active systemd service (%v) — restart the panel manually", err)
 	}
-	if err := exec.Command("systemctl", "restart", "vpsmgr-panel.service").Run(); err != nil {
-		return fmt.Errorf("systemctl restart vpsmgr-panel failed: %w", err)
+	if _, err := su.Run("/usr/bin/systemctl", "restart", "vps.service"); err != nil {
+		return fmt.Errorf("systemctl restart vps failed: %w", err)
 	}
 	for i := 0; i < 20; i++ {
-		if exec.Command("systemctl", "is-active", "--quiet", "vpsmgr-panel.service").Run() == nil {
+		if _, err := su.Run("/usr/bin/systemctl", "is-active", "--quiet", "vps.service"); err == nil {
 			return nil
 		}
 		time.Sleep(300 * time.Millisecond)
 	}
-	return fmt.Errorf("panel did not come back up after restart — check vpsmgr-panel.service")
+	return fmt.Errorf("panel did not come back up after restart — check vps.service")
 }
 
 // listenFree reports whether addr (e.g. ":8443") is free to bind.

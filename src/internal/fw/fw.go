@@ -3,11 +3,11 @@ package fw
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 
 	"vpsmgr/internal/cfg"
+	"vpsmgr/internal/su"
 )
 
 type Firewall struct {
@@ -108,11 +108,13 @@ func (f *Firewall) RemoveUser(name string) error {
 // inside the batch would fail it; `nft add table` is idempotent, so ensure the
 // table exists first. The batch then delete-and-recreates atomically: any rule
 // error rolls the whole batch back and the previous table stays intact.
+//
+// nft needs CAP_NET_ADMIN, so the reload runs through the sudoers whitelist
+// (the panel daemon is unprivileged; only this exact command is allowed).
 func (f *Firewall) Reload() error {
-	_ = exec.Command("nft", "add", "table", "inet", "vpsmgr").Run()
-	apply := exec.Command("nft", "-f", f.MainPath())
-	if out, err := apply.CombinedOutput(); err != nil {
-		return fmt.Errorf("nft -f: %s", strings.TrimSpace(string(out)))
+	_, _ = su.Run("/usr/sbin/nft", "add", "table", "inet", "vpsmgr")
+	if _, err := su.Run("/usr/sbin/nft", "-f", f.MainPath()); err != nil {
+		return err
 	}
 	return nil
 }

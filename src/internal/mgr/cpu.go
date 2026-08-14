@@ -8,7 +8,7 @@ import (
 )
 
 // CPU quotas are stored as tenths of a core: 1..9 mean 0.1..0.9 cores, and
-// 10, 20, ... mean whole cores. A fractional quota is enforced in LXD as
+// 10, 20, ... mean whole cores. A fractional quota is enforced in Incus as
 // `limits.cpu=1` plus a time allowance (`limits.cpu.allowance=<n>ms/100ms`),
 // i.e. the container is pinned to a single core and may only use a slice of
 // it; whole cores keep the plain `limits.cpu=<n>` limit.

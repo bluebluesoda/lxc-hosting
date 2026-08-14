@@ -14,7 +14,7 @@ import (
 // TrafficInterval is how often the background sampler runs.
 const TrafficInterval = 60 * time.Second
 
-// SampleTraffic reads the current LXD network counters of every running
+// SampleTraffic reads the current Incus network counters of every running
 // container and advances each user's monthly transfer totals. Counter resets
 // (container restart/reinstall) and the monthly rollover (period key change)
 // are handled inside the DB update, so concurrent samplers (background
@@ -102,7 +102,7 @@ func (m *Manager) IsThrottled(name string) bool {
 // EnforceTrafficLimits applies or removes the NIC rate limit for every user
 // based on their monthly quota. Called by the 60s sampler only (single
 // goroutine), so two containers crossing the limit in the same pass are both
-// handled without racing. LXD applies NIC limits live via tc (no container
+// handled without racing. Incus applies NIC limits live via tc (no container
 // restart), and the throttled map makes the call idempotent between passes.
 func (m *Manager) EnforceTrafficLimits() error {
 	m.limitMu.Lock()

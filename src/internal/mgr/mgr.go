@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"math/big"
 	"net"
-	"os/exec"
 	"regexp"
 	"strconv"
 	"strings"
@@ -18,11 +17,12 @@ import (
 	"vpsmgr/internal/fw"
 	"vpsmgr/internal/lx"
 	"vpsmgr/internal/pw"
+	"vpsmgr/internal/su"
 	"vpsmgr/internal/tfx"
 )
 
-// nameRe follows LXD instance-name rules (lowercase letters/digits/hyphens,
-// max 63, no trailing hyphen — LXD rejects "abc-") plus a leading-letter
+// nameRe follows Incus instance-name rules (lowercase letters/digits/hyphens,
+// max 63, no trailing hyphen — Incus rejects "abc-") plus a leading-letter
 // requirement so a username can never start with a digit.
 var nameRe = regexp.MustCompile(`^[a-z]([a-z0-9-]*[a-z0-9])?$`)
 
@@ -40,14 +40,14 @@ type Manager struct {
 	opMu sync.Mutex
 
 	// throttled tracks which containers currently carry a traffic throttle
-	// (name -> on), so EnforceTrafficLimits only touches LXD on state changes.
+	// (name -> on), so EnforceTrafficLimits only touches Incus on state changes.
 	// limitMu guards it: the 60s sampler writes, the panel reads via
-	// IsThrottled. Re-applying a limit after a panel restart is harmless (LXD
+	// IsThrottled. Re-applying a limit after a panel restart is harmless (Incus
 	// applies NIC limits live, no container restart).
 	limitMu   sync.Mutex
 	throttled map[string]bool
 
-	// sampleMu serializes traffic sampling. LXD counters are read and the DB
+	// sampleMu serializes traffic sampling. Incus counters are read and the DB
 	// delta applied in one critical section so a slower, out-of-order sampler
 	// (the 60s goroutine vs a panel-triggered sample) can never write a lower
 	// counter after a higher one was recorded — the SQL reset path would then
@@ -56,7 +56,7 @@ type Manager struct {
 }
 
 func New(c *cfg.Config, d *db.DB) *Manager {
-	return &Manager{cfg: c, db: d, lx: lx.New(c.LXD.Socket), fw: fw.New(c), tfx: tfx.New(c)}
+	return &Manager{cfg: c, db: d, lx: lx.New(c.Incus.Socket), fw: fw.New(c), tfx: tfx.New(c)}
 }
 
 func ValidateName(name string) error {
@@ -141,9 +141,9 @@ func (m *Manager) allocSSHPort() (int, error) {
 }
 
 // PoolUsage returns the used ratio (0..1) of the storage pool as reported by
-// LXD, or -1 if it cannot be determined.
+// Incus, or -1 if it cannot be determined.
 func (m *Manager) PoolUsage() (float64, error) {
-	total, used, err := m.lx.PoolResources(m.cfg.LXD.Pool)
+	total, used, err := m.lx.PoolResources(m.cfg.Incus.Pool)
 	if err != nil {
 		return -1, nil
 	}
@@ -158,11 +158,11 @@ func (m *Manager) PoolUsage() (float64, error) {
 
 // imageName returns the prebuilt image alias if it exists, else the fallback.
 func (m *Manager) imageName() (string, error) {
-	ok, _ := m.lx.ImageExists(m.cfg.LXD.Image)
+	ok, _ := m.lx.ImageExists(m.cfg.Incus.Image)
 	if ok {
-		return m.cfg.LXD.Image, nil
+		return m.cfg.Incus.Image, nil
 	}
-	return m.cfg.LXD.ImageFallback, nil
+	return m.cfg.Incus.ImageFallback, nil
 }
 
 // rootPassScript sets the container root password via chpasswd. The password
@@ -273,7 +273,7 @@ func (m *Manager) Add(name string, opt AddOptions) (*Result, error) {
 		return nil, err
 	}
 	if usage >= 0.9 {
-		return nil, fmt.Errorf("storage pool %s is %.0f%% used (>= 90%%), refusing to create", m.cfg.LXD.Pool, usage*100)
+		return nil, fmt.Errorf("storage pool %s is %.0f%% used (>= 90%%), refusing to create", m.cfg.Incus.Pool, usage*100)
 	}
 	image, err := m.imageName()
 	if err != nil {
@@ -294,16 +294,22 @@ func (m *Manager) Add(name string, opt AddOptions) (*Result, error) {
 		return nil, err
 	}
 	// Defend against orphan containers: a crashed create (or an out-of-band
-	// `lxc` instance) could already hold this name or the IP NextFreeIdx just
+	// `incus` instance) could already hold this name or the IP NextFreeIdx just
 	// gave us. Refuse rather than create a bridge IP conflict.
-	if err := m.checkLXDConflict(name, ip); err != nil {
+	if err := m.checkIncusConflict(name, ip); err != nil {
 		return nil, err
 	}
 	blockStr := ""
 	if block != nil {
 		blockStr = block.String()
 	}
-	if err := m.lx.Launch(m.cfg.LXD.Pool, m.cfg.LXD.Bridge, name, image, ip, ipv6, blockStr, opt.CPU, opt.MemMB, opt.DiskGB); err != nil {
+	// Make sure the image is present locally (a remote-qualified fallback like
+	// "images:debian/13" is pulled first; the API cannot auto-fetch it inside
+	// the create call the way the old `incus launch` CLI did).
+	if err := m.lx.EnsureImage(image); err != nil {
+		return nil, fmt.Errorf("ensure image %s: %w", image, err)
+	}
+	if err := m.lx.Launch(m.cfg.Incus.Pool, m.cfg.Incus.Bridge, name, image, ip, ipv6, blockStr, opt.CPU, opt.MemMB, opt.DiskGB); err != nil {
 		return nil, fmt.Errorf("launch container: %w", err)
 	}
 	// From here on any failure must roll the container and its host-side
@@ -334,18 +340,12 @@ func (m *Manager) Add(name string, opt AddOptions) (*Result, error) {
 		cleanup()
 		return nil, fmt.Errorf("config container ipv6: %w", err)
 	}
-	u, err := m.db.CreateUser(name, hash, ip, idx, sshPort, startPort, opt.CPU, opt.MemMB, opt.DiskGB)
+	u, err := m.db.CreateUserFull(name, hash, ip, idx, sshPort, startPort, opt.CPU, opt.MemMB, opt.DiskGB, opt.TrafficGB)
 	if err != nil {
 		cleanup()
 		return nil, fmt.Errorf("db: %w", err)
 	}
 	createdID = u.ID
-	if opt.TrafficGB > 0 {
-		if err := m.db.UpdateTrafficQuota(u.ID, opt.TrafficGB); err != nil {
-			cleanup()
-			return nil, fmt.Errorf("db: %w", err)
-		}
-	}
 	if m.cfg.Net.V4Forward {
 		if err := m.fw.WriteUser(name, u.IP, u.SSHPort, u.StartPort, cfg.PortsPerUser); err != nil {
 			cleanup()
@@ -394,18 +394,18 @@ func (m *Manager) checkIPv6BlockCollision(name string, block *net.IPNet) error {
 	return nil
 }
 
-// checkLXDConflict refuses to create a container whose name or static IPv4 is
-// already claimed by a live LXD instance. This only fires on orphans — a
-// crashed add that left a container behind, or an out-of-band `lxc` instance —
+// checkIncusConflict refuses to create a container whose name or static IPv4 is
+// already claimed by a live Incus instance. This only fires on orphans — a
+// crashed add that left a container behind, or an out-of-band `incus` instance —
 // because DB users are excluded by NextFreeIdx beforehand.
-func (m *Manager) checkLXDConflict(name, ip string) error {
+func (m *Manager) checkIncusConflict(name, ip string) error {
 	ips, err := m.lx.InstanceStaticIPs()
 	if err != nil {
 		return err
 	}
 	for n, v := range ips {
 		if n == name {
-			return fmt.Errorf("container name %q already exists in LXD (orphan?); choose another name", name)
+			return fmt.Errorf("container name %q already exists in Incus (orphan?); choose another name", name)
 		}
 		if v == ip {
 			return fmt.Errorf("IPv4 %s already assigned to live container %q (orphan?); choose another name", ip, n)
@@ -592,11 +592,12 @@ func (m *Manager) ApplyTraefikState() error {
 	return nil
 }
 
-// systemctl runs systemctl and returns its stderr on failure.
+// systemctl runs systemctl and returns its stderr on failure. The panel
+// daemon is unprivileged, so traefik (and self) control goes through the
+// sudoers whitelist.
 func systemctl(args ...string) error {
-	out, err := exec.Command("systemctl", args...).CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("systemctl %s: %s", strings.Join(args, " "), strings.TrimSpace(string(out)))
+	if _, err := su.Run(append([]string{"/usr/bin/systemctl"}, args...)...); err != nil {
+		return err
 	}
 	return nil
 }
@@ -663,15 +664,15 @@ func (m *Manager) Show(name string) (*Result, error) {
 func (m *Manager) State(name string) (string, error) { return m.lx.State(name) }
 
 // UpdateQuotas adjusts CPU/mem/disk of an existing user live (values <= 0 are
-// left unchanged). The LXD changes are applied first and the DB written last;
-// if a later step fails, everything already applied to LXD is rolled back so
+// left unchanged). The Incus changes are applied first and the DB written last;
+// if a later step fails, everything already applied to Incus is rolled back so
 // the live config and the database cannot disagree.
 func (m *Manager) UpdateQuotas(name string, cpu, memMB, diskGB int) (*Result, error) {
 	u, err := m.db.GetUserByName(name)
 	if err != nil {
 		return nil, err
 	}
-	// Validate everything before touching LXD so a rejected value never leaves
+	// Validate everything before touching Incus so a rejected value never leaves
 	// a half-applied quota.
 	if cpu > 0 {
 		if err := ValidateCPU(cpu); err != nil {
@@ -681,8 +682,8 @@ func (m *Manager) UpdateQuotas(name string, cpu, memMB, diskGB int) (*Result, er
 	if diskGB > 0 && diskGB < u.DiskGB {
 		return nil, fmt.Errorf("disk can only grow: current %d GiB, cannot shrink to %d GiB", u.DiskGB, diskGB)
 	}
-	// undo restores the LXD values applied so far, in reverse order. Best
-	// effort: if a rollback itself fails (e.g. LXD refusing a disk shrink),
+	// undo restores the Incus values applied so far, in reverse order. Best
+	// effort: if a rollback itself fails (e.g. Incus refusing a disk shrink),
 	// the caller still learns about it via the error text.
 	var undo []func() error
 	fail := func(err error) (*Result, error) {
@@ -730,7 +731,7 @@ func (m *Manager) UpdateQuotas(name string, cpu, memMB, diskGB int) (*Result, er
 // UpdateQuotasAndTraffic adjusts CPU/mem/disk and the monthly bandwidth quota
 // in one call, so the admin panel's single submit cannot succeed halfway. The
 // traffic quota is a DB-only write: it is applied first and rolled back if the
-// LXD-side resource update fails. trafficGB < 0 leaves the traffic quota
+// Incus-side resource update fails. trafficGB < 0 leaves the traffic quota
 // unchanged.
 func (m *Manager) UpdateQuotasAndTraffic(name string, cpu, memMB, diskGB, trafficGB int) (*Result, error) {
 	u, err := m.db.GetUserByName(name)
@@ -865,10 +866,17 @@ func (m *Manager) Reinstall(name, image string) (string, error) {
 	if err := m.lx.Delete(u.Name); err != nil {
 		return "", fmt.Errorf("delete container: %w", err)
 	}
-	if image == "" || image == m.cfg.LXD.Image {
+	// Default image (or empty): resolve to the configured alias / fallback and
+	// pull the fallback if it is remote-qualified. A user-picked non-default
+	// image must already exist locally — never auto-fetch a surprise image.
+	isDefault := image == "" || image == m.cfg.Incus.Image
+	if isDefault {
 		image, err = m.imageName()
 		if err != nil {
 			return "", err
+		}
+		if err := m.lx.EnsureImage(image); err != nil {
+			return "", fmt.Errorf("ensure image %s: %w", image, err)
 		}
 	} else if ok, _ := m.lx.ImageExists(image); !ok {
 		return "", fmt.Errorf("image %s is not available on this host (run the image build script)", image)
@@ -879,7 +887,7 @@ func (m *Manager) Reinstall(name, image string) (string, error) {
 	if block != nil {
 		blockStr = block.String()
 	}
-	if err := m.lx.Launch(m.cfg.LXD.Pool, m.cfg.LXD.Bridge, u.Name, image, u.IP, ipv6, blockStr, u.CPU, u.MemMB, u.DiskGB); err != nil {
+	if err := m.lx.Launch(m.cfg.Incus.Pool, m.cfg.Incus.Bridge, u.Name, image, u.IP, ipv6, blockStr, u.CPU, u.MemMB, u.DiskGB); err != nil {
 		return "", fmt.Errorf("recreate container: %w", err)
 	}
 	pass := pw.Generate(20)
@@ -1025,7 +1033,7 @@ func (m *Manager) AllDomains() ([]*db.DomainView, error) {
 // HardenAll applies the NIC isolation options to every existing container.
 // Called by `vps install` so an upgrade to an isolated build hardens the
 // previously-created containers in place. Idempotent; containers that were
-// already isolated (or exist in the DB but not in LXD) are skipped. Skips and
+// already isolated (or exist in the DB but not in Incus) are skipped. Skips and
 // non-fatal errors are collected, not returned — one stale row must not break
 // the rest.
 func (m *Manager) HardenAll() error {
@@ -1045,7 +1053,7 @@ func (m *Manager) HardenAll() error {
 // EnsureBlockRoutes adds the deterministic /112 block (ipv6.routes) to every
 // existing container's eth0, so an upgrade to the /112 scheme routes each
 // container's whole block. Idempotent; a container without IPv6 (or not in
-// LXD) is skipped. Restarts containers that needed the change.
+// Incus) is skipped. Restarts containers that needed the change.
 func (m *Manager) EnsureBlockRoutes() error {
 	if !m.cfg.IPv6Enabled() {
 		return nil

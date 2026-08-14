@@ -7,7 +7,7 @@ import (
 
 // ManagedImage is one OS image offered for reinstall.
 type ManagedImage struct {
-	Alias string `json:"alias"` // LXD alias, e.g. "vpsmgr/debian-sshd"
+	Alias string `json:"alias"` // Incus alias, e.g. "vpsmgr/debian-sshd"
 	Label string `json:"label"` // display name, e.g. "Debian 13"
 }
 
@@ -48,13 +48,13 @@ func collectManagedImages(defaultAlias string, aliases []string) []ManagedImage 
 }
 
 // Images returns the OS images offered for reinstall: the default Debian image
-// first, then every other managed prebuilt image present in LXD (e.g. Alma 9
-// built by scripts/60-rhel-image.sh). If LXD cannot be queried, only the
+// first, then every other managed prebuilt image present in Incus (e.g. Alma 9
+// built by scripts/60-rhel-image.sh). If Incus cannot be queried, only the
 // default is offered so reinstall still works.
 func (m *Manager) Images() []ManagedImage {
 	aliases, err := m.lx.ImageAliases()
 	if err != nil {
 		aliases = nil
 	}
-	return collectManagedImages(m.cfg.LXD.Image, aliases)
+	return collectManagedImages(m.cfg.Incus.Image, aliases)
 }

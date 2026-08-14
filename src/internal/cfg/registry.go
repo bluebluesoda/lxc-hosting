@@ -267,32 +267,32 @@ var Fields = []Field{
 			}
 			return nil
 		}},
-	{"lxd.image", KindOperator, ApplyNextAdd, "container image alias used on add/reinstall",
+	{"incus.image", KindOperator, ApplyNextAdd, "container image alias used on add/reinstall",
 		"vpsmgr/debian-sshd",
-		getStr(func(c *Config) string { return c.LXD.Image }),
-		nonEmpty("lxd.image", func(c *Config, v string) { c.LXD.Image = v })},
-	{"lxd.image_fallback", KindOperator, ApplyNextAdd, "fallback remote image when the local one is missing",
+		getStr(func(c *Config) string { return c.Incus.Image }),
+		nonEmpty("incus.image", func(c *Config, v string) { c.Incus.Image = v })},
+	{"incus.image_fallback", KindOperator, ApplyNextAdd, "fallback remote image when the local one is missing",
 		"images:debian/13",
-		getStr(func(c *Config) string { return c.LXD.ImageFallback }),
-		nonEmpty("lxd.image_fallback", func(c *Config, v string) { c.LXD.ImageFallback = v })},
-	{"lxd.pool", KindImmutable, ApplyNone,
+		getStr(func(c *Config) string { return c.Incus.ImageFallback }),
+		nonEmpty("incus.image_fallback", func(c *Config, v string) { c.Incus.ImageFallback = v })},
+	{"incus.pool", KindImmutable, ApplyNone,
 		"storage pool — fixed at install",
 		"",
-		getStr(func(c *Config) string { return c.LXD.Pool }),
+		getStr(func(c *Config) string { return c.Incus.Pool }),
 		func(c *Config, v string) error {
-			return fmt.Errorf("lxd.pool is fixed at install; changing it breaks existing containers")
+			return fmt.Errorf("incus.pool is fixed at install; changing it breaks existing containers")
 		}},
-	{"lxd.bridge", KindImmutable, ApplyNone,
+	{"incus.bridge", KindImmutable, ApplyNone,
 		"managed bridge — fixed at install",
 		"",
-		getStr(func(c *Config) string { return c.LXD.Bridge }),
+		getStr(func(c *Config) string { return c.Incus.Bridge }),
 		func(c *Config, v string) error {
-			return fmt.Errorf("lxd.bridge is fixed at install; changing it breaks existing containers")
+			return fmt.Errorf("incus.bridge is fixed at install; changing it breaks existing containers")
 		}},
-	{"lxd.socket", KindOperator, ApplyRestart, "LXD daemon Unix socket path",
-		"/var/snap/lxd/common/lxd/unix.socket",
-		getStr(func(c *Config) string { return c.LXD.Socket }),
-		nonEmpty("lxd.socket", func(c *Config, v string) { c.LXD.Socket = v })},
+	{"incus.socket", KindOperator, ApplyRestart, "Incus daemon Unix socket path",
+		"/var/lib/incus/unix.socket",
+		getStr(func(c *Config) string { return c.Incus.Socket }),
+		nonEmpty("incus.socket", func(c *Config, v string) { c.Incus.Socket = v })},
 	{"installed_version", KindAuto, ApplyNone, "binary version that installed/adopted this config (auto)",
 		"",
 		getStr(func(c *Config) string { return c.InstalledVersion }),

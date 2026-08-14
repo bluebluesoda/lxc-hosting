@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"vpsmgr/internal/cfg"
+	"vpsmgr/internal/su"
 )
 
 // IPv6 pass-through support (verified empirically):
@@ -19,7 +20,7 @@ import (
 //   lxdbr0 is configured with the GLOBAL prefix — /64 or shorter (e.g. /56),
 //   or the /80 slice a provider hands the host — with ipv6.routing + stateful
 //   DHCPv6. For a shorter prefix (/48 /56 /60) the bridge carries the FIRST
-//   /64 slice of it, because LXD's dnsmasq rejects non-/64 networks and every
+//   /64 slice of it, because Incus's dnsmasq rejects non-/64 networks and every
 //   deterministic container address falls in that /64 anyway.
 //
 //   Each container owns a DETERMINISTIC /112 block derived from its username
@@ -31,7 +32,7 @@ import (
 //
 //   Per container:
 //     - the eth0 device sets ipv6.address=<block>::1 (primary) and
-//       ipv6.routes=<block>::/112, so LXD routes the whole block to the
+//       ipv6.routes=<block>::/112, so Incus routes the whole block to the
 //       container and any address it binds is delivered to it.
 //     - ndppd proxies Neighbor Discovery on the EXTERNAL interface for every
 //       /112: an upstream neighbor solicitation for an address in a block is
@@ -57,7 +58,7 @@ func ipv6Suffix(name string) string {
 const blockBits = 112
 
 // IPv6Block computes the deterministic /112 block a container owns, derived
-// from the configured prefix + username. Never queries LXD and never stores
+// from the configured prefix + username. Never queries Incus and never stores
 // it. The block index (32-bit username hash) lands at bits 80-111 for every
 // supported prefix <= /80; the trailing 16 bits are the container's host
 // space.
@@ -100,7 +101,7 @@ func (m *Manager) SetupIPv6Bridge() error {
 	// but skipped when the host itself already uses it on the external
 	// interface (common with a /80 slice where the host holds ::1).
 	//
-	// Bridge prefix length: LXD's dnsmasq only serves /64 networks (a shorter
+	// Bridge prefix length: Incus's dnsmasq only serves /64 networks (a shorter
 	// prefix like /48 /56 /60 makes it error "only /64 allowed"). Since every
 	// deterministic container address lives in the FIRST /64 of the configured
 	// prefix (bits [prefixlen:79] are zero-filled), we clamp the bridge to /64
@@ -112,7 +113,7 @@ func (m *Manager) SetupIPv6Bridge() error {
 	if err != nil {
 		return err
 	}
-	bridge := m.cfg.LXD.Bridge
+	bridge := m.cfg.Incus.Bridge
 	for _, kv := range []string{
 		"ipv6.address=" + gw + "/" + strconv.Itoa(bridgeOnes),
 		"ipv6.nat=false",
@@ -123,11 +124,11 @@ func (m *Manager) SetupIPv6Bridge() error {
 			return err
 		}
 	}
-	// Remove the conflicting route LXD auto-creates on the bridge for the
+	// Remove the conflicting route Incus auto-creates on the bridge for the
 	// bridge's own prefix when the host itself is inside it (eth0 keeps the
-	// authoritative route).
+	// authoritative route). Needs CAP_NET_ADMIN → sudoers whitelist.
 	bridgeNet := &net.IPNet{IP: net.ParseIP(gw).Mask(net.CIDRMask(bridgeOnes, 128)), Mask: net.CIDRMask(bridgeOnes, 128)}
-	_ = exec.Command("ip", "-6", "route", "del", bridgeNet.String(), "dev", bridge).Run()
+	_, _ = su.Run("/sbin/ip", "-6", "route", "del", bridgeNet.String(), "dev", bridge)
 	_ = m.enableForwarding()
 	return nil
 }
@@ -144,7 +145,7 @@ func (m *Manager) SetupIPv6Bridge() error {
 //     (catches the router and any other device already on the link)
 //
 // A container's hash-derived address is 2^-32 unlikely to collide with any of
-// these (and its 0001 last block can never be the all-zero anycast), and LXD
+// these (and its 0001 last block can never be the all-zero anycast), and Incus
 // only uses this address as the dnsmasq/SLAAC anchor.
 func (m *Manager) bridgeGateway(n *net.IPNet) (string, error) {
 	inUse := map[string]bool{}
@@ -212,7 +213,7 @@ func addHostOffset(netAddr net.IP, k uint64) net.IP {
 }
 
 // bridgePrefixLen clamps the configured prefix length for the lxdbr0 bridge.
-// LXD's dnsmasq only serves /64 networks (a /48 /56 /60 makes it error "only
+// Incus's dnsmasq only serves /64 networks (a /48 /56 /60 makes it error "only
 // /64 allowed"), and every deterministic container address falls inside the
 // FIRST /64 of the configured prefix — so shorter prefixes ride on that /64;
 // /64 and /80 keep their own length.
@@ -224,12 +225,10 @@ func bridgePrefixLen(ones int) int {
 }
 
 // enableForwarding turns on IPv6 forwarding (required for pass-through).
+// sysctl write needs root → sudoers whitelist.
 func (m *Manager) enableForwarding() error {
-	out, err := exec.Command("sysctl", "-w", "net.ipv6.conf.all.forwarding=1").CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("enable ipv6 forwarding: %s", strings.TrimSpace(string(out)))
-	}
-	return nil
+	_, err := su.Run("/sbin/sysctl", "-w", "net.ipv6.conf.all.forwarding=1")
+	return err
 }
 
 // ndppdConfPath is where vpsmgr renders the ndppd rules.
@@ -237,7 +236,7 @@ const ndppdConfPath = "/etc/ndppd.conf"
 
 // ndppdConf renders /etc/ndppd.conf: one `rule <block>::/112` per container
 // under a `proxy <ext_if>` section, so upstream neighbor solicitations for any
-// address in a container's block are relayed to the LXD bridge (the container
+// address in a container's block are relayed to the Incus bridge (the container
 // answers for the addresses it binds). `add` / `drop` let a single user be
 // added or removed without racing the DB transaction in Add/Del. Empty when
 // IPv6 is disabled or no container has a block.
@@ -279,7 +278,7 @@ func (m *Manager) ndppdConf(add, drop string) (string, error) {
 		if err != nil {
 			return "", err
 		}
-		fmt.Fprintf(&b, "   rule %s {\n      iface %s\n   }\n", block.String(), m.cfg.LXD.Bridge)
+		fmt.Fprintf(&b, "   rule %s {\n      iface %s\n   }\n", block.String(), m.cfg.Incus.Bridge)
 	}
 	b.WriteString("}\n")
 	return b.String(), nil
@@ -289,24 +288,24 @@ func (m *Manager) ndppdConf(add, drop string) (string, error) {
 // has no live reload (SIGHUP terminates it), so a restart is required and its
 // liveness is verified afterwards. The distro init script can wedge in a stale
 // "active (exited)" state, so a failed start falls back to launching the
-// daemon directly.
+// daemon directly. All calls go through the sudoers whitelist.
 func (m *Manager) restartNDPPD() error {
 	if _, err := exec.LookPath("ndppd"); err != nil {
 		return fmt.Errorf("ndppd is not installed (install.sh installs it when IPv6 is enabled)")
 	}
-	_ = exec.Command("service", "ndppd", "restart").Run()
+	_, _ = su.Run("/usr/sbin/service", "ndppd", "restart")
 	if m.ndppdAlive() {
 		return nil
 	}
-	_ = exec.Command("service", "ndppd", "start").Run()
+	_, _ = su.Run("/usr/sbin/service", "ndppd", "start")
 	if m.ndppdAlive() {
 		return nil
 	}
 	// Last resort: start the daemon directly, bypassing the init script.
-	_ = exec.Command("pkill", "-x", "ndppd").Run()
+	_, _ = su.Run("/usr/bin/pkill", "-x", "ndppd")
 	_ = os.Remove("/var/run/ndppd.pid")
-	if out, err := exec.Command("ndppd", "-d", "-p", "/var/run/ndppd.pid").CombinedOutput(); err != nil {
-		return fmt.Errorf("start ndppd: %s", strings.TrimSpace(string(out)))
+	if _, err := su.Run("/usr/sbin/ndppd", "-d", "-p", "/var/run/ndppd.pid"); err != nil {
+		return err
 	}
 	return nil
 }
@@ -326,7 +325,7 @@ func (m *Manager) writeNDPPD(add, drop string) error {
 		return err
 	}
 	if conf == "" {
-		_ = exec.Command("service", "ndppd", "stop").Run()
+		_, _ = su.Run("/usr/sbin/service", "ndppd", "stop")
 		_ = os.Remove(ndppdConfPath)
 		return nil
 	}
@@ -338,7 +337,7 @@ func (m *Manager) writeNDPPD(add, drop string) error {
 
 // WireIPv6 registers a container's /112 with the NDP proxy so its addresses
 // are reachable from the internet. The block is computed from the username (no
-// waiting); the LXD device already routes the /112 to the container.
+// waiting); the Incus device already routes the /112 to the container.
 func (m *Manager) WireIPv6(name string) error {
 	if !m.cfg.IPv6Enabled() {
 		return nil
@@ -356,14 +355,14 @@ func (m *Manager) UnwireIPv6(name string) {
 
 // cleanLegacyKernelProxy removes the per-address kernel proxy_ndp entries and
 // /128 routes the old (pre-/112) scheme installed on the external interface
-// and the bridge. Idempotent, best-effort: the /112 routes programmed by LXD
+// and the bridge. Idempotent, best-effort: the /112 routes programmed by Incus
 // supersede both. Only touches addresses inside the configured prefix.
 func (m *Manager) cleanLegacyKernelProxy() {
 	if !m.cfg.IPv6Enabled() {
 		return
 	}
 	ext := m.cfg.Net.ExtIF
-	bridge := m.cfg.LXD.Bridge
+	bridge := m.cfg.Incus.Bridge
 	users, err := m.db.ListUsers()
 	if err != nil {
 		return
@@ -374,15 +373,15 @@ func (m *Manager) cleanLegacyKernelProxy() {
 			continue
 		}
 		if ext != "" {
-			_ = exec.Command("ip", "-6", "neigh", "del", "proxy", addr, "dev", ext).Run()
+			_, _ = su.Run("/sbin/ip", "-6", "neigh", "del", "proxy", addr, "dev", ext)
 		}
-		_ = exec.Command("ip", "-6", "route", "del", addr+"/128", "dev", bridge).Run()
+		_, _ = su.Run("/sbin/ip", "-6", "route", "del", addr+"/128", "dev", bridge)
 	}
 }
 
 // RewireAllIPv6 rebuilds the whole IPv6 pass-through: bridge config, the
 // ndppd rules for every container, and a sweep of the old kernel per-address
-// plumbing. Called at boot (after LXD is up) and by `vps install` so that
+// plumbing. Called at boot (after Incus is up) and by `vps install` so that
 // pass-through survives reboots. Idempotent.
 func (m *Manager) RewireAllIPv6() error {
 	if !m.cfg.IPv6Enabled() {

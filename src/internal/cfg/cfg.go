@@ -32,9 +32,9 @@ const (
 	DefaultPool       = "vpsmgr"
 	DefaultImage      = "vpsmgr/debian-sshd"
 	DefaultImageFB    = "images:debian/13"
-	// DefaultSocket is the snap LXD daemon's Unix socket; the REST client
-	// talks to it directly (no `lxc` process spawn per call).
-	DefaultSocket = "/var/snap/lxd/common/lxd/unix.socket"
+	// DefaultSocket is the Incus daemon's Unix socket; the REST client
+	// talks to it directly (no `incus` process spawn per call).
+	DefaultSocket = "/var/lib/incus/unix.socket"
 
 	// Panel listen port: a FRESH install picks a random free port in
 	// PanelPortMin..PanelPortMax (written to panel.listen). DefaultListen
@@ -59,7 +59,7 @@ const (
 	MaxInitScriptBytes = 64 * 1024
 
 	// Traffic throttle: when a user exceeds their monthly quota, both
-	// directions are limited to ThrottleRate (an LXD NIC limit value, bit/s
+	// directions are limited to ThrottleRate (an Incus NIC limit value, bit/s
 	// with suffix). ThrottleDisplay is what the user panel shows.
 	ThrottleRate    = "1Mbit"
 	ThrottleDisplay = "1Mbps"
@@ -74,7 +74,7 @@ const GeneratedBanner = "# Managed by vpsmgr — generated file, do not edit by 
 type Config struct {
 	Panel PanelCfg `yaml:"panel"`
 	Net   NetCfg   `yaml:"net"`
-	LXD   LXDCfg   `yaml:"lxd"`
+	Incus IncusCfg  `yaml:"incus"`
 	// InstalledVersion is the binary version that installed (or adopted/upgraded)
 	// this config, written by `vps install`. UninstalledVersion is the version
 	// of the binary that a NON-purging uninstall removed, written by
@@ -128,17 +128,18 @@ type NetCfg struct {
 	// Empty means IPv6 pass-through is disabled.
 	// Containers get global addresses via SLAAC on lxdbr0; the host proxies
 	// their neighbor discovery. No NAT, no DB schema change: a container's
-	// IPv6 is whatever LXD/SLAAC assigned, read live from `lxc list`.
+	// IPv6 is whatever Incus/SLAAC assigned, read live from `incus list`.
 	IPv6Subnet string `yaml:"ipv6_subnet,omitempty"`
 }
 
-type LXDCfg struct {
+type IncusCfg struct {
 	Image         string `yaml:"image"`
 	ImageFallback string `yaml:"image_fallback"`
 	Pool          string `yaml:"pool"`
 	Bridge        string `yaml:"bridge"`
-	// Socket is the path to the LXD daemon's Unix socket. Auto-detected
-	// default matches the snap install (`/var/snap/lxd/common/lxd/...`).
+	// Socket is the path to the Incus daemon's Unix socket. Auto-detected
+	// default matches the Debian package install
+	// (`/var/lib/incus/unix.socket`).
 	Socket string `yaml:"socket,omitempty"`
 }
 
@@ -146,7 +147,7 @@ func Default() *Config {
 	c := &Config{}
 	c.Panel = PanelCfg{Listen: DefaultListen, Cert: DefaultDataDir + "/panel.crt", Key: DefaultDataDir + "/panel.key", DB: DefaultDB, SessionDays: 3}
 	c.Net = NetCfg{Subnet: DefaultSubnet, Gateway: DefaultGateway, V4Forward: true}
-	c.LXD = LXDCfg{Image: DefaultImage, ImageFallback: DefaultImageFB, Pool: DefaultPool, Bridge: DefaultBridge, Socket: DefaultSocket}
+	c.Incus = IncusCfg{Image: DefaultImage, ImageFallback: DefaultImageFB, Pool: DefaultPool, Bridge: DefaultBridge, Socket: DefaultSocket}
 	return c
 }
 

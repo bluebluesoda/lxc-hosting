@@ -89,7 +89,7 @@ func TestAssignValidators(t *testing.T) {
 
 func TestImmutableAssignsRefuse(t *testing.T) {
 	c := Default()
-	for _, key := range []string{"net.subnet", "net.gateway", "lxd.pool", "lxd.bridge"} {
+	for _, key := range []string{"net.subnet", "net.gateway", "incus.pool", "incus.bridge"} {
 		if err := FieldFor(key).Assign(c, "whatever"); err == nil {
 			t.Errorf("%s: immutable assign accepted", key)
 		} else if !strings.Contains(err.Error(), "fixed at install") {
@@ -118,8 +118,8 @@ func TestEditableClassification(t *testing.T) {
 		"panel.admin_url_path":  "yes",
 		"net.subnet":            "no",
 		"net.gateway":           "no",
-		"lxd.pool":              "no",
-		"lxd.bridge":            "no",
+		"incus.pool":            "no",
+		"incus.bridge":          "no",
 		"panel.admin_pass_hash": "no",
 		"installed_version":     "no",
 	}
@@ -228,7 +228,7 @@ func TestPanelDBApplyIsInstall(t *testing.T) {
 
 func TestNonEmptyOperators(t *testing.T) {
 	c := Default()
-	for _, key := range []string{"panel.cert", "panel.key", "net.ext_if", "lxd.image", "lxd.socket"} {
+	for _, key := range []string{"panel.cert", "panel.key", "net.ext_if", "incus.image", "incus.socket"} {
 		if err := FieldFor(key).Assign(c, ""); err == nil {
 			t.Errorf("%s: empty accepted", key)
 		}

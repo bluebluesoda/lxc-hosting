@@ -91,7 +91,7 @@ func TestAddHostOffset(t *testing.T) {
 	}
 }
 
-// The bridge is always >= /64: LXD's dnsmasq rejects non-/64 networks, and
+// The bridge is always >= /64: Incus's dnsmasq rejects non-/64 networks, and
 // all deterministic container addresses live in the first /64 of the prefix.
 func TestBridgePrefixLen(t *testing.T) {
 	cases := []struct{ ones, want int }{

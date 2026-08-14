@@ -1,6 +1,6 @@
 package db
 
-// Traffic holds a user's monthly transfer totals and the last observed LXD
+// Traffic holds a user's monthly transfer totals and the last observed Incus
 // network counters used as the accumulation baseline.
 type Traffic struct {
 	UserID   int64
@@ -23,7 +23,7 @@ func (d *DB) GetTraffic(userID int64) (*Traffic, error) {
 	return t, nil
 }
 
-// ApplyTraffic advances a user's monthly totals from the current LXD counters
+// ApplyTraffic advances a user's monthly totals from the current Incus counters
 // rx/tx. The delta is computed in a single atomic SQL statement against the
 // stored baselines, handling three cases at once:
 //

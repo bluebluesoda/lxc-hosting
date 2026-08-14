@@ -7,10 +7,11 @@ import (
 )
 
 // dnsmasqLeasesPath returns the path of the bridge's dnsmasq lease file for
-// the snap LXD install vpsmgr targets. IPv4 and DHCPv6 leases share this file;
-// a DHCPv6 entry is the one whose third column is an IPv6 address.
+// the Debian-package Incus install vpsmgr targets. IPv4 and DHCPv6 leases
+// share this file; a DHCPv6 entry is the one whose third column is an IPv6
+// address.
 func dnsmasqLeasesPath(bridge string) string {
-	return "/var/snap/lxd/common/lxd/networks/" + bridge + "/dnsmasq.leases"
+	return "/var/lib/incus/networks/" + bridge + "/dnsmasq.leases"
 }
 
 // EnsureUniqueMachineID repairs containers that share a machine-id baked into
@@ -62,7 +63,7 @@ func (m *Manager) EnsureUniqueMachineID() error {
 			return fmt.Errorf("stop %s for machine-id repair: %w", name, err)
 		}
 	}
-	if err := dropDHCPv6Leases(dnsmasqLeasesPath(m.cfg.LXD.Bridge)); err != nil {
+	if err := dropDHCPv6Leases(dnsmasqLeasesPath(m.cfg.Incus.Bridge)); err != nil {
 		return err
 	}
 	if err := m.restartBridgeDNS(); err != nil {
@@ -104,10 +105,10 @@ func dropDHCPv6Leases(path string) error {
 	return os.WriteFile(path, []byte(strings.Join(kept, "\n")), 0o644)
 }
 
-// restartBridgeDNS toggles the bridge's stateful DHCP so LXD restarts dnsmasq,
+// restartBridgeDNS toggles the bridge's stateful DHCP so Incus restarts dnsmasq,
 // which re-reads the (now DHCPv6-free) lease file.
 func (m *Manager) restartBridgeDNS() error {
-	b := m.cfg.LXD.Bridge
+	b := m.cfg.Incus.Bridge
 	if err := m.lx.NetworkSet(b, "ipv6.dhcp.stateful=false"); err != nil {
 		return err
 	}

@@ -77,7 +77,7 @@ else
     changed=1
   fi
   # Statically bind the deterministic primary /128. A reinstall deletes the
-  # container but LXD's dnsmasq keeps its DHCPv6 lease for up to an hour, so
+  # container but Incus's dnsmasq keeps its DHCPv6 lease for up to an hour, so
   # DHCPv6 would hand the recreated container a dynamic address instead —
   # binding the /128 directly makes IPv6 independent of that.
   if ! grep -qs '^Address=%s/128$' "$CFG" 2>/dev/null; then

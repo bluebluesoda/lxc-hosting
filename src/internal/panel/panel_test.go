@@ -365,7 +365,7 @@ func TestFlashViaAPI(t *testing.T) {
 
 	// A state-changing POST with a mismatched password confirm redirects to the
 	// prefix root WITHOUT leaking the message into the URL (deterministic, no
-	// lxc involvement).
+	// incus involvement).
 	rr = doReq(t, h, http.MethodPost, prefix+"/password",
 		url.Values{"new_password": {"xxxxxxxxxxxxxxxx"}, "confirm_password": {"yyyyyyyyyyyyyyyy"}}, sess)
 	if rr.Code != http.StatusFound {
@@ -540,7 +540,7 @@ func TestStripPrefix(t *testing.T) {
 }
 
 // TestImagesEndpoint verifies the lazy image-list endpoint: it always offers
-// the default Debian image (LXD unreachable in tests falls back to it), and it
+// the default Debian image (Incus unreachable in tests falls back to it), and it
 // is behind auth like every other panel route.
 func TestImagesEndpoint(t *testing.T) {
 	srv, d := newTestServer(t)
